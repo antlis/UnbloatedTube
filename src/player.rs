@@ -1,0 +1,245 @@
+//! A single long-lived mpv process, controlled over its JSON IPC socket.
+
+use crate::store::{Config, Settings};
+use serde_json::{Value, json};
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
+use std::os::unix::process::CommandExt;
+use std::process::{Child, Command, Stdio};
+use std::time::Duration;
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct State {
+    /// URL of the loaded file, to tell the new video from the previous one while switching.
+    pub path: String,
+    /// Nothing loaded (e.g. the last load failed).
+    pub idle: bool,
+    /// mpv has a playback position, i.e. the file at `path` is actually playing.
+    pub playing: bool,
+    /// Playback reached the end (mpv keeps the last frame, `--keep-open`).
+    pub ended: bool,
+    pub position: f64,
+    pub duration: f64,
+    pub paused: bool,
+    /// mpv's own fullscreen flag (toggled by f / double-click / Esc); unbloated-youtube mirrors it.
+    pub fullscreen: bool,
+}
+
+pub struct Player {
+    socket: PathBuf,
+    child: Option<Child>,
+    /// Options the running mpv was started with.
+    options: Vec<String>,
+}
+
+impl Player {
+    pub fn new() -> Self {
+        let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+        // Sockets of unbloated-youtube instances that were killed (and so never cleaned up after themselves).
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let pid = name.strip_prefix("unbloated-youtube-mpv-").and_then(|n| n.strip_suffix(".sock"));
+            if pid.is_some_and(|pid| !std::path::Path::new(&format!("/proc/{pid}")).exists()) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+        Self { socket: dir.join(format!("unbloated-youtube-mpv-{}.sock", std::process::id())), child: None, options: Vec::new() }
+    }
+
+    pub fn alive(&mut self) -> bool {
+        matches!(self.child.as_mut().map(|c| c.try_wait()), Some(Ok(None)))
+    }
+
+    /// `wid`: X11 window to render into; None opens mpv's own window. `options` come from
+    /// `options()`; if they differ from the running mpv's, mpv is restarted to apply them.
+    pub fn play(
+        &mut self,
+        options: &[String],
+        url: &str,
+        start: f64,
+        speed: f32,
+        wid: Option<u32>,
+        paused: bool,
+    ) -> Result<(), String> {
+        if self.alive() && self.options != options {
+            if let Some(mut c) = self.child.take() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+        }
+        if !self.alive() {
+            let _ = std::fs::remove_file(&self.socket);
+            let mut cmd = Command::new("mpv");
+            // mpv's yt-dlp inherits this; see `crate::yt` for why it matters.
+            cmd.env("PYCRYPTODOME_DISABLE_GMP", "1")
+                .arg(format!("--input-ipc-server={}", self.socket.display()))
+                .args(["--idle=yes", "--force-window=yes", "--keep-open=yes", "--title=unbloated-youtube"])
+                // Embedded in our X11 window: pick X11 EGL directly. mpv's auto-probing of GPU
+                // contexts segfaults with the nixos-unstable mpv on some drivers (Intel/Mesa 25.2).
+                // Before `options`, so a --gpu-context in the user's extra options still wins.
+                .args(wid.map(|_| "--gpu-context=x11egl"))
+                .args(options)
+                .arg(format!("--speed={speed}"))
+                .arg(format!("--start={start}"))
+                .args(wid.map(|w| format!("--wid={w}")))
+                .args(paused.then_some("--pause"))
+                .arg(url)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(mpv_log());
+            // Stop mpv when we exit: closing the window ends the process without running our
+            // Drop, and a crash wouldn't either, which would leave the video playing.
+            // SAFETY: prctl is async-signal-safe, as pre_exec requires.
+            unsafe {
+                cmd.pre_exec(|| {
+                    libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                    Ok(())
+                });
+            }
+            self.child = Some(cmd.spawn().map_err(|e| format!("cannot start mpv: {e}"))?);
+            self.options = options.to_vec();
+            return Ok(());
+        }
+        self.command(json!(["set_property", "start", start.to_string()]))?;
+        self.command(json!(["set_property", "pause", paused]))?;
+        self.command(json!(["loadfile", url, "replace"]))
+    }
+
+    /// Options the running mpv was started with (empty if none).
+    pub fn options(&mut self) -> &[String] {
+        if self.alive() { &self.options } else { &[] }
+    }
+
+    pub fn set_speed(&self, speed: f32) {
+        let _ = self.command(json!(["set_property", "speed", speed]));
+    }
+
+    fn connect(&self) -> Result<UnixStream, String> {
+        let s = UnixStream::connect(&self.socket).map_err(|e| e.to_string())?;
+        s.set_read_timeout(Some(Duration::from_millis(300))).ok();
+        Ok(s)
+    }
+
+    pub fn command(&self, cmd: Value) -> Result<(), String> {
+        let mut s = self.connect()?;
+        writeln!(s, "{}", json!({ "command": cmd })).map_err(|e| e.to_string())
+    }
+
+    pub fn toggle_pause(&self) {
+        let _ = self.command(json!(["cycle", "pause"]));
+    }
+
+    pub fn seek_relative(&self, secs: f64) {
+        let _ = self.command(json!(["seek", secs, "relative"]));
+    }
+
+    pub fn set_fullscreen(&self, on: bool) {
+        let _ = self.command(json!(["set_property", "fullscreen", on]));
+    }
+
+    pub fn seek_absolute(&self, secs: f64) {
+        let _ = self.command(json!(["seek", secs, "absolute"]));
+    }
+
+    /// The IPC socket if mpv is running, for `query` on a background thread.
+    pub fn socket_if_alive(&mut self) -> Option<PathBuf> {
+        self.alive().then(|| self.socket.clone())
+    }
+}
+
+/// yt-dlp format selector for the user's quality / codec / audio-only settings.
+pub fn format(s: &Settings) -> String {
+    let q = s.max_quality;
+    let codec = if s.prefer_hw_codecs { "[vcodec!^=av01]" } else { "" };
+    if s.audio_only {
+        "bestaudio/best".to_string()
+    } else {
+        // Fall back to any codec, then to a single combined stream, if the preferred one is missing.
+        format!("bestvideo[height<=?{q}]{codec}+bestaudio/bestvideo[height<=?{q}]+bestaudio/best[height<=?{q}]/best")
+    }
+}
+
+/// mpv command-line options for the user's settings (everything but per-video ones).
+pub fn options(cfg: &Config, s: &Settings) -> Vec<String> {
+    let mut out = vec![
+        format!("--ytdl-format={}", format(s)),
+        // Fetch in 10 MB range requests: YouTube throttles one long request to ~150 KB/s.
+        "--stream-lavf-o-append=request_size=10485760".into(),
+    ];
+    let mut raw = vec!["mark-watched=".to_string()];
+    match (&cfg.cookies_file, &cfg.cookies_from_browser) {
+        (Some(f), _) => raw.push(format!("cookies={f}")),
+        (None, Some(b)) => raw.push(format!("cookies-from-browser={b}")),
+        _ => raw.clear(),
+    }
+    if !raw.is_empty() {
+        out.push(format!("--ytdl-raw-options={}", raw.join(",")));
+    }
+    if s.hwdec {
+        out.push("--hwdec=auto-safe".into());
+    }
+    match s.sub_lang.trim() {
+        "" => out.push("--sid=no".into()),
+        lang => out.push(format!("--slang={lang}")),
+    }
+    if let (true, Some(script)) = (s.sponsorblock, sponsorblock_script()) {
+        out.push(format!("--script={script}"));
+        out.push(format!("--script-opts=sponsorblock_minimal-categories={}", s.skip_segments.join(";")));
+    }
+    out.extend(s.mpv_args.split_whitespace().map(String::from));
+    out
+}
+
+/// Path of the SponsorBlock mpv script, if the environment provides it (see shell.nix).
+pub fn sponsorblock_script() -> Option<String> {
+    std::env::var("UNBLOATED_SPONSORBLOCK").ok().filter(|p| std::path::Path::new(p).exists())
+}
+
+/// Current playback state, or None if mpv doesn't answer. Blocks while mpv is busy opening a
+/// video (it answers only after yt-dlp finishes), so never call it on the UI thread.
+pub fn query(socket: &Path) -> Option<State> {
+    let mut s = UnixStream::connect(socket).ok()?;
+    s.set_read_timeout(Some(Duration::from_secs(2))).ok();
+    let props = ["time-pos", "duration", "pause", "fullscreen", "path", "idle-active", "eof-reached"];
+    for (i, p) in props.iter().enumerate() {
+        writeln!(s, "{}", json!({ "command": ["get_property", p], "request_id": i })).ok()?;
+    }
+    let mut vals = vec![Value::Null; props.len()];
+    let mut got = 0;
+    for line in BufReader::new(s).lines() {
+        let v: Value = serde_json::from_str(&line.ok()?).ok()?;
+        if let Some(i) = v.get("request_id").and_then(Value::as_u64) {
+            vals[i as usize] = v.get("data").cloned().unwrap_or(Value::Null);
+            got += 1;
+            if got == props.len() {
+                break;
+            }
+        }
+    }
+    Some(State {
+        position: vals[0].as_f64().unwrap_or(0.0),
+        playing: vals[0].is_number(),
+        duration: vals[1].as_f64().unwrap_or(0.0),
+        paused: vals[2].as_bool().unwrap_or(false),
+        fullscreen: vals[3].as_bool().unwrap_or(false),
+        path: vals[4].as_str().unwrap_or_default().to_string(),
+        idle: vals[5].as_bool().unwrap_or(false),
+        ended: vals[6].as_bool().unwrap_or(false),
+    })
+}
+
+impl Drop for Player {
+    fn drop(&mut self) {
+        if let Some(c) = self.child.as_mut() {
+            let _ = c.kill();
+        }
+        let _ = std::fs::remove_file(&self.socket);
+    }
+}
+
+fn mpv_log() -> Stdio {
+    let dir = crate::store::cache_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    std::fs::File::create(dir.join("mpv.log")).map_or(Stdio::null(), Stdio::from)
+}
