@@ -1,0 +1,26 @@
+[package]
+name = "unbloated-youtube"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gpui = "0.2.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+dirs = "5"
+ureq = { version = "2", features = ["json"] }
+x11rb = "0.13"
+sha1_smol = "1"
+anyhow = "1"
+libc = "0.2"
+
+# Fast edit-compile loop: gpui's debuginfo makes every link slow, and optimized
+# deps (built once) keep `cargo run` snappy without needing --release.
+[profile.dev]
+debug = 0
+# Light optimization of our own code keeps rendering cheap; costs ~a few seconds per rebuild.
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
