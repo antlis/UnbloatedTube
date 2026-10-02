@@ -1541,18 +1541,35 @@ impl Unbloated {
             .child(div().text_color(rgb(TEXT)).line_clamp(2).child(video.title.clone()))
             .child({
                 let name = video.channel.clone().unwrap_or_default();
-                let channel = channel_group(&video);
-                div()
-                    .id("channel-link")
-                    .text_xs()
-                    .text_color(rgb(MUTED))
-                    .child(name)
-                    .when_some(channel, |d, g| {
-                        d.cursor_pointer()
-                            .hover(|d| d.text_color(rgb(TEXT)).underline())
-                            .tooltip(tip("Show this channel's videos"))
-                            .on_click(cx.listener(move |this, _, _, cx| this.show_channel(g.clone(), cx)))
-                    })
+                match channel_group(&video) {
+                    // Styled as a chip (avatar, name, chevron) so it reads as clickable.
+                    Some(g) => {
+                        let thumb = self.subs.groups.items().iter().find(|s| s.id == g.id).and_then(|s| s.thumb.clone());
+                        let avatar = self.thumb_el(&g.id, thumb, 20., 20., px(10.), cx);
+                        div().flex().child(
+                            div()
+                                .id("channel-link")
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .pl_1()
+                                .pr_3()
+                                .py_1()
+                                .rounded_full()
+                                .bg(rgb(HOVER))
+                                .text_xs()
+                                .text_color(rgb(TEXT))
+                                .cursor_pointer()
+                                .hover(|d| d.bg(rgb(BORDER)))
+                                .child(avatar)
+                                .child(name)
+                                .child(div().text_color(rgb(MUTED)).child("›"))
+                                .tooltip(tip("Show this channel's videos"))
+                                .on_click(cx.listener(move |this, _, _, cx| this.show_channel(g.clone(), cx))),
+                        )
+                    }
+                    None => div().text_xs().text_color(rgb(MUTED)).child(name),
+                }
             })
             .child(if self.loading {
                 div().h(px(10.)).py(px(3.)).child(loading_bar("video-loading")).into_any_element()
