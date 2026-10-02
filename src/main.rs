@@ -630,12 +630,15 @@ impl Unbloated {
             e.borrow().id()
         });
         let start = self.history.position(&video.id);
-        self.hide_while_loading = self.player.alive();
+        let options = player::options(&self.cfg, &self.settings);
+        // Hide the old video's last frame only when mpv keeps running: a freshly started mpv
+        // (first video, or changed options) never shows its picture if ours is hidden then.
+        let restarts = self.player.options() != options.as_slice();
+        self.hide_while_loading = !restarts;
         if let (true, Some(e)) = (self.hide_while_loading, &self.embed) {
             // Show the new thumbnail right away instead of the old video's last frame.
             e.borrow_mut().set_visible(false);
         }
-        let options = player::options(&self.cfg, &self.settings);
         if let Err(e) = self.player.play(&options, &video.url(), start, self.settings.speed, wid, paused) {
             eprintln!("{e}");
         }
