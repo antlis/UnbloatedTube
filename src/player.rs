@@ -132,6 +132,8 @@ impl Player {
             // Volume keys over the video (mpv's default Up/Down seek a minute).
             self.bound = self.command(json!(["keybind", "MBTN_LEFT", "cycle pause"])).is_ok()
                 && self.command(json!(["keybind", "?", "set user-data/unbloated/help yes"])).is_ok()
+                // mpv's default (a double click toggles fullscreen), which the setting above removes.
+                && self.command(json!(["keybind", "MBTN_LEFT_DBL", "cycle fullscreen"])).is_ok()
                 && [("UP", 5), ("=", 5), ("+", 5), ("DOWN", -5), ("-", -5)]
                     .iter()
                     .all(|(key, step)| self.command(json!(["keybind", key, format!("add volume {step}")])).is_ok());
@@ -220,6 +222,14 @@ pub fn options(cfg: &Config, s: &Settings, pip: bool) -> Vec<String> {
     }
     if s.hwdec {
         out.push("--hwdec=auto-safe".into());
+    }
+    // Embedded in the app, mpv's own controls and keys are off: the app has its own (the PiP
+    // window has nothing else, so it keeps them). `mpv_args` below can still override these.
+    if !pip && !s.native_controls {
+        out.extend(
+            ["--osc=no", "--osd-level=0", "--input-default-bindings=no", "--input-builtin-bindings=no", "--input-vo-keyboard=no"]
+                .map(String::from),
+        );
     }
     match s.sub_lang.trim() {
         "" => out.push("--sid=no".into()),

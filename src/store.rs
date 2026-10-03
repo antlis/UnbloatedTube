@@ -189,6 +189,8 @@ pub struct Settings {
     /// Skip AV1, which many GPUs can't decode in hardware.
     pub prefer_hw_codecs: bool,
     pub hwdec: bool,
+    /// mpv's own on-screen controls and key bindings over the video (off: only the app's).
+    pub native_controls: bool,
     pub speed: f32,
     /// Volume, 0-100.
     pub volume: f32,
@@ -243,6 +245,7 @@ impl Default for Settings {
             // auto-safe falls back to the CPU when the GPU can't decode a video.
             prefer_hw_codecs: true,
             hwdec: true,
+            native_controls: false,
             speed: 1.0,
             volume: 100.,
             volume_control: true,

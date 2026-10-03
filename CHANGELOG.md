@@ -4,6 +4,15 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Changed
+- **mpv's own controls and key bindings are off over the video by default**: no on-screen
+  controller on hover, no mpv hotkeys, and the app's shortcuts now also work while the pointer is
+  over the video. Settings > Player > *mpv controls and hotkeys* brings them back. The
+  picture-in-picture window always keeps them, since it has nothing else.
+- `f` and `Esc` leave fullscreen from the app, and a double click still toggles it.
+
 ## 0.5.0 - 2026-10-03
 
 ### Changed

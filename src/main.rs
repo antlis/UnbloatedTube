@@ -108,11 +108,12 @@ const TOGGLES: [Toggle; 9] = [
     ("Light theme", "Light colors instead of dark", |s| &mut s.light_theme),
 ];
 
-const PLAYER_TOGGLES: [Toggle; 5] = [
+const PLAYER_TOGGLES: [Toggle; 6] = [
     ("Autoplay next", "Play the next video of the list when one ends", |s| &mut s.autoplay),
     ("Audio only", "Don't fetch or show video, e.g. for music and podcasts", |s| &mut s.audio_only),
     ("Prefer hardware-friendly codecs", "Skip AV1, which many GPUs can't decode, for lower CPU use", |s| &mut s.prefer_hw_codecs),
     ("Hardware decoding", "Decode video on the GPU (mpv --hwdec=auto-safe)", |s| &mut s.hwdec),
+    ("mpv controls and hotkeys", "mpv's own on-screen controls and key bindings over the video; off: only this app's", |s| &mut s.native_controls),
     ("Block in-video ads (SponsorBlock)", "Skip sponsor reads and other segments marked by the community", |s| &mut s.sponsorblock),
 ];
 
@@ -1896,6 +1897,11 @@ impl Unbloated {
     /// Keyboard shortcuts; see SHORTCUTS. Text fields stop the keys they use from reaching here.
     fn shortcut(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &ev.keystroke;
+        if self.fullscreen && k.key == "escape" {
+            self.player.set_fullscreen(false);
+            cx.stop_propagation();
+            return;
+        }
         if self.channel_menu.is_some() && k.key == "escape" {
             self.channel_menu = None;
             self.confirm_unsub = None;
@@ -1955,7 +1961,7 @@ impl Unbloated {
             "right" if active => self.player.seek_relative(5.),
             "j" if active => self.player.seek_relative(-10.),
             "l" if active => self.player.seek_relative(10.),
-            "f" if active => self.player.set_fullscreen(true),
+            "f" if active => self.player.set_fullscreen(!self.fullscreen),
             "m" => self.player.toggle_mute(),
             "up" | "=" => self.change_volume(5., cx),
             "down" | "-" => self.change_volume(-5., cx),
@@ -2077,7 +2083,7 @@ impl Unbloated {
             "right" if active => self.player.seek_relative(5.),
             "," if active => self.player.seek_relative(-10.),
             "." if active => self.player.seek_relative(10.),
-            "F" if active => self.player.set_fullscreen(true),
+            "F" if active => self.player.set_fullscreen(!self.fullscreen),
             "m" => self.player.toggle_mute(),
             "+" | "=" => self.change_volume(5., cx),
             "-" => self.change_volume(-5., cx),
@@ -4421,8 +4427,16 @@ fn tab_button(label: impl Into<SharedString>, active: bool) -> Stateful<gpui::Di
 impl Render for Unbloated {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let (true, Some(video)) = (self.fullscreen, self.current.clone()) {
-            // Only the video; f / double-click / Esc on it (handled by mpv) leave fullscreen.
-            return div().size_full().bg(gpui::black()).child(self.screen(&video, true, cx));
+            // Only the video; f / Esc (here, or in mpv with its hotkeys on) and a double click leave fullscreen.
+            if window.focused(cx).is_none() {
+                window.focus(&self.root_focus);
+            }
+            return div()
+                .size_full()
+                .bg(gpui::black())
+                .track_focus(&self.root_focus)
+                .on_key_down(cx.listener(Self::shortcut))
+                .child(self.screen(&video, true, cx));
         }
         let st = &self.settings;
         let tabs: Vec<_> = [
