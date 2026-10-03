@@ -261,6 +261,25 @@ Without it, search and playback still work.
   - `xdg-open` for Open in browser (`open` on macOS, `start` on Windows)
   - the config, data and cache locations (`~/.config`, `~/.local/share`, `~/.cache`)
 - **Wayland** is untested.
+- **Prebuilt binaries (packaging, first).** Compiling from source is slow: the build pulls in about
+  728 crates (mostly GPUI's dependencies) and took well over 15 minutes in a clean Nix build on 8
+  cores, so every user of a source package (Nix, AUR source or `-git`, `cargo install`) would wait
+  that long. Build once in CI instead and let everyone else download the result:
+  - written, not yet run: `.github/workflows/release.yml` builds a Linux x86_64 release binary
+    on every `v*` tag (on ubuntu-22.04), packs it with the README, changelog, desktop entry and
+    icon into a `.tar.gz` with a checksum, and publishes a GitHub release whose notes are that
+    version's changelog section; "Run workflow" builds the archive without publishing. Still to
+    do: check it on a real run (the apt package list is from memory), and a README line listing
+    the tools to install (`mpv`, `yt-dlp`, `deno`) and the system libraries the binary links
+    against
+  - build on an older distro image (not the newest) so the binary's glibc requirement stays low
+    and it runs on more distros
+  - the same build feeds the `.deb` and `.rpm` packages and an AUR `-bin` package (below)
+  - for Nix, a binary cache (e.g. Cachix, or a cache filled by CI) so `nix run` downloads the
+    package rather than compiling it; or get it into nixpkgs, where the build servers cache it
+  - a cache of the Cargo build in CI (e.g. `Swatinem/rust-cache`) keeps the CI builds themselves
+    fast; arm64 and other targets later, if wanted
+  - unchecked: the CI and cache details, free-tier limits, and how long the CI build takes
 - **Nix packaging.** `default.nix` and `package.nix` build and wrap the app (done, tested with
   `nix-build`: it starts from a clean environment with mpv, yt-dlp and deno on its `PATH`). Still
   open: a flake, a binary cache so users don't compile it (see *Prebuilt binaries*), and a
@@ -268,7 +287,8 @@ Without it, search and playback still work.
   (`nix/unstable.nix`) for yt-dlp, deno and mpv, which is fine for `nix-env` but not what a
   nixpkgs package would do.
 - **AUR package** (Arch). A `PKGBUILD` that builds from the release tag, with `mpv`, `yt-dlp` and
-  `deno` as dependencies; first a `-git` or source package, then possibly a binary one.
+  `deno` as dependencies; a source or `-git` package compiles everything on the user's machine, so a `-bin` package
+  using the prebuilt release binary should come with it, or first.
 - **crates.io.** `cargo install unbloated-youtube`. All dependencies are already on crates.io
   (no git or path dependencies), but `Cargo.toml` still lacks `description`, `license` and
   `repository`, and the repository has no `LICENSE` file; those are required to publish. It
@@ -281,7 +301,6 @@ Without it, search and playback still work.
     the host's, and a bundled `yt-dlp` goes stale quickly
   - a Flatpak; `mpv` is easy to include, but the X11 embedding, `yt-dlp` updates and reading
     the browser's cookies from inside the sandbox need care
-  - prebuilt binaries on GitHub releases, with a README line listing the tools to install
 - **Casting (play on another device).** A cast button that sends the playing video to a TV,
   speaker or another machine. Nothing here is built or tested; it is a design with the
   considerations written down. Two ways to send to your own mpv (a homelab box wired to the TV,

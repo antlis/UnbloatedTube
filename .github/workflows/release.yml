@@ -1,0 +1,66 @@
+name: Release
+
+# A version tag builds the Linux binary and publishes a GitHub release with it.
+# "Run workflow" (workflow_dispatch) builds and uploads the archive as a workflow artifact only.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux-x86_64:
+    # An older image keeps the binary's glibc requirement low, so it runs on more distros.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config cmake clang libasound2-dev libfontconfig-dev libfreetype-dev \
+            libwayland-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libssl-dev libzstd-dev libvulkan-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package
+        id: pkg
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          name="unbloated-youtube-${version}-x86_64-linux"
+          mkdir "$name"
+          strip -o "$name/unbloated-youtube" target/release/unbloated-youtube
+          cp README.md CHANGELOG.md packaging/unbloated-youtube.desktop packaging/unbloated-youtube.svg "$name/"
+          tar czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "archive=$name.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pkg.outputs.archive }}
+          path: |
+            ${{ steps.pkg.outputs.archive }}
+            ${{ steps.pkg.outputs.archive }}.sha256
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.pkg.outputs.version }}
+          ARCHIVE: ${{ steps.pkg.outputs.archive }}
+        run: |
+          # The tag must match Cargo.toml, or the archive would carry the wrong version.
+          [ "$GITHUB_REF_NAME" = "v$VERSION" ] || { echo "tag $GITHUB_REF_NAME != Cargo.toml version $VERSION"; exit 1; }
+          # This version's section of the changelog is the release notes.
+          awk -v v="## $VERSION " 'index($0, v) == 1 { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md > notes.md
+          gh release create "$GITHUB_REF_NAME" "$ARCHIVE" "$ARCHIVE.sha256" \
+            --title "unbloated-youtube $VERSION" --notes-file notes.md
