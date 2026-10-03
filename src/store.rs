@@ -159,6 +159,8 @@ pub struct Settings {
     pub playlists: bool,
     pub history: bool,
     pub recommendations: bool,
+    /// Chapters tab under the player, for videos that have chapters.
+    pub chapters: bool,
     pub shorts: bool,
     /// Vim-style keys: j/k move a selection in lists, f shows click hints.
     pub vim: bool,
@@ -216,6 +218,7 @@ impl Default for Settings {
             playlists: true,
             history: true,
             recommendations: true,
+            chapters: true,
             shorts: true,
             vim: false,
             notifications: true,

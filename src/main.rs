@@ -98,11 +98,12 @@ fn channel_of(v: &Video) -> Option<&str> {
 /// Settings page toggles: label, hint, field.
 type Toggle = (&'static str, &'static str, fn(&mut Settings) -> &mut bool);
 
-const TOGGLES: [Toggle; 8] = [
+const TOGGLES: [Toggle; 9] = [
     ("Subscriptions", "Your subscribed channels", |s| &mut s.subscriptions),
     ("Playlists", "Watch later, Liked and your playlists", |s| &mut s.playlists),
     ("History", "What you watched, here and on YouTube", |s| &mut s.history),
     ("Recommendations", "Your YouTube home feed under the player", |s| &mut s.recommendations),
+    ("Chapters", "Chapters tab under the player, for videos that have them", |s| &mut s.chapters),
     ("Shorts", "Shorts tab on channels, and Shorts in feeds and search", |s| &mut s.shorts),
     ("Vim mode", "j/k move, Enter opens, h goes back, f shows click hints; ? lists all keys", |s| &mut s.vim),
     ("Window buttons", "Minimize, maximize and close, top right", |s| &mut s.window_buttons),
@@ -186,6 +187,7 @@ impl<T> Load<T> {
 enum Lower {
     Recommended,
     UpNext,
+    Chapters,
 }
 
 /// Keyboard shortcuts (also listed in Settings). Keys reach mpv instead while the pointer is
@@ -298,6 +300,9 @@ struct Unbloated {
     vim_cursor: usize,
     vim_list: String,
     vim_scroll: UniformListScrollHandle,
+    /// Chapters list scroll, and the chapter it last scrolled to.
+    chapters_scroll: UniformListScrollHandle,
+    chapter_shown: Option<usize>,
     /// First "g" of "gg" was pressed.
     vim_g: bool,
     /// First "y" of "yy" was pressed.
@@ -469,6 +474,8 @@ impl Unbloated {
             vim_cursor: 0,
             vim_list: String::new(),
             vim_scroll: UniformListScrollHandle::new(),
+            chapters_scroll: UniformListScrollHandle::new(),
+            chapter_shown: None,
             vim_g: false,
             vim_y: false,
             vim_positions: HashMap::new(),
@@ -3602,6 +3609,69 @@ impl Unbloated {
         })
     }
 
+    /// The playing video's chapters (empty when off in Settings or the video has none).
+    fn chapter_list(&self) -> Arc<[(f64, String)]> {
+        match &self.state {
+            Some(s) if self.settings.chapters => s.chapters.clone().into(),
+            _ => Arc::from(Vec::new()),
+        }
+    }
+
+    /// Clickable chapters; the current one is highlighted and scrolled into view when it changes.
+    fn render_chapters(&mut self, chapters: Arc<[(f64, String)]>, cx: &mut Context<Self>) -> AnyElement {
+        let position = self.state.as_ref().map_or(0., |s| s.position);
+        let current = chapters.iter().rposition(|(t, _)| *t <= position).unwrap_or(0);
+        if self.chapter_shown != Some(current) {
+            self.chapter_shown = Some(current);
+            self.chapters_scroll.scroll_to_item(current, ScrollStrategy::Center);
+        }
+        uniform_list(
+            "chapters",
+            chapters.len(),
+            cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+                range
+                    .map(|i| {
+                        let (start, title) = &chapters[i];
+                        let (start, is_current) = (*start, i == current);
+                        let title = if title.is_empty() { format!("Chapter {}", i + 1) } else { title.clone() };
+                        div()
+                            .id(i)
+                            .w_full()
+                            .h(px(40.))
+                            .px_3()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .cursor_pointer()
+                            .when(is_current, |d| d.bg(themed(HOVER)))
+                            .hover(|d| d.bg(themed(HOVER)))
+                            .child(
+                                div()
+                                    .w(px(64.))
+                                    .flex_none()
+                                    .text_xs()
+                                    .text_color(if is_current { themed(ACCENT) } else { themed(MUTED) })
+                                    .child(fmt_duration(start)),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_sm()
+                                    .text_color(if is_current { themed(TEXT) } else { themed(MUTED) })
+                                    .child(title),
+                            )
+                            .on_click_hinted(&this.hint_reg(), cx, move |this, _, _, _| this.player.seek_absolute(start))
+                    })
+                    .collect()
+            }),
+        )
+        .track_scroll(self.chapters_scroll.clone())
+        .flex_1()
+        .into_any_element()
+    }
+
     fn render_recs(&mut self, cx: &mut Context<Self>) -> AnyElement {
         if let Some(p) = self.placeholder(&self.recs, "No recommendations.", Rows::Videos) {
             return p;
@@ -4164,9 +4234,15 @@ impl Render for Unbloated {
             right
         };
         let show_recs = self.settings.recommendations;
-        let right = if show_recs || !self.up_next.is_empty() {
-            let lower = if show_recs { self.lower } else { Lower::UpNext };
+        let chapters = self.chapter_list();
+        let right = if show_recs || !self.up_next.is_empty() || !chapters.is_empty() {
+            let lower = match self.lower {
+                Lower::Chapters if !chapters.is_empty() => Lower::Chapters,
+                Lower::Chapters | Lower::Recommended if show_recs => Lower::Recommended,
+                _ => Lower::UpNext,
+            };
             let body = match lower {
+                Lower::Chapters => self.render_chapters(chapters.clone(), cx),
                 Lower::Recommended => self.render_recs(cx),
                 Lower::UpNext if self.up_next.is_empty() => self.status("Nothing queued. Hover a video and press + to add it."),
                 Lower::UpNext => self.video_list("up-next", &self.up_next.clone(), None, cx),
@@ -4186,6 +4262,18 @@ impl Render for Unbloated {
                                     this.lower = Lower::Recommended;
                                     cx.notify();
                                 }),
+                            )
+                        })
+                        .when(!chapters.is_empty(), |d| {
+                            d.child(
+                                tab_button(format!("Chapters ({})", chapters.len()), lower == Lower::Chapters).on_click_hinted(
+                                    &self.hint_reg(),
+                                    cx,
+                                    |this, _, _, cx| {
+                                        this.lower = Lower::Chapters;
+                                        cx.notify();
+                                    },
+                                ),
                             )
                         })
                         .child(
