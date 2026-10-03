@@ -118,6 +118,7 @@ remembered.
 | C | Copy the video's link |
 | ⇧C | Copy the link at the current time (`y t` in Vim mode) |
 | E | Lower pane (Recommended, Chapters, Up next) full height, and back (`e` in Vim mode) |
+| [ / ] | Previous / next tab of the lower pane (Recommended, Chapters, Up next) |
 | 1 – 4 | Switch tab: Subscriptions, Playlists, History, Settings |
 | B | Hide or show the left column (`b` in Vim mode) |
 | / | Search |

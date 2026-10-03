@@ -191,7 +191,7 @@ enum Lower {
 
 /// Keyboard shortcuts (also listed in Settings). Keys reach mpv instead while the pointer is
 /// over the video; mpv's own defaults there are similar (Space, arrows, f).
-const SHORTCUTS: [(&str, &str); 19] = [
+const SHORTCUTS: [(&str, &str); 20] = [
     ("Space / K", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     ("J / L", "Back / forward 10 seconds"),
@@ -204,6 +204,7 @@ const SHORTCUTS: [(&str, &str); 19] = [
     ("N", "Next (Up next first)"),
     ("P", "Previous"),
     ("E", "Lower pane full height, and back"),
+    ("[ / ]", "Previous / next lower tab (Recommended, Chapters, Up next)"),
     ("1 - 4", "Switch tab: Subscriptions, Playlists, History, Settings"),
     ("B", "Hide or show the left column"),
     ("/", "Search"),
@@ -214,10 +215,10 @@ const SHORTCUTS: [(&str, &str); 19] = [
 ];
 
 /// Cheatsheet groups: title, how many SHORTCUTS entries it takes (in order), and its column.
-const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 10, 1)];
+const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 11, 1)];
 
 /// Vim mode's keys (case matters: ⇧ means Shift).
-const VIM_SHORTCUTS: [(&str, &str); 25] = [
+const VIM_SHORTCUTS: [(&str, &str); 26] = [
     ("Space", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     (", / .", "Back / forward 10 seconds"),
@@ -237,6 +238,7 @@ const VIM_SHORTCUTS: [(&str, &str); 25] = [
     ("x", "Add the selected video to Up next"),
     ("f", "Click hints: type the label to click"),
     ("e", "Lower pane full height, and back"),
+    ("[ / ]", "Previous / next lower tab (Recommended, Chapters, Up next)"),
     ("1 - 4", "Switch tab: Subscriptions, Playlists, History, Settings"),
     ("b", "Hide or show the left column"),
     ("/", "Search"),
@@ -244,7 +246,7 @@ const VIM_SHORTCUTS: [(&str, &str); 25] = [
     ("?", "Show these shortcuts"),
     ("Esc", "Cancel / close / back"),
 ];
-const VIM_SHEET_GROUPS: [(&str, usize, usize); 3] = [("Playback", 10, 0), ("Navigation", 11, 1), ("General", 4, 0)];
+const VIM_SHEET_GROUPS: [(&str, usize, usize); 3] = [("Playback", 10, 0), ("Navigation", 12, 1), ("General", 4, 0)];
 
 /// An entry of the left column's list, for Vim navigation.
 #[derive(Clone)]
@@ -1895,6 +1897,8 @@ impl Unbloated {
             "down" | "-" => self.change_volume(-5., cx),
             "e" => self.toggle_lower_full(window, cx),
             "b" => self.toggle_left_collapsed(cx),
+            "[" => self.step_lower(-1, cx),
+            "]" => self.step_lower(1, cx),
             "1" | "2" | "3" | "4" if !k.modifiers.shift => self.tab_number(k.key.parse().unwrap_or(0), cx),
             "c" if k.modifiers.shift => self.copy_link_at_time(cx),
             "c" => self.copy_link(cx),
@@ -1960,6 +1964,8 @@ impl Unbloated {
             "t" if pending_y => self.copy_link_at_time(cx),
             "e" => self.toggle_lower_full(window, cx),
             "b" => self.toggle_left_collapsed(cx),
+            "[" => self.step_lower(-1, cx),
+            "]" => self.step_lower(1, cx),
             "1" | "2" | "3" | "4" => self.tab_number(token.parse().unwrap_or(0), cx),
             "y" => self.vim_y = true,
             "g" => self.vim_g = true,
@@ -2099,6 +2105,27 @@ impl Unbloated {
         let i = tabs.iter().position(|t| *t == self.tab).unwrap_or(0) as isize;
         let next = (i + step).rem_euclid(tabs.len() as isize) as usize;
         self.select_tab(tabs[next], cx);
+    }
+
+    /// Switch the lower pane to the previous (-1) or next (1) of its tabs: Recommended (if on),
+    /// Chapters (if the video has them) and Up next.
+    fn step_lower(&mut self, step: isize, cx: &mut Context<Self>) {
+        let mut tabs = Vec::new();
+        if self.settings.recommendations {
+            tabs.push(Lower::Recommended);
+        }
+        if !self.chapter_list().is_empty() {
+            tabs.push(Lower::Chapters);
+        }
+        tabs.push(Lower::UpNext);
+        // The tab shown now (see the lower pane in `render`).
+        let current = match self.lower {
+            Lower::Chapters | Lower::Recommended if !tabs.contains(&self.lower) => tabs[0],
+            tab => tab,
+        };
+        let i = tabs.iter().position(|t| *t == current).unwrap_or(0) as isize;
+        self.lower = tabs[(i + step).rem_euclid(tabs.len() as isize) as usize];
+        cx.notify();
     }
 
     /// Jump to the `n`th header tab (1-based), as shown; nothing if there are fewer.
@@ -4203,6 +4230,17 @@ fn icon_button(
         .tooltip(tip(tooltip))
 }
 
+/// First visible row and how many rows fit, for a uniform list of `row_h`-tall rows. (GPUI's own
+/// `logical_scroll_top` always says 0 for uniform lists.) `fallback_h` is used until the list has
+/// been laid out once.
+fn scroll_window(handle: &UniformListScrollHandle, row_h: f32, fallback_h: f32) -> (usize, usize) {
+    let state = handle.0.borrow();
+    let top = (f32::from(-state.base_handle.offset().y) / row_h).max(0.).floor() as usize;
+    let h = f32::from(state.base_handle.bounds().size.height);
+    let visible = (if h > 0. { h } else { fallback_h } / row_h).floor().max(1.) as usize;
+    (top, visible)
+}
+
 fn tab_button(label: impl Into<SharedString>, active: bool) -> Stateful<gpui::Div> {
     let label: SharedString = label.into();
     // Id from the label's first word, so "Up next (3)" keeps one id as its count changes.
@@ -4230,17 +4268,6 @@ impl Render for Unbloated {
         let tabs: Vec<_> = [
             (st.subscriptions, "Subscriptions", Tab::Subscriptions),
             (st.playlists, "Playlists", Tab::Playlists),
-/// First visible row and how many rows fit, for a uniform list of `row_h`-tall rows. (GPUI's own
-/// `logical_scroll_top` always says 0 for uniform lists.) `fallback_h` is used until the list has
-/// been laid out once.
-fn scroll_window(handle: &UniformListScrollHandle, row_h: f32, fallback_h: f32) -> (usize, usize) {
-    let state = handle.0.borrow();
-    let top = (f32::from(-state.base_handle.offset().y) / row_h).max(0.).floor() as usize;
-    let h = f32::from(state.base_handle.bounds().size.height);
-    let visible = (if h > 0. { h } else { fallback_h } / row_h).floor().max(1.) as usize;
-    (top, visible)
-}
-
             (st.history, "History", Tab::History),
         ]
         .into_iter()
