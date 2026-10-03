@@ -179,8 +179,9 @@ newer: Ubuntu 22.04+, Debian 12+, Fedora, Arch). Unpack it and run `unbloated-yo
 `.desktop` file and icon in it are for your launcher. Install separately:
 
 - the tools above: `mpv`, `yt-dlp`, `deno`
-- libraries the binary links against, which most desktops already have: FreeType, xkbcommon
-  (and its X11 part), xcb, libpng, zlib; plus Vulkan drivers for your GPU (Mesa's, or
+- libraries the binary links against, which most desktops already have: xkbcommon (and its X11
+  part, `libxkbcommon-x11`) and xcb; it also loads the Vulkan loader and Wayland client library
+  at run time, so install those and a Vulkan driver for your GPU (Mesa's, or
   `mesa-vulkan-drivers`)
 
 Check the download with the `.sha256` file next to it (`sha256sum -c`).
@@ -299,10 +300,17 @@ Without it, search and playback still work.
   `nixpkgs` submission. A first build compiles every crate. The package pins its own nixpkgs
   (`nix/unstable.nix`) for yt-dlp, deno and mpv, which is fine for `nix-env` but not what a
   nixpkgs package would do.
-- **AUR package** (Arch). A `PKGBUILD` with `mpv`, `yt-dlp` and `deno` as dependencies. A
-  `-bin` package can now be written first: it downloads the GitHub release archive (v0.8.0 and
-  later) and checks its `.sha256`, so nobody compiles anything. A source or `-git` package
-  compiles all ~730 crates on the user's machine, so it comes second.
+- **AUR package** (Arch). `packaging/aur/PKGBUILD` (with `.SRCINFO`) for `unbloated-youtube-bin`
+  is written: it downloads the v0.8.0 release archive, pins its sha256, depends on `mpv`,
+  `yt-dlp`, `deno`, xkbcommon, xcb, Wayland and a Vulkan loader and driver, and installs the
+  binary, desktop entry, icon and README. Tested with `makepkg --nodeps` on NixOS (source
+  checksum passes, `package()` stages the right files); not tested on Arch, so the dependency
+  names are from memory, and the archive's file modes in that test looked wrong (likely the Nix
+  `fakeroot`, but unchecked). Not published yet: that needs an AUR account and SSH key, then
+  `git push` of the PKGBUILD and `.SRCINFO` to `ssh://aur@aur.archlinux.org/unbloated-youtube-bin.git`.
+  Each release means bumping `pkgver` and `sha256sums` and regenerating `.SRCINFO`
+  (`makepkg --printsrcinfo`), which a release step could do. The `license` is `unknown` until the
+  repository has a LICENSE. A source or `-git` package (compiles all ~730 crates) comes second.
 - **crates.io.** `cargo install unbloated-youtube`. All dependencies are already on crates.io
   (no git or path dependencies), but `Cargo.toml` still lacks `description`, `license` and
   `repository`, and the repository has no `LICENSE` file; those are required to publish. It
