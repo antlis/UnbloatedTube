@@ -191,7 +191,7 @@ enum Lower {
 
 /// Keyboard shortcuts (also listed in Settings). Keys reach mpv instead while the pointer is
 /// over the video; mpv's own defaults there are similar (Space, arrows, f).
-const SHORTCUTS: [(&str, &str); 23] = [
+const SHORTCUTS: [(&str, &str); 24] = [
     ("Space / K", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     ("J / L", "Back / forward 10 seconds"),
@@ -205,8 +205,9 @@ const SHORTCUTS: [(&str, &str); 23] = [
     ("P", "Previous"),
     ("E", "Lower pane full height, and back"),
     ("⇧E", "Player full height (hide the lower pane), and back"),
-    ("[ / ]", "Previous / next lower tab (Recommended, Chapters, Up next)"),
+    ("[ / ]", "Previous / next tab (header tabs, then the lower pane's)"),
     ("1 - 4", "Switch tab: Subscriptions, Playlists, History, Settings"),
+    ("5 - 7", "Switch lower tab: Recommended, Chapters, Up next"),
     ("Tab / ⇧Tab", "Move the focus ring (Enter or Space presses, Esc clears)"),
     ("B", "Hide or show the left column"),
     ("⇧B", "Hide or show the right column"),
@@ -218,10 +219,10 @@ const SHORTCUTS: [(&str, &str); 23] = [
 ];
 
 /// Cheatsheet groups: title, how many SHORTCUTS entries it takes (in order), and its column.
-const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 14, 1)];
+const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 15, 1)];
 
 /// Vim mode's keys (case matters: ⇧ means Shift).
-const VIM_SHORTCUTS: [(&str, &str); 29] = [
+const VIM_SHORTCUTS: [(&str, &str); 30] = [
     ("Space", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     (", / .", "Back / forward 10 seconds"),
@@ -242,8 +243,9 @@ const VIM_SHORTCUTS: [(&str, &str); 29] = [
     ("f", "Click hints: type the label to click"),
     ("e", "Lower pane full height, and back"),
     ("⇧E", "Player full height (hide the lower pane), and back"),
-    ("[ / ]", "Previous / next lower tab (Recommended, Chapters, Up next)"),
+    ("[ / ]", "Previous / next tab (header tabs, then the lower pane's)"),
     ("1 - 4", "Switch tab: Subscriptions, Playlists, History, Settings"),
+    ("5 - 7", "Switch lower tab: Recommended, Chapters, Up next"),
     ("Tab / ⇧Tab", "Move the focus ring (Enter or Space presses, Esc clears)"),
     ("b", "Hide or show the left column"),
     ("⇧B", "Hide or show the right column"),
@@ -252,7 +254,7 @@ const VIM_SHORTCUTS: [(&str, &str); 29] = [
     ("?", "Show these shortcuts"),
     ("Esc", "Cancel / close / back"),
 ];
-const VIM_SHEET_GROUPS: [(&str, usize, usize); 3] = [("Playback", 10, 0), ("Navigation", 15, 1), ("General", 4, 0)];
+const VIM_SHEET_GROUPS: [(&str, usize, usize); 3] = [("Playback", 10, 0), ("Navigation", 16, 1), ("General", 4, 0)];
 
 /// An entry of the left column's list, for Vim navigation.
 #[derive(Clone)]
@@ -328,6 +330,8 @@ struct Unbloated {
     hint_targets: Rc<RefCell<Vec<HintTarget>>>,
     /// The element the Tab focus ring is on (where it was last seen); None when the ring is off.
     kb_focus: Option<GBounds<GPixels>>,
+    /// `[` / `]` are cycling in the lower pane's tabs (otherwise in the header tabs).
+    cycle_lower: bool,
     /// Hint mode: the targets when `f` was pressed, and the letters typed so far.
     hints: Option<(Vec<HintTarget>, String)>,
     /// Picture-in-picture: mpv plays in its own small always-on-top window.
@@ -516,6 +520,7 @@ impl Unbloated {
             vim_positions: HashMap::new(),
             hint_targets: Rc::new(RefCell::new(Vec::new())),
             kb_focus: None,
+            cycle_lower: false,
             hints: None,
             settings_filter: String::new(),
             settings_focus: cx.focus_handle(),
@@ -1449,6 +1454,7 @@ impl Unbloated {
 
     fn select_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
         self.tab = tab;
+        self.cycle_lower = false;
         self.left_collapsed = false;
         self.searching = false;
         let idle = match tab {
@@ -1957,9 +1963,9 @@ impl Unbloated {
             "e" => self.toggle_lower_full(window, cx),
             "b" if k.modifiers.shift => self.toggle_right_collapsed(cx),
             "b" => self.toggle_left_collapsed(cx),
-            "[" => self.step_lower(-1, cx),
-            "]" => self.step_lower(1, cx),
-            "1" | "2" | "3" | "4" if !k.modifiers.shift => self.tab_number(k.key.parse().unwrap_or(0), cx),
+            "[" => self.cycle_tabs(-1, cx),
+            "]" => self.cycle_tabs(1, cx),
+            "1" | "2" | "3" | "4" | "5" | "6" | "7" if !k.modifiers.shift => self.tab_number(k.key.parse().unwrap_or(0), cx),
             "c" if k.modifiers.shift => self.copy_link_at_time(cx),
             "c" => self.copy_link(cx),
             "n" => {
@@ -2026,9 +2032,9 @@ impl Unbloated {
             "e" => self.toggle_lower_full(window, cx),
             "B" => self.toggle_right_collapsed(cx),
             "b" => self.toggle_left_collapsed(cx),
-            "[" => self.step_lower(-1, cx),
-            "]" => self.step_lower(1, cx),
-            "1" | "2" | "3" | "4" => self.tab_number(token.parse().unwrap_or(0), cx),
+            "[" => self.cycle_tabs(-1, cx),
+            "]" => self.cycle_tabs(1, cx),
+            "1" | "2" | "3" | "4" | "5" | "6" | "7" => self.tab_number(token.parse().unwrap_or(0), cx),
             "y" => self.vim_y = true,
             "g" => self.vim_g = true,
             "G" => self.vim_move(isize::MAX, len, window),
@@ -2236,9 +2242,8 @@ impl Unbloated {
         self.select_tab(tabs[next], cx);
     }
 
-    /// Switch the lower pane to the previous (-1) or next (1) of its tabs: Recommended (if on),
-    /// Chapters (if the video has them) and Up next.
-    fn step_lower(&mut self, step: isize, cx: &mut Context<Self>) {
+    /// The lower pane's tabs as shown: Recommended (if on), Chapters (if the video has them), Up next.
+    fn lower_tabs(&self) -> Vec<Lower> {
         let mut tabs = Vec::new();
         if self.settings.recommendations {
             tabs.push(Lower::Recommended);
@@ -2247,20 +2252,51 @@ impl Unbloated {
             tabs.push(Lower::Chapters);
         }
         tabs.push(Lower::UpNext);
-        // The tab shown now (see the lower pane in `render`).
-        let current = match self.lower {
+        tabs
+    }
+
+    /// The lower pane tab shown now (see the lower pane in `render`).
+    fn shown_lower(&self, tabs: &[Lower]) -> Lower {
+        match self.lower {
             Lower::Chapters | Lower::Recommended if !tabs.contains(&self.lower) => tabs[0],
             tab => tab,
+        }
+    }
+
+    /// `[` / `]`: go to the previous (-1) or next (1) tab, through the header tabs and then the
+    /// lower pane's, wrapping around: the same seven tabs as the number keys.
+    fn cycle_tabs(&mut self, step: isize, cx: &mut Context<Self>) {
+        let header = self.tab_list();
+        let lower = self.lower_tabs();
+        let at = if self.cycle_lower {
+            header.len() + lower.iter().position(|t| *t == self.shown_lower(&lower)).unwrap_or(0)
+        } else {
+            header.iter().position(|t| *t == self.tab).unwrap_or(0)
         };
-        let i = tabs.iter().position(|t| *t == current).unwrap_or(0) as isize;
-        self.lower = tabs[(i + step).rem_euclid(tabs.len() as isize) as usize];
+        let next = (at as isize + step).rem_euclid((header.len() + lower.len()) as isize) as usize;
+        if next < header.len() {
+            self.select_tab(header[next], cx);
+        } else {
+            self.show_lower(lower[next - header.len()], cx);
+        }
+    }
+
+    fn show_lower(&mut self, tab: Lower, cx: &mut Context<Self>) {
+        self.lower = tab;
+        self.cycle_lower = true;
+        self.player_full = false;
         cx.notify();
     }
 
-    /// Jump to the `n`th header tab (1-based), as shown; nothing if there are fewer.
+    /// Jump to a tab by number, as shown: 1-4 are the header tabs, 5-7 the lower pane's.
+    /// Nothing if there are fewer.
     fn tab_number(&mut self, n: usize, cx: &mut Context<Self>) {
-        if let Some(tab) = self.tab_list().get(n.wrapping_sub(1)).copied() {
-            self.select_tab(tab, cx);
+        if n <= 4 {
+            if let Some(tab) = self.tab_list().get(n.wrapping_sub(1)).copied() {
+                self.select_tab(tab, cx);
+            }
+        } else if let Some(tab) = self.lower_tabs().get(n - 5).copied() {
+            self.show_lower(tab, cx);
         }
     }
 
@@ -4589,8 +4625,7 @@ impl Render for Unbloated {
                         .when(show_recs, |d| {
                             d.child(
                                 tab_button("Recommended", lower == Lower::Recommended).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
-                                    this.lower = Lower::Recommended;
-                                    cx.notify();
+                                    this.show_lower(Lower::Recommended, cx);
                                 }),
                             )
                         })
@@ -4600,8 +4635,7 @@ impl Render for Unbloated {
                                     &self.hint_reg(),
                                     cx,
                                     |this, _, _, cx| {
-                                        this.lower = Lower::Chapters;
-                                        cx.notify();
+                                        this.show_lower(Lower::Chapters, cx);
                                     },
                                 ),
                             )
@@ -4612,8 +4646,7 @@ impl Render for Unbloated {
                                 lower == Lower::UpNext,
                             )
                             .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
-                                this.lower = Lower::UpNext;
-                                cx.notify();
+                                this.show_lower(Lower::UpNext, cx);
                             }),
                         ),
                 )
