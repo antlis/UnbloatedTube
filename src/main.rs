@@ -156,12 +156,13 @@ enum Lower {
 
 /// Keyboard shortcuts (also listed in Settings). Keys reach mpv instead while the pointer is
 /// over the video; mpv's own defaults there are similar (Space, arrows, f).
-const SHORTCUTS: [(&str, &str); 12] = [
+const SHORTCUTS: [(&str, &str); 13] = [
     ("Space / K", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     ("J / L", "Back / forward 10 seconds"),
     ("F", "Fullscreen (Esc or f to leave)"),
     ("M", "Mute"),
+    ("C", "Copy the video's link"),
     ("Click / Double-click", "Pause / fullscreen (on the video)"),
     ("N", "Next (Up next first)"),
     ("P", "Previous"),
@@ -172,16 +173,17 @@ const SHORTCUTS: [(&str, &str); 12] = [
 ];
 
 /// Cheatsheet columns: title and how many SHORTCUTS entries it takes, in order.
-const SHEET_GROUPS: [(&str, usize); 2] = [("Playback", 6), ("Navigation", 6)];
+const SHEET_GROUPS: [(&str, usize); 2] = [("Playback", 7), ("Navigation", 6)];
 
 /// Vim mode's keys (case matters: ⇧ means Shift).
-const VIM_SHORTCUTS: [(&str, &str); 18] = [
+const VIM_SHORTCUTS: [(&str, &str); 19] = [
     ("Space", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     (", / .", "Back / forward 10 seconds"),
     ("⇧F", "Fullscreen (Esc or f to leave)"),
     ("m", "Mute"),
     ("n / p", "Next / previous video"),
+    ("y y", "Copy the video's link"),
     ("j / k", "Move down / up the list"),
     ("g g / ⇧G", "First / last item"),
     ("Ctrl-d / Ctrl-u", "Move 10 down / up"),
@@ -195,7 +197,7 @@ const VIM_SHORTCUTS: [(&str, &str); 18] = [
     ("Esc", "Cancel / close / back"),
     ("Click / Double-click", "Pause / fullscreen (on the video)"),
 ];
-const VIM_SHEET_GROUPS: [(&str, usize); 2] = [("Playback", 6), ("Navigation", 12)];
+const VIM_SHEET_GROUPS: [(&str, usize); 2] = [("Playback", 7), ("Navigation", 12)];
 
 /// An entry of the left column's list, for Vim navigation.
 #[derive(Clone)]
@@ -257,6 +259,8 @@ struct Unbloated {
     vim_scroll: UniformListScrollHandle,
     /// First "g" of "gg" was pressed.
     vim_g: bool,
+    /// First "y" of "yy" was pressed.
+    vim_y: bool,
     /// Selection per list, restored when going back to it.
     vim_positions: HashMap<String, usize>,
     /// Clickable elements and their click actions, collected every frame (Vim mode) for `f`.
@@ -411,6 +415,7 @@ impl Unbloated {
             vim_list: String::new(),
             vim_scroll: UniformListScrollHandle::new(),
             vim_g: false,
+            vim_y: false,
             vim_positions: HashMap::new(),
             hint_targets: Rc::new(RefCell::new(Vec::new())),
             hints: None,
@@ -1446,6 +1451,15 @@ impl Unbloated {
         cx.notify();
     }
 
+    /// Copy the current video's link (Share button, C, or yy in Vim mode).
+    fn copy_link(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.current.as_ref().map(|v| v.id.clone()) else { return };
+        let link = format!("https://youtu.be/{id}");
+        cx.write_to_clipboard(ClipboardItem::new_string(link.clone()));
+        self.notice = Some(format!("Link copied: {link}"));
+        cx.notify();
+    }
+
     fn toggle_play(&mut self, cx: &mut Context<Self>) {
         if self.state.is_some() {
             self.player.toggle_pause();
@@ -1482,6 +1496,7 @@ impl Unbloated {
             "l" if active => self.player.seek_relative(10.),
             "f" if active => self.player.set_fullscreen(true),
             "m" => self.player.toggle_mute(),
+            "c" => self.copy_link(cx),
             "n" => {
                 if let Some(v) = self.next_video() {
                     self.play(v, None, cx);
@@ -1519,6 +1534,7 @@ impl Unbloated {
             return true;
         }
         let pending_g = std::mem::take(&mut self.vim_g);
+        let pending_y = std::mem::take(&mut self.vim_y);
         let active = self.state.is_some();
         let len = self.left_items().len();
         let page = 10;
@@ -1536,6 +1552,8 @@ impl Unbloated {
             "C-d" => self.vim_move(page, len, window),
             "C-u" => self.vim_move(-page, len, window),
             "g" if pending_g => self.vim_move(isize::MIN, len, window),
+            "y" if pending_y => self.copy_link(cx),
+            "y" => self.vim_y = true,
             "g" => self.vim_g = true,
             "G" => self.vim_move(isize::MAX, len, window),
             "enter" | "l" => self.vim_activate(cx),
@@ -2882,12 +2900,11 @@ impl Unbloated {
                         )
                     })
                     .when(self.settings.share_button, |d| {
-                        let link = format!("https://youtu.be/{}", video.id);
-                        d.child(icon_button("share", "share", "Copy link", true).on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(link.clone()));
-                            this.notice = Some(format!("Link copied: {link}"));
-                            cx.notify();
-                        }))
+                        let key = if self.settings.vim { "yy" } else { "C" };
+                        d.child(
+                            icon_button("share", "share", format!("Copy link ({key})"), true)
+                                .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.copy_link(cx)),
+                        )
                     })
                     .child(div().ml_auto().pl_2().flex_none().text_xs().text_color(rgb(MUTED)).child(time)),
             )
