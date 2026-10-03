@@ -8,6 +8,8 @@ It is **keyboard-driven**: playback, lists, tabs, panes and column layout all ha
 `Tab` moves a visible focus ring through every button, row and switch (`Enter` presses it); and an
 optional Vim mode adds Vimium-style [hint mode](#vim-mode) to click anything without the mouse.
 
+![unbloated-youtube: History on the left; the player, its buttons and the Recommended, Watch later, Comments and Up next tabs on the right](docs/screenshot.png)
+
 ## Why
 
 I wanted YouTube as **its own app**, so that YouTube tabs stop piling up in my browser, and
