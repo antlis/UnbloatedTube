@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Start unbloated-youtube without paying nix-shell's ~25s evaluation on every launch:
+# the dev shell's environment is saved to .nix-env once and reused until shell.nix changes.
+set -euo pipefail
+cd "$(dirname "$(readlink -f "$0")")"
+if [[ ! -f .nix-env || shell.nix -nt .nix-env ]]; then
+  echo "Capturing the nix-shell environment (once, ~30s)…" >&2
+  # Save only what nix-shell adds or changes (PATH, library paths, …): session variables like
+  # DISPLAY or XDG_* must keep coming from wherever the app is launched. Also skip nix-shell's
+  # temp dir, which is deleted when it exits.
+  declare -A outer
+  while IFS='=' read -r -d '' k v; do outer[$k]=$v; done < <(env -0)
+  while IFS='=' read -r -d '' k v; do
+    case $k in TMPDIR | TEMP | TMP | TEMPDIR | NIX_BUILD_TOP | PWD | OLDPWD | SHLVL | _) continue ;; esac
+    [[ ${outer[$k]+set} && ${outer[$k]} == "$v" ]] && continue
+    printf 'export %s=%q\n' "$k" "$v"
+  done < <(nix-shell --run 'env -0') > .nix-env.tmp
+  mv .nix-env.tmp .nix-env
+fi
+source .nix-env
+# Whichever build is newest (cargo run builds debug, cargo build --release builds release).
+bin=$(ls -t target/release/unbloated-youtube target/debug/unbloated-youtube 2>/dev/null | head -1 || true)
+[[ -n "$bin" ]] || { echo "Build first: nix-shell --run 'cargo build'" >&2; exit 1; }
+exec "$bin" "$@"
