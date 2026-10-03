@@ -32,6 +32,25 @@ const BORDER: u32 = 0x2a2a2a;
 const TEXT: u32 = 0xe6e6e6;
 const MUTED: u32 = 0x8c8c8c;
 const ACCENT: u32 = 0xff4e45;
+
+/// Light theme on (set from the settings): `themed` swaps the palette above for `LIGHT`.
+static LIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Light counterparts of BG, PANEL, HOVER, BORDER, TEXT, MUTED (ACCENT stays).
+fn themed(c: u32) -> gpui::Rgba {
+    let light = LIGHT.load(std::sync::atomic::Ordering::Relaxed);
+    rgb(match c {
+        BG if light => 0xfafafa,
+        PANEL if light => 0xf0f0f0,
+        HOVER if light => 0xe9e9e9,
+        BORDER if light => 0xd9d9d9,
+        TEXT if light => 0x1a1a1a,
+        MUTED if light => 0x6b6b6b,
+        c => c,
+    })
+}
+/// Text and icons on the accent color: light in both themes.
+const ON_ACCENT: u32 = 0xf5f5f5;
 const ROW_H: f32 = 64.;
 /// Height of the column headers (tabs on the left, window buttons on the right), border included.
 const HEADER_H: f32 = 41.;
@@ -77,7 +96,7 @@ fn channel_of(v: &Video) -> Option<&str> {
 /// Settings page toggles: label, hint, field.
 type Toggle = (&'static str, &'static str, fn(&mut Settings) -> &mut bool);
 
-const TOGGLES: [Toggle; 7] = [
+const TOGGLES: [Toggle; 8] = [
     ("Subscriptions", "Your subscribed channels", |s| &mut s.subscriptions),
     ("Playlists", "Watch later, Liked and your playlists", |s| &mut s.playlists),
     ("History", "What you watched, here and on YouTube", |s| &mut s.history),
@@ -85,6 +104,7 @@ const TOGGLES: [Toggle; 7] = [
     ("Shorts", "Shorts tab on channels, and Shorts in feeds and search", |s| &mut s.shorts),
     ("Vim mode", "j/k move, Enter opens, h goes back, f shows click hints; ? lists all keys", |s| &mut s.vim),
     ("Window buttons", "Minimize, maximize and close, top right", |s| &mut s.window_buttons),
+    ("Light theme", "Light colors instead of dark", |s| &mut s.light_theme),
 ];
 
 const PLAYER_TOGGLES: [Toggle; 5] = [
@@ -362,6 +382,7 @@ impl Unbloated {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let history = History::load();
         let settings = Settings::load();
+        LIGHT.store(settings.light_theme, std::sync::atomic::Ordering::Relaxed);
         let root_focus = cx.focus_handle();
         window.focus(&root_focus);
         let tab = [(settings.subscriptions, Tab::Subscriptions), (settings.playlists, Tab::Playlists), (settings.history, Tab::History)]
@@ -675,7 +696,7 @@ impl Unbloated {
             .flex()
             .flex_col()
             .py_2()
-            .child(div().px_3().pb_1().text_xs().text_color(rgb(MUTED)).child("RECENT SEARCHES"))
+            .child(div().px_3().pb_1().text_xs().text_color(themed(MUTED)).child("RECENT SEARCHES"))
             .children(self.recent_searches.iter().enumerate().map(|(i, q)| {
                 let q = q.clone();
                 div()
@@ -686,10 +707,10 @@ impl Unbloated {
                     .items_center()
                     .gap_3()
                     .text_sm()
-                    .text_color(rgb(TEXT))
+                    .text_color(themed(TEXT))
                     .cursor_pointer()
-                    .hover(|d| d.bg(rgb(HOVER)))
-                    .child(svg().path(icons::path("recent")).size(px(14.)).text_color(rgb(MUTED)))
+                    .hover(|d| d.bg(themed(HOVER)))
+                    .child(svg().path(icons::path("recent")).size(px(14.)).text_color(themed(MUTED)))
                     .child(q.clone())
                     .on_click_hinted(&self.hint_reg(), cx, move |this, _, window, cx| {
                         this.query = q.clone();
@@ -703,9 +724,9 @@ impl Unbloated {
                     .px_3()
                     .pt_2()
                     .text_xs()
-                    .text_color(rgb(MUTED))
+                    .text_color(themed(MUTED))
                     .cursor_pointer()
-                    .hover(|d| d.text_color(rgb(TEXT)))
+                    .hover(|d| d.text_color(themed(TEXT)))
                     .child("Clear recent searches")
                     .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
                         this.recent_searches.clear();
@@ -948,20 +969,20 @@ impl Unbloated {
             .px_2()
             .py(px(3.))
             .rounded_md()
-            .bg(rgb(HOVER))
+            .bg(themed(HOVER))
             .border_1()
-            .border_color(if focused { rgb(MUTED) } else { rgb(BORDER) })
+            .border_color(if focused { themed(MUTED) } else { themed(BORDER) })
             .text_xs()
             .cursor_text()
-            .child(svg().path(icons::path("search")).size(px(12.)).flex_none().text_color(rgb(MUTED)))
+            .child(svg().path(icons::path("search")).size(px(12.)).flex_none().text_color(themed(MUTED)))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_color(if empty { rgb(MUTED) } else { rgb(TEXT) })
+                    .text_color(if empty { themed(MUTED) } else { themed(TEXT) })
                     .map(|d| match (empty, focused) {
-                        (_, true) => d.text_color(rgb(TEXT)).child(self.caret_text("filter", &self.list_filter, placeholder)),
+                        (_, true) => d.text_color(themed(TEXT)).child(self.caret_text("filter", &self.list_filter, placeholder)),
                         (true, false) => d.child(format!("{placeholder} (Ctrl+F)")),
                         (false, false) => d.child(self.list_filter.clone()),
                     }),
@@ -994,11 +1015,11 @@ impl Unbloated {
         let (pos, anchor) = self.caret.get(id, text);
         let (start, end) = (pos.min(anchor), pos.max(anchor));
         // Stretched to the line's height by the row.
-        let bar = || div().flex_none().w(px(1.)).bg(rgb(TEXT));
+        let bar = || div().flex_none().w(px(1.)).bg(themed(TEXT));
         let part = |t: &str| (!t.is_empty()).then(|| div().flex_none().child(t.to_string()));
         let row = div().flex().min_w_0().overflow_hidden().whitespace_nowrap();
         if text.is_empty() {
-            return row.child(bar()).child(div().text_color(rgb(MUTED)).child(placeholder.to_string()));
+            return row.child(bar()).child(div().text_color(themed(MUTED)).child(placeholder.to_string()));
         }
         row.children(part(&text[..start]))
             .when(pos == start, |d| d.child(bar()))
@@ -1014,7 +1035,7 @@ impl Unbloated {
             .px_3()
             .py_2()
             .border_b_1()
-            .border_color(rgb(BORDER))
+            .border_color(themed(BORDER))
             .child(self.filter_field(placeholder, window, cx).flex_1())
     }
 
@@ -1102,10 +1123,10 @@ impl Unbloated {
             .items_center()
             .justify_center()
             .rounded_full()
-            .bg(if on { rgb(ACCENT) } else { rgb(HOVER) })
+            .bg(if on { themed(ACCENT) } else { themed(HOVER) })
             .cursor_pointer()
             .hover(|d| d.opacity(0.85))
-            .child(svg().path(icons::path(icon)).size(px(14.)).text_color(rgb(TEXT)))
+            .child(svg().path(icons::path(icon)).size(px(14.)).text_color(if on { themed(ON_ACCENT) } else { themed(TEXT) }))
             .tooltip(tip_left(tooltip))
     }
 
@@ -1120,8 +1141,8 @@ impl Unbloated {
             .py(px(3.))
             .rounded_full()
             .text_xs()
-            .bg(if on { rgb(ACCENT) } else { rgb(HOVER) })
-            .text_color(rgb(TEXT))
+            .bg(if on { themed(ACCENT) } else { themed(HOVER) })
+            .text_color(if on { themed(ON_ACCENT) } else { themed(TEXT) })
             .cursor_pointer()
             .hover(|d| d.opacity(0.85))
             .child(label.into())
@@ -1141,9 +1162,9 @@ impl Unbloated {
                     .py(px(3.))
                     .rounded_full()
                     .border_1()
-                    .border_color(rgb(MUTED))
+                    .border_color(themed(MUTED))
                     .text_xs()
-                    .text_color(if name.is_empty() && !focused { rgb(MUTED) } else { rgb(TEXT) })
+                    .text_color(if name.is_empty() && !focused { themed(MUTED) } else { themed(TEXT) })
                     .map(|d| if focused { d.child(self.caret_text("group", name, "Group name")) } else { d.child(if name.is_empty() { "Group name".to_string() } else { name.clone() }) })
                     .on_key_down(cx.listener(Self::new_group_key))
             }
@@ -1180,7 +1201,7 @@ impl Unbloated {
             let confirming = self.confirm_delete_group.as_deref() == Some(name.as_str());
             bar = bar.child(
                 self.chip("delete-group", if confirming { "Delete group?" } else { "Delete" }, confirming)
-                    .when(!confirming, |d| d.text_color(rgb(MUTED)))
+                    .when(!confirming, |d| d.text_color(themed(MUTED)))
                     .tooltip(tip("Click twice to delete this group (channels stay subscribed)"))
                     .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.delete_group(name.clone(), cx)),
             );
@@ -1193,16 +1214,16 @@ impl Unbloated {
             .px_3()
             .py_2()
             .border_b_1()
-            .border_color(rgb(BORDER))
+            .border_color(themed(BORDER))
             .child(self.filter_field("Filter channels", window, cx))
             .child(bar)
     }
 
     /// In a channel's header: which groups the channel belongs to (click to toggle).
     fn render_group_editor(&self, channel: &str, window: &Window, cx: &mut Context<Self>) -> gpui::Div {
-        let mut row = div().flex().flex_wrap().gap_1().px_3().py_2().border_b_1().border_color(rgb(BORDER));
+        let mut row = div().flex().flex_wrap().gap_1().px_3().py_2().border_b_1().border_color(themed(BORDER));
         if self.groups.is_empty() {
-            row = row.child(div().text_xs().text_color(rgb(MUTED)).mr_2().child("No groups yet:"));
+            row = row.child(div().text_xs().text_color(themed(MUTED)).mr_2().child("No groups yet:"));
         }
         for (i, g) in self.groups.iter().enumerate() {
             let member = g.channels.iter().any(|c| c == channel);
@@ -2109,7 +2130,7 @@ impl Unbloated {
 
     /// A thumbnail box: the image, a pulsing skeleton while it downloads, or a plain box.
     fn thumb_el(&mut self, key: &str, url: Option<String>, w: f32, h: f32, radius: Pixels, cx: &mut Context<Self>) -> AnyElement {
-        let frame = div().w(px(w)).h(px(h)).flex_none().overflow_hidden().rounded(radius).bg(rgb(HOVER));
+        let frame = div().w(px(w)).h(px(h)).flex_none().overflow_hidden().rounded(radius).bg(themed(HOVER));
         match self.thumb(key, url, cx) {
             // Round the image itself: the frame's overflow clip is rectangular, so a rounded
             // frame alone would leave square corners (e.g. on round avatars).
@@ -2147,8 +2168,8 @@ impl Unbloated {
                 .rounded_md()
                 .invisible()
                 .group_hover("video-row", |s| s.visible())
-                .hover(|d| d.bg(rgb(BORDER)))
-                .child(svg().path(icons::path(icon)).size(px(14.)).text_color(rgb(TEXT)))
+                .hover(|d| d.bg(themed(BORDER)))
+                .child(svg().path(icons::path(icon)).size(px(14.)).text_color(themed(TEXT)))
                 .tooltip(tip(tooltip))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
@@ -2165,8 +2186,8 @@ impl Unbloated {
                 .rounded_md()
                 .invisible()
                 .group_hover("video-row", |s| s.visible())
-                .hover(|d| d.bg(rgb(BORDER)))
-                .child(svg().path(icons::path("trash")).size(px(14.)).text_color(rgb(TEXT)))
+                .hover(|d| d.bg(themed(BORDER)))
+                .child(svg().path(icons::path("trash")).size(px(14.)).text_color(themed(TEXT)))
                 .tooltip(tip_left(if g.id == "LL" { "Unlike (remove from Liked videos)".to_string() } else { format!("Remove from {}", g.title) }))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
@@ -2191,14 +2212,14 @@ impl Unbloated {
             .gap_3()
             .cursor_pointer()
             .group("video-row")
-            .when(playing, |d| d.bg(rgb(HOVER)))
-            .when(selected, |d| d.bg(rgb(BORDER)))
+            .when(playing, |d| d.bg(themed(HOVER)))
+            .when(selected, |d| d.bg(themed(BORDER)))
             // Watched videos are dimmed, back to full on hover.
             .when(watched && !playing && !selected, |d| d.opacity(0.45))
-            .hover(|d| d.bg(rgb(HOVER)).opacity(1.))
+            .hover(|d| d.bg(themed(HOVER)).opacity(1.))
             .child(
                 div().relative().child(thumb).when_some(progress, |d, p| {
-                    d.child(div().absolute().bottom_0().left_0().h(px(3.)).w(px(96. * p)).bg(rgb(ACCENT)))
+                    d.child(div().absolute().bottom_0().left_0().h(px(3.)).w(px(96. * p)).bg(themed(ACCENT)))
                 }),
             )
             .child(
@@ -2213,12 +2234,12 @@ impl Unbloated {
                         div()
                             .id("title")
                             .text_sm()
-                            .text_color(rgb(TEXT))
+                            .text_color(themed(TEXT))
                             .truncate()
                             .child(video.title.clone())
                             .tooltip(tip(video.title.clone())),
                     )
-                    .child(div().text_xs().text_color(rgb(MUTED)).truncate().child(meta)),
+                    .child(div().text_xs().text_color(themed(MUTED)).truncate().child(meta)),
             )
             .children(remove)
             .child(action)
@@ -2262,7 +2283,7 @@ impl Unbloated {
     }
 
     fn status(&self, msg: impl Into<SharedString>) -> AnyElement {
-        div().p_4().text_sm().text_color(rgb(MUTED)).child(msg.into()).into_any_element()
+        div().p_4().text_sm().text_color(themed(MUTED)).child(msg.into()).into_any_element()
     }
 
     fn failed(&self, e: &str) -> AnyElement {
@@ -2329,7 +2350,7 @@ impl Unbloated {
         if partial.is_empty() {
             return self.video_list("history", &videos, Some(0), cx);
         }
-        let label = |text: &'static str| div().px_3().pt_3().pb_1().text_xs().text_color(rgb(MUTED)).child(text);
+        let label = |text: &'static str| div().px_3().pt_3().pb_1().text_xs().text_color(themed(MUTED)).child(text);
         let queue: Arc<[Video]> = partial.into();
         let offset = queue.len();
         let rows = uniform_list(
@@ -2364,6 +2385,7 @@ impl Unbloated {
         let on = field(&mut self.settings);
         *on = !*on;
         self.settings.save();
+        LIGHT.store(self.settings.light_theme, std::sync::atomic::Ordering::Relaxed);
         if self.settings.recommendations && matches!(self.recs, Load::Idle) {
             self.load_recs(cx);
         }
@@ -2392,7 +2414,7 @@ impl Unbloated {
             .flex()
             .flex_col()
             .gap_2()
-            .child(div().text_xs().text_color(rgb(MUTED)).child("Skip these segments:"))
+            .child(div().text_xs().text_color(themed(MUTED)).child("Skip these segments:"))
             .child(div().flex().flex_wrap().gap_1().children(SEGMENTS.iter().enumerate().map(|(i, &(label, name))| {
                 let on = self.settings.skip_segments.iter().any(|s| s == name);
                 div()
@@ -2401,8 +2423,8 @@ impl Unbloated {
                     .py_1()
                     .rounded_md()
                     .text_xs()
-                    .bg(if on { rgb(ACCENT) } else { rgb(HOVER) })
-                    .text_color(rgb(TEXT))
+                    .bg(if on { themed(ACCENT) } else { themed(HOVER) })
+                    .text_color(if on { themed(ON_ACCENT) } else { themed(TEXT) })
                     .cursor_pointer()
                     .hover(|d| d.opacity(0.85))
                     .child(label)
@@ -2433,7 +2455,7 @@ impl Unbloated {
             .py_3()
             .flex()
             .items_center()
-            .child(div().flex_1().text_sm().text_color(rgb(TEXT)).child(label))
+            .child(div().flex_1().text_sm().text_color(themed(TEXT)).child(label))
             .children(options.into_iter().enumerate().map(|(i, (text, on))| {
                 div()
                     .id((label, i))
@@ -2442,8 +2464,8 @@ impl Unbloated {
                     .py_1()
                     .rounded_md()
                     .text_xs()
-                    .bg(if on { rgb(ACCENT) } else { rgb(HOVER) })
-                    .text_color(rgb(TEXT))
+                    .bg(if on { themed(ACCENT) } else { themed(HOVER) })
+                    .text_color(if on { themed(ON_ACCENT) } else { themed(TEXT) })
                     .cursor_pointer()
                     .hover(|d| d.opacity(0.85))
                     .child(text)
@@ -2467,7 +2489,7 @@ impl Unbloated {
             .flex()
             .flex_col()
             .gap_1()
-            .child(div().text_sm().text_color(rgb(TEXT)).child(label))
+            .child(div().text_sm().text_color(themed(TEXT)).child(label))
             .child(
                 div()
                     .id(("field", i))
@@ -2475,15 +2497,15 @@ impl Unbloated {
                     .px_2()
                     .py_1()
                     .rounded_md()
-                    .bg(rgb(HOVER))
+                    .bg(themed(HOVER))
                     .border_1()
-                    .border_color(if focused { rgb(MUTED) } else { rgb(BORDER) })
+                    .border_color(if focused { themed(MUTED) } else { themed(BORDER) })
                     .text_sm()
                     .cursor_text()
                     .map(|d| match (value.is_empty(), focused) {
-                        (true, false) => d.text_color(rgb(MUTED)).child(hint),
-                        (_, true) => d.text_color(rgb(TEXT)).child(self.caret_text(label, &value, hint)),
-                        _ => d.text_color(rgb(TEXT)).child(value.clone()),
+                        (true, false) => d.text_color(themed(MUTED)).child(hint),
+                        (_, true) => d.text_color(themed(TEXT)).child(self.caret_text(label, &value, hint)),
+                        _ => d.text_color(themed(TEXT)).child(value.clone()),
                     })
                     .on_click_hinted(&self.hint_reg(), cx, move |_, _, window, cx| {
                         window.focus(&focus);
@@ -2523,8 +2545,8 @@ impl Unbloated {
                 .rounded_full()
                 .flex()
                 .when(on, |d| d.justify_end())
-                .bg(if on { rgb(ACCENT) } else { rgb(BORDER) })
-                .child(div().size(px(14.)).rounded_full().bg(rgb(TEXT)));
+                .bg(if on { themed(ACCENT) } else { themed(BORDER) })
+                .child(div().size(px(14.)).rounded_full().bg(themed(ON_ACCENT)));
             div()
                 .id(("toggle", i))
                 .w_full()
@@ -2533,7 +2555,7 @@ impl Unbloated {
                 .flex()
                 .items_center()
                 .cursor_pointer()
-                .hover(|d| d.bg(rgb(HOVER)))
+                .hover(|d| d.bg(themed(HOVER)))
                 .child(
                     // min_w_0 lets a long hint wrap instead of pushing the switch out of view.
                     div()
@@ -2542,8 +2564,8 @@ impl Unbloated {
                         .flex()
                         .flex_col()
                         .gap_1()
-                        .child(div().text_sm().text_color(rgb(TEXT)).child(label))
-                        .child(div().text_xs().text_color(rgb(MUTED)).child(hint)),
+                        .child(div().text_sm().text_color(themed(TEXT)).child(label))
+                        .child(div().text_xs().text_color(themed(MUTED)).child(hint)),
                 )
                 .child(switch.flex_none().ml_3())
                 .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.toggle(field, cx))
@@ -2622,15 +2644,15 @@ impl Unbloated {
             .px_2()
             .py_1()
             .rounded_md()
-            .bg(rgb(HOVER))
+            .bg(themed(HOVER))
             .border_1()
-            .border_color(if focused { rgb(MUTED) } else { rgb(BORDER) })
+            .border_color(if focused { themed(MUTED) } else { themed(BORDER) })
             .text_sm()
             .cursor_text()
             .map(|d| match (self.settings_filter.is_empty(), focused) {
-                (true, false) => d.text_color(rgb(MUTED)).child("Search settings"),
-                (_, true) => d.text_color(rgb(TEXT)).child(self.caret_text("settings", &self.settings_filter, "Search settings")),
-                _ => d.text_color(rgb(TEXT)).child(self.settings_filter.clone()),
+                (true, false) => d.text_color(themed(MUTED)).child("Search settings"),
+                (_, true) => d.text_color(themed(TEXT)).child(self.caret_text("settings", &self.settings_filter, "Search settings")),
+                _ => d.text_color(themed(TEXT)).child(self.settings_filter.clone()),
             })
             .on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| {
                 window.focus(&this.settings_focus);
@@ -2671,7 +2693,7 @@ impl Unbloated {
                 div()
                     .flex()
                     .flex_col()
-                    .child(div().px_4().pt_4().pb_2().text_xs().text_color(rgb(MUTED)).child(title))
+                    .child(div().px_4().pt_4().pb_2().text_xs().text_color(themed(MUTED)).child(title))
                     .children(rows)
             }))
             .when(query.is_empty() || matches("Changes apply", "player"), |d| {
@@ -2680,37 +2702,37 @@ impl Unbloated {
                         .px_4()
                         .pt_2()
                         .text_xs()
-                        .text_color(rgb(MUTED))
+                        .text_color(themed(MUTED))
                         .child("Changes apply right away (text fields: after Enter)."),
                 )
             })
             .when(self.settings.sponsorblock && player::sponsorblock_script().is_none(), |d| {
-                d.child(div().px_4().pt_1().text_xs().text_color(rgb(ACCENT)).child(
+                d.child(div().px_4().pt_1().text_xs().text_color(themed(ACCENT)).child(
                     "SponsorBlock script not found: start the app from its nix-shell (sets UNBLOATED_SPONSORBLOCK).",
                 ))
             })
             .when(self.shortcuts().iter().any(|(k, what)| matches(k, what)) || matches("Keyboard shortcuts", "keys"), |d| {
-                d.child(div().px_4().pt_4().pb_2().text_xs().text_color(rgb(MUTED)).child("KEYBOARD SHORTCUTS")).children(
+                d.child(div().px_4().pt_4().pb_2().text_xs().text_color(themed(MUTED)).child("KEYBOARD SHORTCUTS")).children(
                     self.shortcuts().iter().filter(|(k, what)| matches(k, what) || matches("Keyboard shortcuts", "keys")).map(|(k, what)| {
                         div()
                             .px_4()
                             .py_1()
                             .flex()
                             .text_sm()
-                            .child(div().w(px(190.)).flex_none().text_color(rgb(TEXT)).child(*k))
-                            .child(div().text_color(rgb(MUTED)).child(*what))
+                            .child(div().w(px(190.)).flex_none().text_color(themed(TEXT)).child(*k))
+                            .child(div().text_color(themed(MUTED)).child(*what))
                     }),
                 )
             })
             .when(show_account, |d| {
-                d.child(div().px_4().pt_4().pb_2().text_xs().text_color(rgb(MUTED)).child("ACCOUNT"))
-                    .child(div().px_4().text_sm().text_color(rgb(TEXT)).child(login))
+                d.child(div().px_4().pt_4().pb_2().text_xs().text_color(themed(MUTED)).child("ACCOUNT"))
+                    .child(div().px_4().text_sm().text_color(themed(TEXT)).child(login))
                     .child(
                 div()
                     .px_4()
                     .pt_1()
                     .text_xs()
-                    .text_color(rgb(MUTED))
+                    .text_color(themed(MUTED))
                     .child(format!("Edit {} to change", store::config_dir().join("config.toml").display())),
                     )
             })
@@ -2819,12 +2841,12 @@ impl Unbloated {
                         .text_sm()
                         .cursor_pointer()
                         .border_b_1()
-                        .border_color(rgb(BORDER))
-                        .hover(|d| d.bg(rgb(HOVER)))
-                        .child(svg().path(icons::path("arrow-left")).size(px(16.)).mr_3().flex_none().text_color(rgb(MUTED)))
+                        .border_color(themed(BORDER))
+                        .hover(|d| d.bg(themed(HOVER)))
+                        .child(svg().path(icons::path("arrow-left")).size(px(16.)).mr_3().flex_none().text_color(themed(MUTED)))
                         .tooltip(tip(back.trim_start_matches("← ").to_string()))
                         .items_center()
-                        .child(div().flex_1().min_w_0().text_color(rgb(TEXT)).truncate().child(open.title.clone()))
+                        .child(div().flex_1().min_w_0().text_color(themed(TEXT)).truncate().child(open.title.clone()))
                         .children(flag_chips)
                         .children(groups_button)
                         .children(sub_button)
@@ -2841,7 +2863,7 @@ impl Unbloated {
                             .flex()
                             .px_2()
                             .border_b_1()
-                            .border_color(rgb(BORDER))
+                            .border_color(themed(BORDER))
                             .child(
                                 tab_button("Videos", view == ChannelView::Videos)
                                     .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.set_channel_view(ChannelView::Videos, cx)),
@@ -2882,8 +2904,8 @@ impl Unbloated {
                                 .items_center()
                                 .justify_center()
                                 .rounded_full()
-                                .bg(rgb(ACCENT))
-                                .child(svg().path(icons::path("new")).size(px(14.)).text_color(rgb(TEXT)))
+                                .bg(themed(ACCENT))
+                                .child(svg().path(icons::path("new")).size(px(14.)).text_color(themed(ON_ACCENT)))
                                 .into_any_element()
                         } else {
                             this.thumb_el(&group.id, group.thumb.clone(), 28., 28., px(14.), cx)
@@ -2894,7 +2916,7 @@ impl Unbloated {
                         let bell = this.flags.notify.contains(&group.id);
                         div()
                             .id(i)
-                            .when(selected, |d| d.bg(rgb(BORDER)))
+                            .when(selected, |d| d.bg(themed(BORDER)))
                             .w_full()
                             .h(px(44.))
                             .px_3()
@@ -2902,9 +2924,9 @@ impl Unbloated {
                             .items_center()
                             .gap_3()
                             .text_sm()
-                            .text_color(rgb(TEXT))
+                            .text_color(themed(TEXT))
                             .cursor_pointer()
-                            .hover(|d| d.bg(rgb(HOVER)))
+                            .hover(|d| d.bg(themed(HOVER)))
                             .child(avatar)
                             .child(
                                 div()
@@ -2912,15 +2934,15 @@ impl Unbloated {
                                     .flex_1()
                                     .min_w_0()
                                     .truncate()
-                                    .when(muted, |d| d.text_color(rgb(MUTED)))
+                                    .when(muted, |d| d.text_color(themed(MUTED)))
                                     .child(group.title.clone())
                                     .tooltip(tip(group.title.clone())),
                             )
                             .when_some(group.subscribers.filter(|_| this.settings.show_subs), |d, n| {
-                                d.child(div().flex_none().text_xs().text_color(rgb(MUTED)).child(fmt_count(n)))
+                                d.child(div().flex_none().text_xs().text_color(themed(MUTED)).child(fmt_count(n)))
                             })
-                            .when(bell, |d| d.child(svg().path(icons::path("bell")).size(px(12.)).flex_none().text_color(rgb(MUTED))))
-                            .when(muted, |d| d.child(svg().path(icons::path("muted")).size(px(13.)).flex_none().text_color(rgb(MUTED))))
+                            .when(bell, |d| d.child(svg().path(icons::path("bell")).size(px(12.)).flex_none().text_color(themed(MUTED))))
+                            .when(muted, |d| d.child(svg().path(icons::path("muted")).size(px(13.)).flex_none().text_color(themed(MUTED))))
                             .when(new > 0, |d| {
                                 d.child(
                                     div()
@@ -2931,9 +2953,9 @@ impl Unbloated {
                                         .justify_center()
                                         .whitespace_nowrap()
                                         .rounded_full()
-                                        .bg(rgb(ACCENT))
+                                        .bg(themed(ACCENT))
                                         .text_xs()
-                                        .text_color(rgb(TEXT))
+                                        .text_color(themed(ON_ACCENT))
                                         .child(new.to_string()),
                                 )
 .tooltip(tip_left(format!("{new} new video{}", if new == 1 { "" } else { "s" })))
@@ -2959,7 +2981,7 @@ impl Unbloated {
         }
         match self.thumb(&video.id, Some(video.thumb_url()), cx) {
             Thumb::Ready(path) => screen = screen.child(img(path).size_full().object_fit(ObjectFit::Contain)),
-            Thumb::Pending => screen = screen.child(pulse("screen-skeleton", div().size_full().bg(rgb(HOVER)))),
+            Thumb::Pending => screen = screen.child(pulse("screen-skeleton", div().size_full().bg(themed(HOVER)))),
             Thumb::Missing => {}
         }
         if self.pip {
@@ -2975,7 +2997,7 @@ impl Unbloated {
                     .justify_center()
                     .gap_3()
                     .bg(gpui::black().opacity(0.7))
-                    .child(div().text_sm().text_color(rgb(TEXT)).child("Playing in picture-in-picture"))
+                    .child(div().text_sm().text_color(themed(TEXT)).child("Playing in picture-in-picture"))
                     .child(
                         self.chip("pip-back", "Bring it back here", true)
                             .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.toggle_pip(cx)),
@@ -3005,7 +3027,7 @@ impl Unbloated {
 
     fn render_player(&mut self, cx: &mut Context<Self>) -> gpui::Div {
         let Some(video) = self.current.clone() else {
-            return div().p_4().text_sm().text_color(rgb(MUTED)).child("Pick a video on the left.");
+            return div().p_4().text_sm().text_color(themed(MUTED)).child("Pick a video on the left.");
         };
         let resume = self.history.position(&video.id);
         let screen = self.screen(&video, false, cx);
@@ -3037,7 +3059,7 @@ impl Unbloated {
             .into_iter()
             .flatten()
             .collect();
-            (!parts.is_empty()).then(|| div().text_xs().text_color(rgb(MUTED)).child(parts.join("  ·  ")))
+            (!parts.is_empty()).then(|| div().text_xs().text_color(themed(MUTED)).child(parts.join("  ·  ")))
         };
 
         div()
@@ -3047,7 +3069,7 @@ impl Unbloated {
             .gap_3()
             .p_4()
             .child(screen)
-            .child(div().text_color(rgb(TEXT)).line_clamp(2).child(video.title.clone()))
+            .child(div().text_color(themed(TEXT)).line_clamp(2).child(video.title.clone()))
             .children(info)
             .child({
                 let name = video.channel.clone().unwrap_or_default();
@@ -3075,20 +3097,20 @@ impl Unbloated {
                                 .pr_3()
                                 .py_1()
                                 .rounded_full()
-                                .bg(rgb(HOVER))
+                                .bg(themed(HOVER))
                                 .text_xs()
-                                .text_color(rgb(TEXT))
+                                .text_color(themed(TEXT))
                                 .cursor_pointer()
-                                .hover(|d| d.bg(rgb(BORDER)))
+                                .hover(|d| d.bg(themed(BORDER)))
                                 .child(avatar)
                                 .child(name)
-                                .children(subs.map(|s| div().text_color(rgb(MUTED)).child(s)))
-                                .child(div().text_color(rgb(MUTED)).child("›"))
+                                .children(subs.map(|s| div().text_color(themed(MUTED)).child(s)))
+                                .child(div().text_color(themed(MUTED)).child("›"))
                                 .tooltip(tip("Show this channel's videos"))
                                 .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.show_channel(g.clone(), cx)),
                         )
                     }
-                    None => div().text_xs().text_color(rgb(MUTED)).child(name),
+                    None => div().text_xs().text_color(themed(MUTED)).child(name),
                 }
             })
             .child(if self.loading {
@@ -3116,7 +3138,7 @@ impl Unbloated {
                             .py(px(3.))
                             .when(starts_chapter, |d| d.ml(px(3.)))
                             .cursor_pointer()
-                            .child(div().size_full().bg(if i < filled { rgb(ACCENT) } else { rgb(BORDER) }))
+                            .child(div().size_full().bg(if i < filled { themed(ACCENT) } else { themed(BORDER) }))
                             .when(dur > 0., |d| d.tooltip(tip(tooltip)))
                             .when(active, |d| {
                                 d.on_click(cx.listener(move |this, _, _, _| {
@@ -3149,7 +3171,7 @@ impl Unbloated {
                     )
                     .child(
                         icon_button("pip", "pip", if self.pip { "Back into the app" } else { "Picture-in-picture" }, active || self.pip)
-                            .when(self.pip, |d| d.bg(rgb(ACCENT)))
+                            .when(self.pip, |d| d.bg(themed(ACCENT)))
                             .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.toggle_pip(cx)),
                     )
                     .child(
@@ -3165,11 +3187,11 @@ impl Unbloated {
                             .flex()
                             .items_center()
                             .rounded_md()
-                            .bg(rgb(HOVER))
+                            .bg(themed(HOVER))
                             .text_xs()
-                            .text_color(rgb(TEXT))
+                            .text_color(themed(TEXT))
                             .cursor_pointer()
-                            .hover(|d| d.bg(rgb(BORDER)))
+                            .hover(|d| d.bg(themed(BORDER)))
                             .child(format!("{}×", self.settings.speed))
                             .tooltip(tip("Playback speed (click to change)"))
                             .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
@@ -3203,7 +3225,7 @@ impl Unbloated {
                                 .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.copy_link(cx)),
                         )
                     })
-                    .child(div().ml_auto().pl_2().flex_none().text_xs().text_color(rgb(MUTED)).child(time)),
+                    .child(div().ml_auto().pl_2().flex_none().text_xs().text_color(themed(MUTED)).child(time)),
             )
     }
 
@@ -3226,13 +3248,13 @@ impl Unbloated {
                         .px_3()
                         .py_2()
                         .rounded_md()
-                        .bg(rgb(HOVER))
+                        .bg(themed(HOVER))
                         .border_1()
                         .border_l_4()
-                        .border_color(rgb(ACCENT))
+                        .border_color(themed(ACCENT))
                         .shadow_lg()
                         .text_sm()
-                        .text_color(rgb(TEXT))
+                        .text_color(themed(TEXT))
                         .max_w(px(480.))
                         .line_clamp(2)
                         .child(n)
@@ -3252,7 +3274,7 @@ impl Unbloated {
             let (icon, tip) = if s.subscribed { ("subscribed", "Unsubscribe") } else { ("subscribe", "Subscribe") };
             out.push(
                 icon_button("subscribe", icon, tip, ready)
-                    .when(ready && !s.subscribed, |d| d.bg(rgb(ACCENT)))
+                    .when(ready && !s.subscribed, |d| d.bg(themed(ACCENT)))
                     .when(ready, |d| d.on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.toggle_subscribe(cx))),
             );
         }
@@ -3268,7 +3290,7 @@ impl Unbloated {
             out.push(
                 icon_button("like", icon, tip, ready)
                     // Red while liked, so the state is obvious.
-                    .when(ready && s.liked, |d| d.bg(rgb(ACCENT)))
+                    .when(ready && s.liked, |d| d.bg(themed(ACCENT)))
                     .when(ready, |d| d.on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.toggle_like(cx))),
             );
         }
@@ -3276,7 +3298,7 @@ impl Unbloated {
             let (icon, tip) = if s.disliked { ("disliked", "Remove dislike") } else { ("dislike", "Dislike") };
             out.push(
                 icon_button("dislike", icon, tip, ready)
-                    .when(ready && s.disliked, |d| d.bg(rgb(ACCENT)))
+                    .when(ready && s.disliked, |d| d.bg(themed(ACCENT)))
                     .when(ready, |d| d.on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.toggle_dislike(cx))),
             );
         }
@@ -3313,9 +3335,9 @@ impl Unbloated {
                                 .items_center()
                                 .gap_3()
                                 .text_sm()
-                                .text_color(rgb(TEXT))
+                                .text_color(themed(TEXT))
                                 .cursor_pointer()
-                                .hover(|d| d.bg(rgb(HOVER)))
+                                .hover(|d| d.bg(themed(HOVER)))
                                 .child(cover)
                                 .child(div().truncate().child(g.title.clone()))
                                 .on_click_hinted(&this.hint_reg(), cx, move |this, _, _, cx| this.save_to(g.clone(), cx))
@@ -3338,7 +3360,7 @@ impl Unbloated {
             .size_full()
             .flex()
             .flex_col()
-            .bg(rgb(PANEL))
+            .bg(themed(PANEL))
             .child(
                 div()
                     .flex()
@@ -3352,8 +3374,8 @@ impl Unbloated {
                             .min_w_0()
                             .flex()
                             .flex_col()
-                            .child(div().text_color(rgb(TEXT)).child("Save to playlist"))
-                            .child(div().text_xs().text_color(rgb(MUTED)).truncate().child(title)),
+                            .child(div().text_color(themed(TEXT)).child("Save to playlist"))
+                            .child(div().text_xs().text_color(themed(MUTED)).truncate().child(title)),
                     )
                     .child(icon_button("save-close", "close", "Close (Esc)", true).mr_0().on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.close_save(cx))),
             )
@@ -3364,14 +3386,14 @@ impl Unbloated {
                     .px_2()
                     .py_1()
                     .rounded_md()
-                    .bg(rgb(HOVER))
+                    .bg(themed(HOVER))
                     .border_1()
-                    .border_color(if focused { rgb(MUTED) } else { rgb(BORDER) })
+                    .border_color(if focused { themed(MUTED) } else { themed(BORDER) })
                     .text_sm()
                     .map(|d| match (self.save_filter.is_empty(), focused) {
-                        (_, true) => d.text_color(rgb(TEXT)).child(self.caret_text("save", &self.save_filter, "Type to filter…")),
-                        (true, false) => d.text_color(rgb(MUTED)).child("Click here, then type to filter"),
-                        _ => d.text_color(rgb(TEXT)).child(self.save_filter.clone()),
+                        (_, true) => d.text_color(themed(TEXT)).child(self.caret_text("save", &self.save_filter, "Type to filter…")),
+                        (true, false) => d.text_color(themed(MUTED)).child("Click here, then type to filter"),
+                        _ => d.text_color(themed(TEXT)).child(self.save_filter.clone()),
                     }),
             )
             .child(div().flex().flex_col().flex_1().min_h_0().child(body))
@@ -3387,12 +3409,12 @@ impl Unbloated {
                 .flex()
                 .justify_center()
                 .rounded_md()
-                .bg(rgb(HOVER))
+                .bg(themed(HOVER))
                 .border_1()
                 .border_b_2()
-                .border_color(rgb(BORDER))
+                .border_color(themed(BORDER))
                 .text_sm()
-                .text_color(rgb(TEXT))
+                .text_color(themed(TEXT))
                 .child(k.to_string())
         };
         let (mut rest, groups) = if self.settings.vim { (&VIM_SHORTCUTS[..], &VIM_SHEET_GROUPS[..]) } else { (&SHORTCUTS[..], &SHEET_GROUPS[..]) };
@@ -3404,7 +3426,7 @@ impl Unbloated {
                 .flex()
                 .flex_col()
                 .gap_2()
-                .child(div().pb_1().text_xs().text_color(rgb(ACCENT)).child(title.to_uppercase()))
+                .child(div().pb_1().text_xs().text_color(themed(ACCENT)).child(title.to_uppercase()))
                 .children(items.iter().map(|(keys, what)| {
                     div()
                         .flex()
@@ -3420,7 +3442,7 @@ impl Unbloated {
                                 .children(keys.split(" / ").map(keycap)),
                         )
                         // min_w_0 so long descriptions wrap inside the card.
-                        .child(div().flex_1().min_w_0().text_sm().text_color(rgb(MUTED)).child(*what))
+                        .child(div().flex_1().min_w_0().text_sm().text_color(themed(MUTED)).child(*what))
                 }));
             let c = std::mem::replace(&mut columns[col], div());
             columns[col] = c.child(group);
@@ -3435,7 +3457,7 @@ impl Unbloated {
             .flex()
             .items_center()
             .justify_center()
-            .bg(rgb(BG))
+            .bg(themed(BG))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.show_keys = false;
                 this.sync_embed();
@@ -3448,9 +3470,9 @@ impl Unbloated {
                     .max_h(relative(0.92))
                     .p_8()
                     .rounded_xl()
-                    .bg(rgb(PANEL))
+                    .bg(themed(PANEL))
                     .border_1()
-                    .border_color(rgb(BORDER))
+                    .border_color(themed(BORDER))
                     .flex()
                     .flex_col()
                     .gap_6()
@@ -3458,12 +3480,12 @@ impl Unbloated {
                         div()
                             .flex()
                             .items_end()
-                            .child(div().flex_1().text_2xl().text_color(rgb(TEXT)).child(if self.settings.vim {
+                            .child(div().flex_1().text_2xl().text_color(themed(TEXT)).child(if self.settings.vim {
                                 "Keyboard shortcuts · Vim mode"
                             } else {
                                 "Keyboard shortcuts"
                             }))
-                            .child(div().text_xs().text_color(rgb(MUTED)).child("? or Esc to close")),
+                            .child(div().text_xs().text_color(themed(MUTED)).child("? or Esc to close")),
                     )
                     // Scrolls when the window is too short for it.
                     .child(div().id("sheet-body").flex_1().min_h_0().overflow_y_scroll().flex().items_start().gap_10().children(columns)),
@@ -3623,7 +3645,7 @@ fn pulse(id: impl Into<ElementId>, el: gpui::Div) -> AnyElement {
 
 /// Grey rows shaped like the real ones, pulsing while a list loads.
 fn skeleton(rows: Rows) -> AnyElement {
-    let bar = |w: f32, h: f32| div().w(relative(w)).h(px(h)).rounded_sm().bg(rgb(HOVER));
+    let bar = |w: f32, h: f32| div().w(relative(w)).h(px(h)).rounded_sm().bg(themed(HOVER));
     let widths = [0.7, 0.55, 0.8, 0.45, 0.65, 0.6, 0.75, 0.5];
     let list = div().flex().flex_col().children((0..12).map(|i| {
         let w = widths[i % widths.len()];
@@ -3634,7 +3656,7 @@ fn skeleton(rows: Rows) -> AnyElement {
                 .flex()
                 .items_center()
                 .gap_3()
-                .child(div().w(px(96.)).h(px(54.)).flex_none().rounded(px(4.)).bg(rgb(HOVER)))
+                .child(div().w(px(96.)).h(px(54.)).flex_none().rounded(px(4.)).bg(themed(HOVER)))
                 .child(div().flex_1().flex().flex_col().gap_2().child(bar(w, 12.)).child(bar(w * 0.45, 10.))),
             Rows::Groups => div()
                 .h(px(44.))
@@ -3642,7 +3664,7 @@ fn skeleton(rows: Rows) -> AnyElement {
                 .flex()
                 .items_center()
                 .gap_3()
-                .child(div().size(px(28.)).flex_none().rounded_full().bg(rgb(HOVER)))
+                .child(div().size(px(28.)).flex_none().rounded_full().bg(themed(HOVER)))
                 .child(div().flex_1().child(bar(w * 0.5, 12.))),
         }
     }));
@@ -3657,7 +3679,7 @@ fn loading_bar(id: &'static str) -> impl IntoElement {
             .top_0()
             .h_full()
             .w(relative(0.3))
-            .bg(rgb(ACCENT))
+            .bg(themed(ACCENT))
             .with_animation(id, Animation::new(Duration::from_millis(1200)).repeat(), |d, t| {
                 d.left(relative(t * 1.3 - 0.3))
             }),
@@ -3666,7 +3688,7 @@ fn loading_bar(id: &'static str) -> impl IntoElement {
 
 /// A draggable 5px bar between two panes.
 fn divider(id: &'static str, split: Split, cx: &mut Context<Unbloated>) -> Stateful<gpui::Div> {
-    let bar = div().id(id).flex_none().bg(rgb(BORDER)).hover(|d| d.bg(rgb(MUTED)));
+    let bar = div().id(id).flex_none().bg(themed(BORDER)).hover(|d| d.bg(themed(MUTED)));
     let bar = match split {
         Split::Columns => bar.w(px(5.)).h_full().cursor(CursorStyle::ResizeLeftRight),
         Split::Player | Split::Continue => bar.h(px(5.)).w_full().cursor(CursorStyle::ResizeUpDown),
@@ -3809,11 +3831,11 @@ impl Render for Tip {
             .px_2()
             .py_1()
             .rounded_md()
-            .bg(rgb(HOVER))
+            .bg(themed(HOVER))
             .border_1()
-            .border_color(rgb(BORDER))
+            .border_color(themed(BORDER))
             .text_xs()
-            .text_color(rgb(TEXT))
+            .text_color(themed(TEXT))
             .child(self.0.clone());
         if self.1 {
             // A zero-width anchor at the pointer, with the tooltip hanging off to its left.
@@ -3846,9 +3868,9 @@ fn icon_button(
         .mr_2()
         .p(px(7.))
         .rounded_md()
-        .bg(rgb(HOVER))
-        .child(svg().path(icons::path(icon)).size(px(16.)).text_color(if enabled { rgb(TEXT) } else { rgb(BORDER) }))
-        .when(enabled, |d| d.cursor_pointer().hover(|d| d.bg(rgb(BORDER))))
+        .bg(themed(HOVER))
+        .child(svg().path(icons::path(icon)).size(px(16.)).text_color(if enabled { themed(TEXT) } else { themed(BORDER) }))
+        .when(enabled, |d| d.cursor_pointer().hover(|d| d.bg(themed(BORDER))))
         .tooltip(tip(tooltip))
 }
 
@@ -3863,9 +3885,9 @@ fn tab_button(label: impl Into<SharedString>, active: bool) -> Stateful<gpui::Di
         .text_sm()
         .cursor_pointer()
         .border_b_2()
-        .border_color(if active { rgb(ACCENT).into() } else { Hsla::transparent_black() })
-        .text_color(if active { rgb(TEXT) } else { rgb(MUTED) })
-        .hover(|d| d.text_color(rgb(TEXT)))
+        .border_color(if active { themed(ACCENT).into() } else { Hsla::transparent_black() })
+        .text_color(if active { themed(TEXT) } else { themed(MUTED) })
+        .hover(|d| d.text_color(themed(TEXT)))
         .child(label)
 }
 
@@ -3891,8 +3913,8 @@ impl Render for Unbloated {
                 .p(px(7.))
                 .rounded_md()
                 .cursor_pointer()
-                .hover(|d| d.bg(rgb(HOVER)))
-                .child(svg().path(icons::path(icon)).size(px(16.)).text_color(rgb(MUTED)))
+                .hover(|d| d.bg(themed(HOVER)))
+                .child(svg().path(icons::path(icon)).size(px(16.)).text_color(themed(MUTED)))
         };
         let header = if self.searching {
             // Search mode: ← back, a full-width field, ✕ to clear.
@@ -3906,16 +3928,16 @@ impl Render for Unbloated {
                 .px_3()
                 .py_1()
                 .rounded_md()
-                .bg(rgb(HOVER))
+                .bg(themed(HOVER))
                 .border_1()
-                .border_color(if focused { rgb(MUTED) } else { rgb(BORDER) })
+                .border_color(if focused { themed(MUTED) } else { themed(BORDER) })
                 .text_sm()
                 .truncate()
                 .cursor_text()
                 .map(|d| match (self.query.is_empty(), focused) {
-                    (_, true) => d.text_color(rgb(TEXT)).child(self.caret_text("search", &self.query, "Search YouTube")),
-                    (true, false) => d.text_color(rgb(MUTED)).child("Search YouTube"),
-                    (false, false) => d.text_color(rgb(TEXT)).child(self.query.clone()),
+                    (_, true) => d.text_color(themed(TEXT)).child(self.caret_text("search", &self.query, "Search YouTube")),
+                    (true, false) => d.text_color(themed(MUTED)).child("Search YouTube"),
+                    (false, false) => d.text_color(themed(TEXT)).child(self.query.clone()),
                 })
                 .on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| {
                     window.focus(&this.search_focus);
@@ -3928,7 +3950,7 @@ impl Render for Unbloated {
                 .px_2()
                 .py(px(5.))
                 .border_b_1()
-                .border_color(rgb(BORDER))
+                .border_color(themed(BORDER))
                 .child(
                     header_icon("search-back", "arrow-left")
                         .tooltip(tip("Back (Esc)"))
@@ -3952,7 +3974,7 @@ impl Render for Unbloated {
             .items_center()
             .px_2()
             .border_b_1()
-            .border_color(rgb(BORDER))
+            .border_color(themed(BORDER))
             .children(tabs.into_iter().map(|(label, tab)| {
                 tab_button(label, self.tab == tab).on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.select_tab(tab, cx))
             }))
@@ -3963,7 +3985,7 @@ impl Render for Unbloated {
                     .on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| this.open_search(window, cx)),
             )
             .child({
-                let icon = svg().path(icons::path("refresh")).size(px(16.)).text_color(rgb(MUTED));
+                let icon = svg().path(icons::path("refresh")).size(px(16.)).text_color(themed(MUTED));
                 let icon = if self.tab_loading() {
                     // Spins while the current list loads.
                     icon.with_animation("refresh-spin", Animation::new(Duration::from_millis(900)).repeat(), |s, t| {
@@ -3979,7 +4001,7 @@ impl Render for Unbloated {
                     .p(px(7.))
                     .rounded_md()
                     .cursor_pointer()
-                    .hover(|d| d.bg(rgb(HOVER)))
+                    .hover(|d| d.bg(themed(HOVER)))
                     .child(icon)
                     .tooltip(tip("Refresh"))
                     .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.load_tab(cx))
@@ -3992,11 +4014,11 @@ impl Render for Unbloated {
                     .py(px(9.))
                     .cursor_pointer()
                     .border_b_2()
-                    .border_color(if self.tab == Tab::Settings { rgb(ACCENT).into() } else { Hsla::transparent_black() })
+                    .border_color(if self.tab == Tab::Settings { themed(ACCENT).into() } else { Hsla::transparent_black() })
                     .child(svg().path(icons::path("settings")).size(px(16.)).text_color(if self.tab == Tab::Settings {
-                        rgb(TEXT)
+                        themed(TEXT)
                     } else {
-                        rgb(MUTED)
+                        themed(MUTED)
                     }))
                     .tooltip(tip("Settings"))
                     .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.select_tab(Tab::Settings, cx)),
@@ -4021,7 +4043,7 @@ impl Render for Unbloated {
 ;
 
         let player = div().flex().flex_col().min_h_0().child(self.render_player(cx));
-        let right = div().relative().flex().flex_col().flex_1().min_w_0().bg(rgb(PANEL));
+        let right = div().relative().flex().flex_col().flex_1().min_w_0().bg(themed(PANEL));
         let right = if self.settings.window_buttons {
             let control = |id: &'static str, icon: &'static str, tooltip: &'static str, hover: u32, color: u32| {
                 div()
@@ -4029,8 +4051,8 @@ impl Render for Unbloated {
                     .p(px(7.))
                     .rounded_md()
                     .cursor_pointer()
-                    .hover(move |d| d.bg(rgb(hover)))
-                    .child(svg().path(icons::path(icon)).size(px(14.)).text_color(rgb(color)))
+                    .hover(move |d| d.bg(themed(hover)))
+                    .child(svg().path(icons::path(icon)).size(px(14.)).text_color(themed(color)))
                     .tooltip(tip(tooltip))
             };
             right.child(
@@ -4042,7 +4064,7 @@ impl Render for Unbloated {
                     .flex_none()
                     .px_2()
                     .border_b_1()
-                    .border_color(rgb(BORDER))
+                    .border_color(themed(BORDER))
                     .child(control("win-min", "minimize", "Minimize", HOVER, MUTED).on_click(|_, window, _| window.minimize_window()))
                     .child(control("win-max", "maximize", "Maximize", HOVER, MUTED).on_click(|_, window, _| window.zoom_window()))
                     .child(control("win-close", "close", "Close", ACCENT, TEXT).on_click(|_, window, _| window.remove_window())),
@@ -4066,7 +4088,7 @@ impl Render for Unbloated {
                         .flex()
                         .px_2()
                         .border_b_1()
-                        .border_color(rgb(BORDER))
+                        .border_color(themed(BORDER))
                         .when(show_recs, |d| {
                             d.child(
                                 tab_button("Recommended", lower == Lower::Recommended).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
@@ -4116,8 +4138,8 @@ impl Render for Unbloated {
             .flex()
             .track_focus(&self.root_focus)
             .on_key_down(cx.listener(Self::shortcut))
-            .bg(rgb(BG))
-            .text_color(rgb(TEXT))
+            .bg(themed(BG))
+            .text_color(themed(TEXT))
             .child(left)
             .child(divider("split-columns", Split::Columns, cx))
             .child(right)

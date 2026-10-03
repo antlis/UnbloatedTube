@@ -168,6 +168,7 @@ pub struct Settings {
     pub notify_minutes: u32,
     /// Draw minimize / maximize / close, for desktops (or tiling WMs) without a title bar.
     pub window_buttons: bool,
+    pub light_theme: bool,
     pub subscribe_button: bool,
     pub save_button: bool,
     pub like_button: bool,
@@ -215,6 +216,7 @@ impl Default for Settings {
             notifications: true,
             notify_minutes: 15,
             window_buttons: true,
+            light_theme: false,
             subscribe_button: true,
             save_button: true,
             like_button: false,

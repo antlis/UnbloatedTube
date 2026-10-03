@@ -89,7 +89,7 @@ Everything is a toggle or a field on the Settings page, which has its own search
 | Player | Max quality (480p–4K), autoplay, **audio only**, prefer hardware-friendly codecs (skip AV1), hardware decoding, speed |
 | SponsorBlock | **Skip sponsored segments**, choosing which: sponsor, self-promotion, like/subscribe reminders, intro, credits, preview, filler, non-music |
 | Video info | **Views**, **upload date** (playing video), **subscriber counts** (channels) |
-| Other | Subtitles language, extra mpv options, download folder, upload notifications and their interval, Vim mode, window buttons |
+| Other | Subtitles language, extra mpv options, download folder, upload notifications and their interval, Vim mode, window buttons, **light theme** |
 
 Window layout (column width, player height, Continue watching height) is set by dragging and
 remembered.
