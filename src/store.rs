@@ -270,3 +270,11 @@ impl Seen {
         }
     }
 }
+
+/// A user-made group of channels ("Music", "Tech", …), kept only in this app.
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct ChannelGroup {
+    pub name: String,
+    /// Channel ids (or handles, for channels without a known id).
+    pub channels: Vec<String>,
+}

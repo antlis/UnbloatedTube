@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use store::{Config, History, Seen, Settings};
+use store::{ChannelGroup, Config, History, Seen, Settings};
 use yt::{Group, Video, fmt_duration};
 
 const BG: u32 = 0x0f0f0f;
@@ -256,6 +256,16 @@ struct Unbloated {
     hint_targets: Rc<RefCell<Vec<HintTarget>>>,
     /// Hint mode: the targets when `f` was pressed, and the letters typed so far.
     hints: Option<(Vec<HintTarget>, String)>,
+    /// Channel groups, and the one Subscriptions is filtered to.
+    groups: Vec<ChannelGroup>,
+    active_group: Option<String>,
+    /// The group editor (membership chips) is open in the channel header.
+    editing_groups: bool,
+    /// Name being typed for a new group, and its field's focus.
+    new_group: Option<String>,
+    new_group_focus: FocusHandle,
+    /// Group waiting for the second click on "Delete?".
+    confirm_delete_group: Option<String>,
     /// Channel waiting for the second click on "Unsubscribe?".
     confirm_unsub: Option<String>,
     /// The keyboard shortcuts card (opened with ?).
@@ -348,6 +358,12 @@ impl Unbloated {
             lower: Lower::Recommended,
             show_keys: false,
             confirm_unsub: None,
+            groups: store::load_data("groups").unwrap_or_default(),
+            active_group: None,
+            editing_groups: false,
+            new_group: None,
+            new_group_focus: cx.focus_handle(),
+            confirm_delete_group: None,
             vim_cursor: 0,
             vim_list: String::new(),
             vim_scroll: UniformListScrollHandle::new(),
@@ -625,7 +641,7 @@ impl Unbloated {
         let played: HashSet<&str> = self.history.items.iter().map(|w| w.video.id.as_str()).collect();
         let mut counts = HashMap::new();
         for v in self.feed.items() {
-            if self.seen.ids.contains(&v.id) || played.contains(v.id.as_str()) {
+            if self.seen.ids.contains(&v.id) || played.contains(v.id.as_str()) || !self.in_active_group(v) {
                 continue;
             }
             *counts.entry(FEED_ID.to_string()).or_default() += 1;
@@ -634,6 +650,188 @@ impl Unbloated {
             }
         }
         counts
+    }
+
+    /// The group Subscriptions is filtered to, if any.
+    fn active_group(&self) -> Option<&ChannelGroup> {
+        let name = self.active_group.as_deref()?;
+        self.groups.iter().find(|g| g.name == name)
+    }
+
+    /// Whether a feed video's channel is in the active group (always true without one).
+    fn in_active_group(&self, v: &Video) -> bool {
+        self.active_group().is_none_or(|g| channel_of(v).is_some_and(|c| g.channels.iter().any(|m| m == c)))
+    }
+
+    /// An open channel or playlist's videos; New uploads is limited to the active group.
+    fn browser_videos(&self, tab: Tab) -> Vec<Video> {
+        let b = self.browser_ref(tab);
+        let videos = b.videos.items();
+        if b.open.as_ref().is_some_and(|g| g.id == FEED_ID) {
+            videos.iter().filter(|v| self.in_active_group(v)).cloned().collect()
+        } else {
+            videos.to_vec()
+        }
+    }
+
+    fn save_groups(&self) {
+        store::save_data("groups", &self.groups);
+    }
+
+    fn select_group(&mut self, name: Option<String>, cx: &mut Context<Self>) {
+        self.active_group = if self.active_group == name { None } else { name };
+        self.confirm_delete_group = None;
+        cx.notify();
+    }
+
+    fn toggle_membership(&mut self, group: &str, channel: &str, cx: &mut Context<Self>) {
+        if let Some(g) = self.groups.iter_mut().find(|g| g.name == group) {
+            match g.channels.iter().position(|c| c == channel) {
+                Some(i) => {
+                    g.channels.remove(i);
+                }
+                None => g.channels.push(channel.to_string()),
+            }
+            self.save_groups();
+        }
+        cx.notify();
+    }
+
+    fn delete_group(&mut self, name: String, cx: &mut Context<Self>) {
+        if self.confirm_delete_group.as_deref() != Some(name.as_str()) {
+            self.confirm_delete_group = Some(name);
+        } else {
+            self.groups.retain(|g| g.name != name);
+            self.save_groups();
+            self.active_group = None;
+            self.confirm_delete_group = None;
+        }
+        cx.notify();
+    }
+
+    /// Typing a new group's name: Enter creates it (and, in a channel, adds that channel).
+    fn new_group_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(name) = &mut self.new_group else { return };
+        match edit_text(name, ev, cx) {
+            Edit::Submit => {
+                let name = name.trim().to_string();
+                self.new_group = None;
+                window.blur();
+                if !name.is_empty() && !self.groups.iter().any(|g| g.name == name) {
+                    let channel = self.subs.open.as_ref().filter(|g| g.id != FEED_ID).map(|g| g.id.clone());
+                    self.groups.push(ChannelGroup { name: name.clone(), channels: channel.into_iter().collect() });
+                    self.save_groups();
+                    if self.subs.open.is_none() {
+                        self.active_group = Some(name);
+                    }
+                }
+            }
+            Edit::Cancel => {
+                self.new_group = None;
+                window.blur();
+            }
+            Edit::Changed => {}
+            Edit::Ignored => {}
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// A small rounded chip (filter bar, group editor).
+    fn chip(&self, id: impl Into<ElementId>, label: impl Into<SharedString>, on: bool) -> Stateful<gpui::Div> {
+        div()
+            .id(id)
+            .flex_none()
+            .px_3()
+            .py(px(3.))
+            .rounded_full()
+            .text_xs()
+            .bg(if on { rgb(ACCENT) } else { rgb(HOVER) })
+            .text_color(rgb(TEXT))
+            .cursor_pointer()
+            .hover(|d| d.opacity(0.85))
+            .child(label.into())
+    }
+
+    /// The "+ Group" chip, or the field for typing a new group's name.
+    fn new_group_chip(&self, window: &Window, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
+        match &self.new_group {
+            Some(name) => {
+                let focused = self.new_group_focus.is_focused(window);
+                div()
+                    .id("new-group-field")
+                    .track_focus(&self.new_group_focus)
+                    .flex_none()
+                    .min_w(px(110.))
+                    .px_3()
+                    .py(px(3.))
+                    .rounded_full()
+                    .border_1()
+                    .border_color(rgb(MUTED))
+                    .text_xs()
+                    .text_color(if name.is_empty() && !focused { rgb(MUTED) } else { rgb(TEXT) })
+                    .child(if name.is_empty() && !focused { "Group name".to_string() } else { format!("{name}▏") })
+                    .on_key_down(cx.listener(Self::new_group_key))
+            }
+            None => self.chip("new-group", "+ Group", false).on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| {
+                this.new_group = Some(String::new());
+                window.focus(&this.new_group_focus);
+                cx.notify();
+            }),
+        }
+    }
+
+    /// Above the channel list: All, each group, + Group, and Delete for the selected group.
+    fn render_group_bar(&self, window: &Window, cx: &mut Context<Self>) -> gpui::Div {
+        let active = self.active_group.clone();
+        let mut bar = div()
+            .flex()
+            .flex_wrap()
+            .gap_1()
+            .px_3()
+            .py_2()
+            .border_b_1()
+            .border_color(rgb(BORDER))
+            .child(
+                self.chip("group-all", "All", active.is_none())
+                    .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.select_group(None, cx)),
+            );
+        for (i, g) in self.groups.iter().enumerate() {
+            let name = g.name.clone();
+            bar = bar.child(
+                self.chip(("group", i), format!("{} {}", g.name, g.channels.len()), active.as_deref() == Some(g.name.as_str()))
+                    .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.select_group(Some(name.clone()), cx)),
+            );
+        }
+        bar = bar.child(self.new_group_chip(window, cx));
+        if let Some(name) = active {
+            let confirming = self.confirm_delete_group.as_deref() == Some(name.as_str());
+            bar = bar.child(
+                self.chip("delete-group", if confirming { "Delete group?" } else { "Delete" }, confirming)
+                    .ml_auto()
+                    .when(!confirming, |d| d.text_color(rgb(MUTED)))
+                    .tooltip(tip("Click twice to delete this group (channels stay subscribed)"))
+                    .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.delete_group(name.clone(), cx)),
+            );
+        }
+        bar
+    }
+
+    /// In a channel's header: which groups the channel belongs to (click to toggle).
+    fn render_group_editor(&self, channel: &str, window: &Window, cx: &mut Context<Self>) -> gpui::Div {
+        let mut row = div().flex().flex_wrap().gap_1().px_3().py_2().border_b_1().border_color(rgb(BORDER));
+        if self.groups.is_empty() {
+            row = row.child(div().text_xs().text_color(rgb(MUTED)).mr_2().child("No groups yet:"));
+        }
+        for (i, g) in self.groups.iter().enumerate() {
+            let member = g.channels.iter().any(|c| c == channel);
+            let (name, ch) = (g.name.clone(), channel.to_string());
+            row = row.child(
+                self.chip(("member", i), g.name.clone(), member)
+                    .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.toggle_membership(&name, &ch, cx)),
+            );
+        }
+        row.child(self.new_group_chip(window, cx))
     }
 
     /// Subscribe to `channel`, or unsubscribe after a confirming second click.
@@ -684,6 +882,7 @@ impl Unbloated {
             }
         }
         self.confirm_unsub = None;
+        self.editing_groups = false;
         let b = self.browser(tab);
         b.open = Some(group);
         b.view = ChannelView::Videos;
@@ -1263,7 +1462,7 @@ impl Unbloated {
                 items
             }
             tab => match &self.browser_ref(tab).open {
-                Some(_) => videos(self.browser_ref(tab).videos.items().to_vec()),
+                Some(_) => videos(self.browser_videos(tab)),
                 None => self.group_items(tab, &self.unseen_counts()).into_iter().map(Item::Group).collect(),
             },
         }
@@ -1295,6 +1494,9 @@ impl Unbloated {
     fn group_items(&self, tab: Tab, counts: &HashMap<String, usize>) -> Vec<Group> {
         let mut g: Vec<Group> = self.browser_ref(tab).groups.items().to_vec();
         if tab == Tab::Subscriptions {
+            if let Some(group) = self.active_group() {
+                g.retain(|c| group.channels.contains(&c.id));
+            }
             g.sort_by_key(|g| !counts.contains_key(&g.id));
             g.insert(0, Group { id: FEED_ID.into(), title: "New uploads".into(), url: ":ytsubs".into(), thumb: None });
         }
@@ -1585,7 +1787,7 @@ impl Unbloated {
                     None => self.video_list("search", &self.search.items().to_vec(), Some(0), cx),
                 };
             }
-            tab => return self.render_browser(tab, cx),
+            tab => return self.render_browser(tab, window, cx),
         }
         // Videos played in unbloated-youtube first, then the rest of YouTube's history.
         let (partial, videos) = self.history_items();
@@ -1958,7 +2160,7 @@ impl Unbloated {
             .into_any_element()
     }
 
-    fn render_browser(&mut self, tab: Tab, cx: &mut Context<Self>) -> AnyElement {
+    fn render_browser(&mut self, tab: Tab, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let (back, list_id) = match tab {
             Tab::Subscriptions => ("← Subscriptions", "subs"),
             _ => ("← Playlists", "playlists"),
@@ -1996,6 +2198,20 @@ impl Unbloated {
                         this.toggle_channel_sub(g.clone(), subscribed, cx);
                     })
             });
+            let is_channel = tab == Tab::Subscriptions && open.id != FEED_ID;
+            let groups_button = is_channel.then(|| {
+                self.chip("channel-groups", "Groups", self.editing_groups)
+                    .when(sub_button.is_none(), |d| d.ml_auto())
+                    .mr_2()
+                    .tooltip(tip("Add this channel to your groups"))
+                    .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.editing_groups = !this.editing_groups;
+                        cx.notify();
+                    })
+            });
+            let group_editor = (is_channel && self.editing_groups).then(|| self.render_group_editor(&open.id, window, cx));
+            let sub_button = sub_button.map(|b| b.ml_0());
             let view = self.browser_ref(tab).view;
             // Channels (not the New uploads feed or playlists) get Videos | Shorts tabs.
             let channel_tabs = tab == Tab::Subscriptions && open.id != FEED_ID && self.settings.shorts;
@@ -2003,7 +2219,7 @@ impl Unbloated {
             let empty = if view == ChannelView::Shorts { "No Shorts." } else { "No videos." };
             let body = match self.placeholder(videos, empty, Rows::Videos) {
                 Some(p) => p,
-                None => self.video_list("group", &videos.items().to_vec(), Some(0), cx),
+                None => self.video_list("group", &self.browser_videos(tab), Some(0), cx),
             };
             return div()
                 .flex()
@@ -2023,13 +2239,15 @@ impl Unbloated {
                         .hover(|d| d.bg(rgb(HOVER)))
                         .child(div().mr_3().text_color(rgb(MUTED)).child(back))
                         .items_center()
-                        .child(div().text_color(rgb(TEXT)).truncate().child(open.title.clone()))
+                        .child(div().flex_1().min_w_0().text_color(rgb(TEXT)).truncate().child(open.title.clone()))
+                        .children(groups_button)
                         .children(sub_button)
                         .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
                             this.browser(tab).open = None;
                             cx.notify();
                         }),
                 )
+                .children(group_editor)
                 .when(channel_tabs, |d| {
                     d.child(
                         div()
@@ -2056,7 +2274,8 @@ impl Unbloated {
         }
         let counts = Arc::new(if tab == Tab::Subscriptions { self.unseen_counts() } else { HashMap::new() });
         let g: Arc<[Group]> = self.group_items(tab, &counts).into();
-        uniform_list(
+        let bar = (tab == Tab::Subscriptions).then(|| self.render_group_bar(window, cx));
+        let list = uniform_list(
             list_id,
             g.len(),
             cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
@@ -2117,8 +2336,8 @@ impl Unbloated {
             }),
         )
         .track_scroll(self.vim_scroll.clone())
-        .flex_1()
-        .into_any_element()
+        .flex_1();
+        div().flex().flex_col().flex_1().min_h_0().children(bar).child(list).into_any_element()
     }
 
     /// The video area: thumbnail underneath, mpv's embedded window placed on top of it.
