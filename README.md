@@ -310,10 +310,13 @@ Without it, search and playback still work.
     `.sha256`, sets `pkgver` and `sha256sums`, generates `.SRCINFO` (identical to `makepkg`'s for
     0.8.1) and pushes to the AUR, or does nothing if the AUR already has that version; `--dry-run`
     stops before the push. It needs an SSH key the AUR knows (`GIT_SSH_COMMAND` picks one).
-  - The release workflow runs it after each `v*` tag when the repository secret `AUR_SSH_KEY`
-    holds the private key of such a key (use a dedicated one, not your main key); without the
-    secret that job only prints a notice. Not run in CI yet. The job trusts `ssh-keyscan` for the
-    AUR's host key rather than a pinned one.
+  - Used by hand for now, after each release tag: `packaging/aur/publish.sh 0.8.2`. It works with
+    the SSH key already registered on the AUR account, so there is nothing to set up.
+  - Optional, not enabled: the release workflow has an `aur` job that runs the script after each
+    `v*` tag when the repository secret `AUR_SSH_KEY` holds a private key the AUR accepts (it must
+    have no passphrase; a dedicated key is safer than the main one). Without the secret it only
+    prints a notice. Never run in CI, and it trusts `ssh-keyscan` for the AUR's host key rather
+    than a pinned one.
   - It doesn't bump `pkgrel`: a packaging-only fix to the PKGBUILD needs a manual push.
   A source or `-git` package (compiles all ~730 crates) comes second.
 - **crates.io.** `cargo install unbloated-youtube`. All dependencies are already on crates.io
