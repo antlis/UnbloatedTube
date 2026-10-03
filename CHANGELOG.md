@@ -4,7 +4,7 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
-## Unreleased
+## 0.6.0 - 2026-10-03
 
 ### Added
 - **Hover controls on the video**: a YouTube-style bar appears when the pointer is over the video
