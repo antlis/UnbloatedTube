@@ -75,7 +75,7 @@ list, your playlists, your history, search and a player.
 - **Chapters tab** under the player for videos that have chapters: click one to jump there; the
   current chapter is highlighted and kept in view.
 - **Resizable player**: drag the divider between the video and the lower pane anywhere, up to
-  the top; `E` gives the lower pane the whole right column and back. The left column collapses too
+  the top; `E` gives the lower pane the whole right column and back; `⇧E` does the same for the player. The left column collapses too
   (`B`, or drag its divider to the edge), and so does the right one (`⇧B`, or drag the divider
   to the right edge).
 - Click the video to pause, double-click for fullscreen.
@@ -119,6 +119,7 @@ remembered.
 | C | Copy the video's link |
 | ⇧C | Copy the link at the current time (`y t` in Vim mode) |
 | E | Lower pane (Recommended, Chapters, Up next) full height, and back (`e` in Vim mode) |
+| ⇧E | Player full height (hide the lower pane), and back |
 | [ / ] | Previous / next tab of the lower pane (Recommended, Chapters, Up next) |
 | 1 – 4 | Switch tab: Subscriptions, Playlists, History, Settings |
 | B | Hide or show the left column (`b` in Vim mode) |

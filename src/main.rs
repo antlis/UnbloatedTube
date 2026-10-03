@@ -191,7 +191,7 @@ enum Lower {
 
 /// Keyboard shortcuts (also listed in Settings). Keys reach mpv instead while the pointer is
 /// over the video; mpv's own defaults there are similar (Space, arrows, f).
-const SHORTCUTS: [(&str, &str); 21] = [
+const SHORTCUTS: [(&str, &str); 22] = [
     ("Space / K", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     ("J / L", "Back / forward 10 seconds"),
@@ -204,6 +204,7 @@ const SHORTCUTS: [(&str, &str); 21] = [
     ("N", "Next (Up next first)"),
     ("P", "Previous"),
     ("E", "Lower pane full height, and back"),
+    ("⇧E", "Player full height (hide the lower pane), and back"),
     ("[ / ]", "Previous / next lower tab (Recommended, Chapters, Up next)"),
     ("1 - 4", "Switch tab: Subscriptions, Playlists, History, Settings"),
     ("B", "Hide or show the left column"),
@@ -216,10 +217,10 @@ const SHORTCUTS: [(&str, &str); 21] = [
 ];
 
 /// Cheatsheet groups: title, how many SHORTCUTS entries it takes (in order), and its column.
-const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 12, 1)];
+const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 13, 1)];
 
 /// Vim mode's keys (case matters: ⇧ means Shift).
-const VIM_SHORTCUTS: [(&str, &str); 27] = [
+const VIM_SHORTCUTS: [(&str, &str); 28] = [
     ("Space", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     (", / .", "Back / forward 10 seconds"),
@@ -239,6 +240,7 @@ const VIM_SHORTCUTS: [(&str, &str); 27] = [
     ("x", "Add the selected video to Up next"),
     ("f", "Click hints: type the label to click"),
     ("e", "Lower pane full height, and back"),
+    ("⇧E", "Player full height (hide the lower pane), and back"),
     ("[ / ]", "Previous / next lower tab (Recommended, Chapters, Up next)"),
     ("1 - 4", "Switch tab: Subscriptions, Playlists, History, Settings"),
     ("b", "Hide or show the left column"),
@@ -248,7 +250,7 @@ const VIM_SHORTCUTS: [(&str, &str); 27] = [
     ("?", "Show these shortcuts"),
     ("Esc", "Cancel / close / back"),
 ];
-const VIM_SHEET_GROUPS: [(&str, usize, usize); 3] = [("Playback", 10, 0), ("Navigation", 13, 1), ("General", 4, 0)];
+const VIM_SHEET_GROUPS: [(&str, usize, usize); 3] = [("Playback", 10, 0), ("Navigation", 14, 1), ("General", 4, 0)];
 
 /// An entry of the left column's list, for Vim navigation.
 #[derive(Clone)]
@@ -355,6 +357,8 @@ struct Unbloated {
     confirm_unsub: Option<String>,
     /// The lower pane (Recommended, Chapters, Up next) takes the whole right column.
     lower_full: bool,
+    /// The lower pane is hidden; the player takes the whole right column.
+    player_full: bool,
     /// The left column is hidden (its width setting is kept for when it comes back).
     left_collapsed: bool,
     /// The right column (player and lower pane) is hidden; the left one takes the window.
@@ -478,6 +482,7 @@ impl Unbloated {
             show_keys: false,
             confirm_unsub: None,
             lower_full: false,
+            player_full: false,
             left_collapsed: false,
             right_collapsed: false,
             channel_menu: None,
@@ -1825,9 +1830,18 @@ impl Unbloated {
         let _ = window;
         if self.lower_full || self.settings.recommendations || !self.up_next.is_empty() || !self.chapter_list().is_empty() {
             self.lower_full = !self.lower_full;
+            self.player_full = false;
             self.sync_embed();
             cx.notify();
         }
+    }
+
+    /// Hide the lower pane so the player takes the whole right column, or bring it back.
+    fn toggle_player_full(&mut self, cx: &mut Context<Self>) {
+        self.player_full = !self.player_full;
+        self.lower_full = false;
+        self.sync_embed();
+        cx.notify();
     }
 
     /// Copy a link that opens at the current playback position (the resume position when not playing).
@@ -1911,6 +1925,7 @@ impl Unbloated {
             "m" => self.player.toggle_mute(),
             "up" | "=" => self.change_volume(5., cx),
             "down" | "-" => self.change_volume(-5., cx),
+            "e" if k.modifiers.shift => self.toggle_player_full(cx),
             "e" => self.toggle_lower_full(window, cx),
             "b" if k.modifiers.shift => self.toggle_right_collapsed(cx),
             "b" => self.toggle_left_collapsed(cx),
@@ -1979,6 +1994,7 @@ impl Unbloated {
             "g" if pending_g => self.vim_move(isize::MIN, len, window),
             "y" if pending_y => self.copy_link(cx),
             "t" if pending_y => self.copy_link_at_time(cx),
+            "E" => self.toggle_player_full(cx),
             "e" => self.toggle_lower_full(window, cx),
             "B" => self.toggle_right_collapsed(cx),
             "b" => self.toggle_left_collapsed(cx),
@@ -4459,7 +4475,7 @@ impl Render for Unbloated {
         };
         let show_recs = self.settings.recommendations;
         let chapters = self.chapter_list();
-        let right = if show_recs || !self.up_next.is_empty() || !chapters.is_empty() {
+        let right = if (show_recs || !self.up_next.is_empty() || !chapters.is_empty()) && !self.player_full {
             let lower = match self.lower {
                 Lower::Chapters if !chapters.is_empty() => Lower::Chapters,
                 Lower::Chapters | Lower::Recommended if show_recs => Lower::Recommended,
@@ -4568,6 +4584,7 @@ impl Render for Unbloated {
                     Split::Player => {
                         this.settings.player = (e.position.y / size.height).clamp(0.02, 0.9);
                         this.lower_full = false;
+                        this.player_full = false;
                     }
                     Split::Continue => {
                         let (y, h) = this.drag_from;
