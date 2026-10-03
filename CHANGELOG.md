@@ -14,6 +14,9 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 
 ### Changed
+- The divider between the player and the lower pane (Recommended, Chapters, Up next) can be
+  dragged all the way up, and `E` (`e` in Vim mode) toggles the lower pane to the full height of the
+  right column. The video window hides itself when there is no room for it.
 - Player buttons are in two rows again: playback and volume on top, account and other actions
   (subscribe, save, like, download, share, share at time, open in browser) below. The time stays
   beside the views and date.

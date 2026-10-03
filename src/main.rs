@@ -51,8 +51,6 @@ fn themed(c: u32) -> gpui::Rgba {
 }
 /// Text and icons on the accent color: light in both themes.
 const ON_ACCENT: u32 = 0xf5f5f5;
-/// Least height of the player pane: below this the controls wouldn't fit under the video.
-const PLAYER_MIN_H: f32 = 430.;
 const ROW_H: f32 = 64.;
 /// Height of the column headers (tabs on the left, window buttons on the right), border included.
 const HEADER_H: f32 = 41.;
@@ -193,7 +191,7 @@ enum Lower {
 
 /// Keyboard shortcuts (also listed in Settings). Keys reach mpv instead while the pointer is
 /// over the video; mpv's own defaults there are similar (Space, arrows, f).
-const SHORTCUTS: [(&str, &str); 16] = [
+const SHORTCUTS: [(&str, &str); 17] = [
     ("Space / K", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     ("J / L", "Back / forward 10 seconds"),
@@ -205,6 +203,7 @@ const SHORTCUTS: [(&str, &str); 16] = [
     ("Click / Double-click", "Pause / fullscreen (on the video)"),
     ("N", "Next (Up next first)"),
     ("P", "Previous"),
+    ("E", "Lower pane full height, and back"),
     ("/", "Search"),
     ("Ctrl-f", "Filter the list (channels, videos, history)"),
     ("?", "Show these shortcuts"),
@@ -213,10 +212,10 @@ const SHORTCUTS: [(&str, &str); 16] = [
 ];
 
 /// Cheatsheet groups: title, how many SHORTCUTS entries it takes (in order), and its column.
-const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 7, 1)];
+const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 8, 1)];
 
 /// Vim mode's keys (case matters: ⇧ means Shift).
-const VIM_SHORTCUTS: [(&str, &str); 22] = [
+const VIM_SHORTCUTS: [(&str, &str); 23] = [
     ("Space", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     (", / .", "Back / forward 10 seconds"),
@@ -235,12 +234,13 @@ const VIM_SHORTCUTS: [(&str, &str); 22] = [
     ("⇧H / ⇧L", "Previous / next tab"),
     ("x", "Add the selected video to Up next"),
     ("f", "Click hints: type the label to click"),
+    ("e", "Lower pane full height, and back"),
     ("/", "Search"),
     ("Ctrl-f", "Filter the list (channels, videos, history)"),
     ("?", "Show these shortcuts"),
     ("Esc", "Cancel / close / back"),
 ];
-const VIM_SHEET_GROUPS: [(&str, usize, usize); 3] = [("Playback", 10, 0), ("Navigation", 8, 1), ("General", 4, 0)];
+const VIM_SHEET_GROUPS: [(&str, usize, usize); 3] = [("Playback", 10, 0), ("Navigation", 9, 1), ("General", 4, 0)];
 
 /// An entry of the left column's list, for Vim navigation.
 #[derive(Clone)]
@@ -345,6 +345,8 @@ struct Unbloated {
     confirm_delete_group: Option<String>,
     /// Channel waiting for the second click on "Unsubscribe?".
     confirm_unsub: Option<String>,
+    /// The lower pane (Recommended, Chapters, Up next) takes the whole right column.
+    lower_full: bool,
     /// Right-click menu on a subscription: the channel, where it was opened and when (it closes by itself).
     channel_menu: Option<(Group, gpui::Point<Pixels>, Instant)>,
     /// The pointer is over the menu (it closes 2 seconds after the pointer is away).
@@ -463,6 +465,7 @@ impl Unbloated {
             lower: Lower::Recommended,
             show_keys: false,
             confirm_unsub: None,
+            lower_full: false,
             channel_menu: None,
             menu_hovered: false,
             pip: false,
@@ -831,6 +834,7 @@ impl Unbloated {
             && !self.saving
             && !self.show_keys
             && !self.pip
+            && !self.lower_full
             // Audio only: keep showing the thumbnail.
             && !self.settings.audio_only;
         if let Some(e) = &self.embed {
@@ -1784,6 +1788,16 @@ impl Unbloated {
         cx.notify();
     }
 
+    /// Give the lower pane the whole right column, or take it back. Nothing to do without a lower pane.
+    fn toggle_lower_full(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let _ = window;
+        if self.lower_full || self.settings.recommendations || !self.up_next.is_empty() || !self.chapter_list().is_empty() {
+            self.lower_full = !self.lower_full;
+            self.sync_embed();
+            cx.notify();
+        }
+    }
+
     /// Copy a link that opens at the current playback position (the resume position when not playing).
     fn copy_link_at_time(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.current.as_ref().map(|v| v.id.clone()) else { return };
@@ -1864,6 +1878,7 @@ impl Unbloated {
             "m" => self.player.toggle_mute(),
             "up" | "=" => self.change_volume(5., cx),
             "down" | "-" => self.change_volume(-5., cx),
+            "e" => self.toggle_lower_full(window, cx),
             "c" if k.modifiers.shift => self.copy_link_at_time(cx),
             "c" => self.copy_link(cx),
             "n" => {
@@ -1926,6 +1941,7 @@ impl Unbloated {
             "g" if pending_g => self.vim_move(isize::MIN, len, window),
             "y" if pending_y => self.copy_link(cx),
             "t" if pending_y => self.copy_link_at_time(cx),
+            "e" => self.toggle_lower_full(window, cx),
             "y" => self.vim_y = true,
             "g" => self.vim_g = true,
             "G" => self.vim_move(isize::MAX, len, window),
@@ -4376,7 +4392,7 @@ impl Render for Unbloated {
                 Lower::UpNext => self.video_list("up-next", &self.up_next.clone(), None, cx),
             };
             right
-                .child(player.h(relative(self.settings.player)).min_h(px(PLAYER_MIN_H)).overflow_hidden().flex_none())
+                .child(player.h(if self.lower_full { px(0.).into() } else { relative(self.settings.player) }).overflow_hidden().flex_none())
                 .child(divider("split-player", Split::Player, cx))
                 .child(
                     div()
@@ -4460,7 +4476,10 @@ impl Render for Unbloated {
                 let size = window.viewport_size();
                 match split {
                     Split::Columns => this.settings.split = (e.position.x / size.width).clamp(0.2, 0.8),
-                    Split::Player => this.settings.player = (e.position.y / size.height).clamp(0.25, 0.9),
+                    Split::Player => {
+                        this.settings.player = (e.position.y / size.height).clamp(0.02, 0.9);
+                        this.lower_full = false;
+                    }
                     Split::Continue => {
                         let (y, h) = this.drag_from;
                         let max = (f32::from(size.height) - 250.).max(ROW_H);

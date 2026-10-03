@@ -11,6 +11,10 @@ pub struct Embed {
     conn: RustConnection,
     child: u32,
     mapped: bool,
+    /// What `set_visible` last asked for; the window is shown only if it also has room.
+    wanted: bool,
+    /// The video area is too small to show anything (the player pane was dragged away).
+    collapsed: bool,
     rect: (i32, i32, u32, u32),
 }
 
@@ -40,7 +44,7 @@ impl Embed {
         .check()
         .map_err(|e| eprintln!("unbloated-youtube: creating video window failed: {e}"))
         .ok()?;
-        Some(Self { conn, child, mapped: false, rect: (0, 0, 16, 9) })
+        Some(Self { conn, child, mapped: false, wanted: false, collapsed: false, rect: (0, 0, 16, 9) })
     }
 
     pub fn id(&self) -> u32 {
@@ -49,7 +53,12 @@ impl Embed {
 
     /// Position in device pixels relative to unbloated-youtube's window.
     pub fn place(&mut self, x: i32, y: i32, w: u32, h: u32) {
-        if self.rect == (x, y, w, h) || w == 0 || h == 0 {
+        let collapsed = w < 40 || h < 40;
+        if collapsed != self.collapsed {
+            self.collapsed = collapsed;
+            self.apply();
+        }
+        if self.rect == (x, y, w, h) || collapsed {
             return;
         }
         self.rect = (x, y, w, h);
@@ -59,11 +68,17 @@ impl Embed {
     }
 
     pub fn set_visible(&mut self, visible: bool) {
-        if self.mapped == visible {
+        self.wanted = visible;
+        self.apply();
+    }
+
+    fn apply(&mut self) {
+        let show = self.wanted && !self.collapsed;
+        if self.mapped == show {
             return;
         }
-        self.mapped = visible;
-        let _ = if visible { self.conn.map_window(self.child) } else { self.conn.unmap_window(self.child) };
+        self.mapped = show;
+        let _ = if show { self.conn.map_window(self.child) } else { self.conn.unmap_window(self.child) };
         let _ = self.conn.flush();
     }
 }
