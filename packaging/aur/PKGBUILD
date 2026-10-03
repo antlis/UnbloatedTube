@@ -1,5 +1,6 @@
 # Maintainer: antlis <antlis@protonmail.com>
 # Installs the prebuilt Linux binary from the GitHub release (no compiling).
+# pkgver and sha256sums here are only a template: publish.sh sets them for each release.
 pkgname=unbloated-youtube-bin
 _name=unbloated-youtube
 pkgver=0.8.1

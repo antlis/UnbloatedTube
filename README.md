@@ -300,16 +300,22 @@ Without it, search and playback still work.
   `nixpkgs` submission. A first build compiles every crate. The package pins its own nixpkgs
   (`nix/unstable.nix`) for yt-dlp, deno and mpv, which is fine for `nix-env` but not what a
   nixpkgs package would do.
-- **AUR package** (Arch). `packaging/aur/PKGBUILD` (with `.SRCINFO`) for `unbloated-youtube-bin`
-  is written: it downloads the v0.8.1 release archive, pins its sha256, depends on `mpv`,
-  `yt-dlp`, `deno`, xkbcommon, xcb, Wayland and a Vulkan loader and driver, and installs the
-  binary, desktop entry, icon, README and LICENSE. Tested with `makepkg --nodeps` on NixOS
-  (checksum passes, `package()` stages the right files); not tested on Arch, so the dependency
-  names are from memory. Publishing is a `git push` of the PKGBUILD and `.SRCINFO` to
-  `ssh://aur@aur.archlinux.org/unbloated-youtube-bin.git`, which needs the AUR account's SSH key.
-  Each release means bumping `pkgver` and `sha256sums` and regenerating `.SRCINFO`
-  (`makepkg --printsrcinfo`), which a release step could do. A source or `-git` package
-  (compiles all ~730 crates) comes second.
+- **AUR package** (Arch). Published as `unbloated-youtube-bin`
+  (https://aur.archlinux.org/packages/unbloated-youtube-bin): `packaging/aur/PKGBUILD` is the
+  template. It downloads the release archive, pins its sha256, depends on `mpv`, `yt-dlp`,
+  `deno`, xkbcommon, xcb, Wayland and a Vulkan loader and driver, and installs the binary,
+  desktop entry, icon, README and LICENSE. Tested with `makepkg --nodeps` on NixOS; not tested
+  on Arch, so the dependency names are from memory.
+  - `packaging/aur/publish.sh VERSION` publishes a release: it downloads the archive, checks its
+    `.sha256`, sets `pkgver` and `sha256sums`, generates `.SRCINFO` (identical to `makepkg`'s for
+    0.8.1) and pushes to the AUR, or does nothing if the AUR already has that version; `--dry-run`
+    stops before the push. It needs an SSH key the AUR knows (`GIT_SSH_COMMAND` picks one).
+  - The release workflow runs it after each `v*` tag when the repository secret `AUR_SSH_KEY`
+    holds the private key of such a key (use a dedicated one, not your main key); without the
+    secret that job only prints a notice. Not run in CI yet. The job trusts `ssh-keyscan` for the
+    AUR's host key rather than a pinned one.
+  - It doesn't bump `pkgrel`: a packaging-only fix to the PKGBUILD needs a manual push.
+  A source or `-git` package (compiles all ~730 crates) comes second.
 - **crates.io.** `cargo install unbloated-youtube`. All dependencies are already on crates.io
   (no git or path dependencies), and `Cargo.toml` now has `description`, `license` and
   `repository`, so it is ready to publish (`cargo publish --dry-run` not tried yet). It

@@ -64,3 +64,28 @@ jobs:
           awk -v v="## $VERSION " 'index($0, v) == 1 { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md > notes.md
           gh release create "$GITHUB_REF_NAME" "$ARCHIVE" "$ARCHIVE.sha256" \
             --title "unbloated-youtube $VERSION" --notes-file notes.md
+
+  aur:
+    # Publishes the new release to the AUR (unbloated-youtube-bin). Needs the AUR_SSH_KEY secret:
+    # the private half of an SSH key added to the AUR account. Without it this only prints a notice.
+    needs: linux-x86_64
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    env:
+      AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish to the AUR
+        if: env.AUR_SSH_KEY != ''
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$AUR_SSH_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan -t ed25519,rsa aur.archlinux.org >> ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes"
+          packaging/aur/publish.sh "$GITHUB_REF_NAME"
+
+      - name: Not configured
+        if: env.AUR_SSH_KEY == ''
+        run: echo "::notice::AUR_SSH_KEY is not set, so nothing was published to the AUR"
