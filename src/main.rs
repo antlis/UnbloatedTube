@@ -146,13 +146,14 @@ const TEXT_FIELDS: [(&str, &str, fn(&mut Settings) -> &mut String); 3] = [
     ("Download folder", "Empty for your Downloads folder; ~/ works", |s| &mut s.download_dir),
 ];
 
-const BUTTON_TOGGLES: [Toggle; 7] = [
+const BUTTON_TOGGLES: [Toggle; 8] = [
     ("Subscribe", "Subscribe / unsubscribe to the video's channel", |s| &mut s.subscribe_button),
     ("Save to playlist", "Add the video to Watch later or one of your playlists", |s| &mut s.save_button),
     ("Like", "Like the video, or remove your like", |s| &mut s.like_button),
     ("Dislike", "Dislike the video, or remove your dislike", |s| &mut s.dislike_button),
     ("Volume", "Mute button and volume bar next to the speed button", |s| &mut s.volume_control),
     ("Share", "Copy the video's link", |s| &mut s.share_button),
+    ("Open in browser", "Open the video's page in your default browser", |s| &mut s.browser_button),
     ("Download", "Save the video to your Downloads folder", |s| &mut s.download_button),
 ];
 
@@ -1679,6 +1680,16 @@ impl Unbloated {
         let link = format!("https://youtu.be/{id}");
         cx.write_to_clipboard(ClipboardItem::new_string(link.clone()));
         self.notice = Some(format!("Link copied: {link}"));
+        cx.notify();
+    }
+
+    fn open_in_browser(&mut self, cx: &mut Context<Self>) {
+        let Some(url) = self.current.as_ref().map(|v| v.url()) else { return };
+        match std::process::Command::new("xdg-open").arg(&url).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
+            // Reaped in the background so it doesn't linger as a zombie.
+            Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
+            Err(e) => self.notice = Some(format!("Cannot open the browser: {e}")),
+        }
         cx.notify();
     }
 
@@ -3249,7 +3260,7 @@ impl Unbloated {
                             }),
                     )
                     .when(self.settings.volume_control, |d| d.child(self.volume_bar(cx)))
-                    .when(self.account_buttons() || self.settings.share_button || self.settings.download_button, |d| {
+                    .when(self.account_buttons() || self.settings.share_button || self.settings.browser_button || self.settings.download_button, |d| {
                         d.child(div().w(px(8.)))
                     })
                     .when(self.account_buttons(), |d| d.children(self.account_buttons_els(cx)))
@@ -3270,6 +3281,12 @@ impl Unbloated {
                         d.child(
                             icon_button("share", "share", format!("Copy link ({key})"), true)
                                 .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.copy_link(cx)),
+                        )
+                    })
+                    .when(self.settings.browser_button, |d| {
+                        d.child(
+                            icon_button("browser", "browser", "Open in browser", true)
+                                .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.open_in_browser(cx)),
                         )
                     })
             )
