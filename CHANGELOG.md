@@ -4,6 +4,12 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## 0.8.2 - 2026-10-03
+
+### Added
+- **Automatic AUR publishing**: each release tag now updates the `unbloated-youtube-bin` package
+  on the AUR (`packaging/aur/publish.sh`, run by the release workflow).
+
 ## 0.8.1 - 2026-10-03
 
 ### Added
