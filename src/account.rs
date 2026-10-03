@@ -112,7 +112,13 @@ impl Account {
             "playlistId": playlist_id,
             "actions": [{ "action": "ACTION_ADD_VIDEO", "addedVideoId": video_id }],
         });
-        self.post("browse/edit_playlist", body).map(drop)
+        // YouTube answers 200 either way; the status says whether it really happened
+        // (it doesn't for playlists you saved from others).
+        let resp = self.post("browse/edit_playlist", body)?;
+        match resp["status"].as_str() {
+            Some("STATUS_SUCCEEDED") => Ok(()),
+            _ => Err("YouTube didn't add it (you can only add to your own playlists)".into()),
+        }
     }
 }
 

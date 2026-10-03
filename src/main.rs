@@ -943,8 +943,9 @@ impl Unbloated {
             // YouTube keeps one rating: liking replaces a dislike.
             s.disliked &= !on;
         }
-        self.with_account(cx, move |a| a.like(&id, on), move |this, res, _| {
-            if let Err(e) = res {
+        self.with_account(cx, move |a| a.like(&id, on), move |this, res, _| match res {
+            Ok(()) => this.notice = Some(if on { "Liked".into() } else { "Like removed".into() }),
+            Err(e) => {
                 if let Some((_, s)) = &mut this.status {
                     s.liked = !on;
                 }
@@ -961,8 +962,9 @@ impl Unbloated {
             s.disliked = on;
             s.liked &= !on;
         }
-        self.with_account(cx, move |a| a.dislike(&id, on), move |this, res, _| {
-            if let Err(e) = res {
+        self.with_account(cx, move |a| a.dislike(&id, on), move |this, res, _| match res {
+            Ok(()) => this.notice = Some(if on { "Disliked".into() } else { "Dislike removed".into() }),
+            Err(e) => {
                 if let Some((_, s)) = &mut this.status {
                     s.disliked = !on;
                 }
@@ -2371,6 +2373,8 @@ impl Unbloated {
             let (icon, tip) = if s.liked { ("liked", "Remove like") } else { ("like", "Like") };
             out.push(
                 icon_button("like", icon, tip, ready)
+                    // Red while liked, so the state is obvious.
+                    .when(ready && s.liked, |d| d.bg(rgb(ACCENT)))
                     .when(ready, |d| d.on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.toggle_like(cx))),
             );
         }
@@ -2378,6 +2382,7 @@ impl Unbloated {
             let (icon, tip) = if s.disliked { ("disliked", "Remove dislike") } else { ("dislike", "Dislike") };
             out.push(
                 icon_button("dislike", icon, tip, ready)
+                    .when(ready && s.disliked, |d| d.bg(rgb(ACCENT)))
                     .when(ready, |d| d.on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.toggle_dislike(cx))),
             );
         }
