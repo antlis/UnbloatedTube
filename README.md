@@ -252,6 +252,56 @@ Without it, search and playback still work.
   - `xdg-open` for Open in browser (`open` on macOS, `start` on Windows)
   - the config, data and cache locations (`~/.config`, `~/.local/share`, `~/.cache`)
 - **Wayland** is untested.
+- **Nix packaging.** Only `shell.nix` (a dev shell) exists. Add a proper package or flake that
+  builds the binary and wraps it with `mpv`, `yt-dlp` and `deno` on `PATH` (and the Vulkan/X11
+  libraries GPUI needs), so it installs without `./run` and the dev shell.
+- **AUR package** (Arch). A `PKGBUILD` that builds from the release tag, with `mpv`, `yt-dlp` and
+  `deno` as dependencies; first a `-git` or source package, then possibly a binary one.
+- **crates.io.** `cargo install unbloated-youtube`. All dependencies are already on crates.io
+  (no git or path dependencies), but `Cargo.toml` still lacks `description`, `license` and
+  `repository`, and the repository has no `LICENSE` file; those are required to publish. It
+  needs the same system libraries and runtime tools (`mpv`, `yt-dlp`, `deno`) as a source build,
+  so the README must say so.
+- **Comments, next steps** (the Comments tab shows only top-level comments for now):
+  - replies to a comment (yt-dlp can fetch them)
+  - sort by top or newest
+  - timestamps in comments that seek the video
+  - posting comments (needs InnerTube like the account actions; more work and riskier)
+  - "Load more" refetches from the top (yt-dlp can't continue), so each click is slower than the
+    last; fetching further pages directly through InnerTube would fix that
+  - cache fetched comments per video, so reopening a video doesn't refetch
+  - author avatars (via the thumbnail cache), and markers for the creator, verified and hearted
+    comments
+  - links and @mentions in comment text are plain text for now
+  - keyboard scrolling in the list (j/k and the arrow keys in Vim mode)
+  - the total comment count on the tab
+- **A proper login instead of editing `config.toml`.** Today you point the app at a browser's
+  cookies (`cookies_from_browser`) or an exported cookies file. Options, none of them tried yet:
+  - *Guided cookie capture* (the likely first step): a Login section in Settings that detects
+    installed browsers and profiles, lets you pick one, tests it and shows the account name.
+    You sign in to YouTube in your own browser, so Google's embedded-browser blocking doesn't
+    apply. Reading another browser's cookies stays fragile (keyring on Linux, app-bound
+    encryption in newer Chrome on Windows), the same as for yt-dlp.
+  - *In-app login window*: a webview (wry) on `accounts.google.com`; the app reads the cookies
+    from its cookie store. Works the same on every platform, but Google sometimes refuses
+    sign-in in embedded webviews, and it adds a dependency and a window to maintain.
+  - *Browser extension* that hands the cookies to a local port of the app: reliable, but an
+    extension to ship and keep updated.
+  - *Google OAuth device flow*: no cookies at all, but the public API doesn't cover
+    subscriptions or history the way InnerTube does, and yt-dlp dropped its YouTube OAuth
+    support because the tokens stopped working.
+- **Potential improvements.** Ideas only, nothing decided or started:
+  - *Playlists*: create, rename and delete playlists (today you can only add to and remove from
+    existing ones); reorder videos in a playlist you own; choose public, unlisted or private when
+    creating one; move or copy a video between playlists; remove all watched videos from Watch
+    later in one click
+  - *Playback*: save the Up next queue as a playlist, and reorder it by dragging; a subtitles
+    toggle and picker on the hover bar (today only a language code in Settings); a quality picker
+    for the playing video (today only a max quality); a loop or repeat button; a sleep timer
+  - *Browsing*: a Watch later button on every row (today via the save picker); hide watched
+    videos in the New uploads feed; a description tab under the player, next to Comments and
+    Chapters; search filters for duration, upload date and type
+  - *Maintenance*: export and import settings, groups and channel flags
 
 ## Files
 
