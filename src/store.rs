@@ -195,6 +195,8 @@ pub struct Settings {
     pub split: f32,
     /// Player height in the right column, as a fraction of the window.
     pub player: f32,
+    /// Height of History's Continue watching list, in pixels.
+    pub continue_height: f32,
 }
 
 impl Default for Settings {
@@ -230,6 +232,7 @@ impl Default for Settings {
             download_dir: String::new(),
             split: 0.5,
             player: 0.62,
+            continue_height: 4. * crate::ROW_H,
         }
     }
 }

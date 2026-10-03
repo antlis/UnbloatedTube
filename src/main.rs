@@ -44,11 +44,13 @@ enum Tab {
     Settings,
 }
 
-/// A split being dragged: the column divider, or the one between player and recommendations.
+/// A split being dragged: the column divider, the one between player and recommendations,
+/// or the one under History's Continue watching.
 #[derive(Clone, Copy)]
 enum Split {
     Columns,
     Player,
+    Continue,
 }
 
 /// The "New uploads" pseudo-channel at the top of Subscriptions.
@@ -236,6 +238,9 @@ struct Unbloated {
     cfg: Arc<Config>,
     settings: Settings,
     dragging: Option<Split>,
+    /// Pointer y and Continue watching height when that drag started.
+    drag_from: (f32, f32),
+    continue_scroll: UniformListScrollHandle,
     tab: Tab,
     subs: Browser,
     yt_history: Load<Video>,
@@ -387,6 +392,8 @@ impl Unbloated {
             cfg: Arc::new(Config::load()),
             settings,
             dragging: None,
+            drag_from: (0., 0.),
+            continue_scroll: UniformListScrollHandle::new(),
             tab,
             subs: Browser::new(),
             yt_history: Load::Idle,
@@ -1760,7 +1767,17 @@ impl Unbloated {
             Tab::Subscriptions | Tab::Playlists if self.browser_ref(self.tab).open.is_none() => (0, 44.),
             _ => (0, ROW_H),
         };
-        let Some(ix) = cursor.checked_sub(offset) else { return };
+        let Some(ix) = cursor.checked_sub(offset) else {
+            // In Continue watching, which scrolls on its own.
+            let visible = (self.settings.continue_height / ROW_H).max(1.) as usize;
+            let top = self.continue_scroll.0.borrow().base_handle.logical_scroll_top().0;
+            if cursor < top {
+                self.continue_scroll.scroll_to_item(cursor, ScrollStrategy::Top);
+            } else if cursor >= top + visible {
+                self.continue_scroll.scroll_to_item(cursor, ScrollStrategy::Bottom);
+            }
+            return;
+        };
         let visible = ((f32::from(window.viewport_size().height) - 160.) / row_h).max(1.) as usize;
         let top = self.vim_scroll.0.borrow().base_handle.logical_scroll_top().0;
         if ix < top {
@@ -1845,7 +1862,7 @@ impl Unbloated {
             .items
             .iter()
             .filter(|w| w.position > 30. && !w.finished && self.video_matches(&w.video))
-            .take(4)
+            .take(50)
             .map(|w| w.video.clone())
             .collect();
         (partial, all)
@@ -2200,23 +2217,31 @@ impl Unbloated {
             return self.video_list("history", &videos, Some(0), cx);
         }
         let label = |text: &'static str| div().px_3().pt_3().pb_1().text_xs().text_color(rgb(MUTED)).child(text);
-        let queue: Arc<[Video]> = partial.clone().into();
-        let offset = partial.len();
-        let rows: Vec<_> = partial
-            .into_iter()
-            .enumerate()
-            .map(|(i, v)| {
-                let selected = self.vim_selected(i);
-                self.video_row(("continue", i), v, queue.clone(), false, false, selected, cx)
-            })
-            .collect();
+        let queue: Arc<[Video]> = partial.into();
+        let offset = queue.len();
+        let rows = uniform_list(
+            "continue",
+            queue.len(),
+            cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+                range
+                    .map(|i| {
+                        let selected = this.vim_selected(i);
+                        this.video_row(("continue", i), queue[i].clone(), queue.clone(), false, false, selected, cx)
+                    })
+                    .collect()
+            }),
+        )
+        .track_scroll(self.continue_scroll.clone())
+        // Never taller than its rows.
+        .h(px(self.settings.continue_height.min(offset as f32 * ROW_H)));
         div()
             .flex()
             .flex_col()
             .flex_1()
             .min_h_0()
             .child(label("CONTINUE WATCHING"))
-            .children(rows)
+            .child(rows)
+            .child(div().pt_2().child(divider("split-continue", Split::Continue, cx)))
             .child(label("HISTORY"))
             .child(div().flex().flex_col().flex_1().min_h_0().child(self.video_list("history", &videos, Some(offset), cx)))
             .into_any_element()
@@ -3470,9 +3495,15 @@ fn divider(id: &'static str, split: Split, cx: &mut Context<Unbloated>) -> State
     let bar = div().id(id).flex_none().bg(rgb(BORDER)).hover(|d| d.bg(rgb(MUTED)));
     let bar = match split {
         Split::Columns => bar.w(px(5.)).h_full().cursor(CursorStyle::ResizeLeftRight),
-        Split::Player => bar.h(px(5.)).w_full().cursor(CursorStyle::ResizeUpDown),
+        Split::Player | Split::Continue => bar.h(px(5.)).w_full().cursor(CursorStyle::ResizeUpDown),
     };
-    bar.on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, _| this.dragging = Some(split)))
+    bar.on_mouse_down(
+        MouseButton::Left,
+        cx.listener(move |this, e: &gpui::MouseDownEvent, _, _| {
+            this.dragging = Some(split);
+            this.drag_from = (f32::from(e.position.y), this.settings.continue_height);
+        }),
+    )
 }
 
 enum Edit {
@@ -3823,6 +3854,11 @@ impl Render for Unbloated {
                 match split {
                     Split::Columns => this.settings.split = (e.position.x / size.width).clamp(0.2, 0.8),
                     Split::Player => this.settings.player = (e.position.y / size.height).clamp(0.25, 0.9),
+                    Split::Continue => {
+                        let (y, h) = this.drag_from;
+                        let max = (f32::from(size.height) - 250.).max(ROW_H);
+                        this.settings.continue_height = (h + f32::from(e.position.y) - y).clamp(ROW_H, max);
+                    }
                 }
                 cx.notify();
             }))
