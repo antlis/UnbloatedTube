@@ -172,6 +172,19 @@ Built and tested on Linux with X11; the embedded player relies on X11 window emb
 Needs `mpv`, `yt-dlp` (recent: YouTube breaks old versions quickly) and `deno` (yt-dlp uses it
 for YouTube's JavaScript challenges).
 
+### Prebuilt binary
+
+Releases on GitHub have a Linux x86_64 archive (built on Ubuntu 22.04, so it needs glibc 2.35 or
+newer: Ubuntu 22.04+, Debian 12+, Fedora, Arch). Unpack it and run `unbloated-youtube`; the
+`.desktop` file and icon in it are for your launcher. Install separately:
+
+- the tools above: `mpv`, `yt-dlp`, `deno`
+- libraries the binary links against, which most desktops already have: FreeType, xkbcommon
+  (and its X11 part), xcb, libpng, zlib; plus Vulkan drivers for your GPU (Mesa's, or
+  `mesa-vulkan-drivers`)
+
+Check the download with the `.sha256` file next to it (`sha256sum -c`).
+
 ### NixOS
 
 To install it, `default.nix` builds a package (`package.nix`) that puts mpv, yt-dlp and deno on its
@@ -265,13 +278,13 @@ Without it, search and playback still work.
   728 crates (mostly GPUI's dependencies) and took well over 15 minutes in a clean Nix build on 8
   cores, so every user of a source package (Nix, AUR source or `-git`, `cargo install`) would wait
   that long. Build once in CI instead and let everyone else download the result:
-  - written, not yet run: `.github/workflows/release.yml` builds a Linux x86_64 release binary
-    on every `v*` tag (on ubuntu-22.04), packs it with the README, changelog, desktop entry and
-    icon into a `.tar.gz` with a checksum, and publishes a GitHub release whose notes are that
-    version's changelog section; "Run workflow" builds the archive without publishing. Still to
-    do: check it on a real run (the apt package list is from memory), and a README line listing
-    the tools to install (`mpv`, `yt-dlp`, `deno`) and the system libraries the binary links
-    against
+  - done, run once (a manual "Run workflow" build, about 7 minutes): `.github/workflows/release.yml`
+    builds a Linux x86_64 release binary on every `v*` tag (on ubuntu-22.04), packs it with the
+    README, changelog, desktop entry and icon into a `.tar.gz` with a checksum, and publishes a
+    GitHub release whose notes are that version's changelog section. The manual run built and
+    uploaded the archive (checksum verified, needs glibc 2.35); the publishing step has not run
+    yet, since that needs a `v*` tag. Still to do: the first tagged release, and running the
+    binary on another distro
   - build on an older distro image (not the newest) so the binary's glibc requirement stays low
     and it runs on more distros
   - the same build feeds the `.deb` and `.rpm` packages and an AUR `-bin` package (below)
