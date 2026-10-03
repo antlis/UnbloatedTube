@@ -46,6 +46,8 @@ const ICONS: &[(&str, &str)] = &[
     ("trash", icon!(r#"<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>"#)),
     ("close", icon!(r#"<path d="M6 6l12 12M18 6L6 18"/>"#)),
     ("refresh", icon!(r#"<path d="M21 12a9 9 0 1 1-2.6-6.4L21 8M21 3v5h-5"/>"#)),
+    ("volume", icon!(r#"<path d="M11 5L6 9H2v6h4l5 4zM15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/>"#)),
+    ("volume-off", icon!(r#"<path d="M11 5L6 9H2v6h4l5 4zM22 9l-6 6M16 9l6 6"/>"#)),
     ("settings", icon!(r#"<path d="M3 6h11M18 6h3M3 12h3M10 12h11M3 18h13M20 18h1"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>"#)),
 ];
 

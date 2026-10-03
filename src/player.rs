@@ -26,6 +26,9 @@ pub struct State {
     pub position: f64,
     pub duration: f64,
     pub paused: bool,
+    pub muted: bool,
+    /// mpv's volume, 0-100 (also changed by its own key bindings over the video).
+    pub volume: Option<f64>,
     /// mpv's own fullscreen flag (toggled by f / double-click / Esc); unbloated-youtube mirrors it.
     pub fullscreen: bool,
 }
@@ -37,10 +40,12 @@ pub struct Player {
     options: Vec<String>,
     /// Our mouse bindings were sent to the running mpv.
     bound: bool,
+    /// Volume (0-100) for the next mpv start; a running mpv is changed with `set_volume`.
+    volume: f32,
 }
 
 impl Player {
-    pub fn new() -> Self {
+    pub fn new(volume: f32) -> Self {
         let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
         // Sockets of unbloated-youtube instances that were killed (and so never cleaned up after themselves).
         for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
@@ -50,7 +55,7 @@ impl Player {
                 let _ = std::fs::remove_file(entry.path());
             }
         }
-        Self { socket: dir.join(format!("unbloated-youtube-mpv-{}.sock", std::process::id())), child: None, options: Vec::new(), bound: false }
+        Self { socket: dir.join(format!("unbloated-youtube-mpv-{}.sock", std::process::id())), child: None, options: Vec::new(), bound: false, volume }
     }
 
     pub fn alive(&mut self) -> bool {
@@ -86,6 +91,7 @@ impl Player {
                 // Before `options`, so a --gpu-context in the user's extra options still wins.
                 .args(wid.map(|_| "--gpu-context=x11egl"))
                 .args(options)
+                .args(["--volume-max=100".to_string(), format!("--volume={}", self.volume)])
                 .arg(format!("--speed={speed}"))
                 .arg(format!("--start={start}"))
                 .args(wid.map(|w| format!("--wid={w}")))
@@ -123,14 +129,23 @@ impl Player {
     pub fn bind_mouse(&mut self) {
         if !self.bound && self.alive() {
             // "?" over the video: flag it for us (read in `query`) instead of mpv's own help.
+            // Volume keys over the video (mpv's default Up/Down seek a minute).
             self.bound = self.command(json!(["keybind", "MBTN_LEFT", "cycle pause"])).is_ok()
-                && self.command(json!(["keybind", "?", "set user-data/unbloated/help yes"])).is_ok();
+                && self.command(json!(["keybind", "?", "set user-data/unbloated/help yes"])).is_ok()
+                && [("UP", 5), ("=", 5), ("+", 5), ("DOWN", -5), ("-", -5)]
+                    .iter()
+                    .all(|(key, step)| self.command(json!(["keybind", key, format!("add volume {step}")])).is_ok());
         }
     }
 
     /// Reset the "?" flag after acting on it.
     pub fn clear_help(&self) {
         let _ = self.command(json!(["set", "user-data/unbloated/help", "no"]));
+    }
+
+    pub fn set_volume(&mut self, volume: f32) {
+        self.volume = volume;
+        let _ = self.command(json!(["set_property", "volume", volume]));
     }
 
     pub fn set_speed(&self, speed: f32) {
@@ -232,7 +247,7 @@ pub fn sponsorblock_script() -> Option<String> {
 pub fn query(socket: &Path) -> Option<State> {
     let mut s = UnixStream::connect(socket).ok()?;
     s.set_read_timeout(Some(Duration::from_secs(2))).ok();
-    let props = ["time-pos", "duration", "pause", "fullscreen", "path", "idle-active", "eof-reached", "chapter-list", "user-data/unbloated/help"];
+    let props = ["time-pos", "duration", "pause", "fullscreen", "path", "idle-active", "eof-reached", "chapter-list", "user-data/unbloated/help", "mute", "volume"];
     for (i, p) in props.iter().enumerate() {
         writeln!(s, "{}", json!({ "command": ["get_property", p], "request_id": i })).ok()?;
     }
@@ -266,6 +281,8 @@ pub fn query(socket: &Path) -> Option<State> {
             })
             .unwrap_or_default(),
         help: vals[8].as_str() == Some("yes") || vals[8].as_bool() == Some(true),
+        muted: vals[9].as_bool().unwrap_or(false),
+        volume: vals[10].as_f64(),
     })
 }
 

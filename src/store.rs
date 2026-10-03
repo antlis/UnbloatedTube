@@ -186,6 +186,10 @@ pub struct Settings {
     pub prefer_hw_codecs: bool,
     pub hwdec: bool,
     pub speed: f32,
+    /// Volume, 0-100.
+    pub volume: f32,
+    /// Volume bar next to the speed button.
+    pub volume_control: bool,
     pub sponsorblock: bool,
     /// SponsorBlock segment categories to skip (its API names, e.g. "sponsor", "selfpromo").
     pub skip_segments: Vec<String>,
@@ -233,6 +237,8 @@ impl Default for Settings {
             prefer_hw_codecs: true,
             hwdec: true,
             speed: 1.0,
+            volume: 100.,
+            volume_control: true,
             sponsorblock: false,
             skip_segments: ["sponsor", "selfpromo", "interaction"].map(String::from).to_vec(),
             audio_only: false,

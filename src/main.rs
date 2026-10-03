@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use store::{ChannelFlags, ChannelGroup, Config, History, Seen, Settings};
 use yt::{Group, Video, fmt_count, fmt_duration};
 
@@ -51,6 +51,8 @@ fn themed(c: u32) -> gpui::Rgba {
 }
 /// Text and icons on the accent color: light in both themes.
 const ON_ACCENT: u32 = 0xf5f5f5;
+/// Least height of the player pane: below this the controls wouldn't fit under the video.
+const PLAYER_MIN_H: f32 = 400.;
 const ROW_H: f32 = 64.;
 /// Height of the column headers (tabs on the left, window buttons on the right), border included.
 const HEADER_H: f32 = 41.;
@@ -144,11 +146,12 @@ const TEXT_FIELDS: [(&str, &str, fn(&mut Settings) -> &mut String); 3] = [
     ("Download folder", "Empty for your Downloads folder; ~/ works", |s| &mut s.download_dir),
 ];
 
-const BUTTON_TOGGLES: [Toggle; 6] = [
+const BUTTON_TOGGLES: [Toggle; 7] = [
     ("Subscribe", "Subscribe / unsubscribe to the video's channel", |s| &mut s.subscribe_button),
     ("Save to playlist", "Add the video to Watch later or one of your playlists", |s| &mut s.save_button),
     ("Like", "Like the video, or remove your like", |s| &mut s.like_button),
     ("Dislike", "Dislike the video, or remove your dislike", |s| &mut s.dislike_button),
+    ("Volume", "Mute button and volume bar next to the speed button", |s| &mut s.volume_control),
     ("Share", "Copy the video's link", |s| &mut s.share_button),
     ("Download", "Save the video to your Downloads folder", |s| &mut s.download_button),
 ];
@@ -186,12 +189,13 @@ enum Lower {
 
 /// Keyboard shortcuts (also listed in Settings). Keys reach mpv instead while the pointer is
 /// over the video; mpv's own defaults there are similar (Space, arrows, f).
-const SHORTCUTS: [(&str, &str); 14] = [
+const SHORTCUTS: [(&str, &str); 15] = [
     ("Space / K", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     ("J / L", "Back / forward 10 seconds"),
     ("F", "Fullscreen (Esc or f to leave)"),
     ("M", "Mute"),
+    ("↑ / ↓", "Volume up / down 5%"),
     ("C", "Copy the video's link"),
     ("Click / Double-click", "Pause / fullscreen (on the video)"),
     ("N", "Next (Up next first)"),
@@ -204,15 +208,16 @@ const SHORTCUTS: [(&str, &str); 14] = [
 ];
 
 /// Cheatsheet groups: title, how many SHORTCUTS entries it takes (in order), and its column.
-const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 7, 0), ("Navigation", 7, 1)];
+const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 8, 0), ("Navigation", 7, 1)];
 
 /// Vim mode's keys (case matters: ⇧ means Shift).
-const VIM_SHORTCUTS: [(&str, &str); 20] = [
+const VIM_SHORTCUTS: [(&str, &str); 21] = [
     ("Space", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     (", / .", "Back / forward 10 seconds"),
     ("⇧F", "Fullscreen (Esc or f to leave)"),
     ("m", "Mute"),
+    ("+ / -", "Volume up / down 5%"),
     ("n / p", "Next / previous video"),
     ("y y", "Copy the video's link"),
     ("Click / Double-click", "Pause / fullscreen (on the video)"),
@@ -229,7 +234,7 @@ const VIM_SHORTCUTS: [(&str, &str); 20] = [
     ("?", "Show these shortcuts"),
     ("Esc", "Cancel / close / back"),
 ];
-const VIM_SHEET_GROUPS: [(&str, usize, usize); 3] = [("Playback", 8, 0), ("Navigation", 8, 1), ("General", 4, 0)];
+const VIM_SHEET_GROUPS: [(&str, usize, usize); 3] = [("Playback", 9, 0), ("Navigation", 8, 1), ("General", 4, 0)];
 
 /// An entry of the left column's list, for Vim navigation.
 #[derive(Clone)]
@@ -342,6 +347,8 @@ struct Unbloated {
     history: History,
     current: Option<Video>,
     player: Player,
+    /// When we last set the volume: mpv's reported volume is ignored for a moment after.
+    volume_set: Instant,
     /// X11 child window mpv renders into; None until created, or on Wayland.
     embed: Option<Rc<RefCell<Embed>>>,
     /// The last-watched video has been loaded (paused) into mpv at startup.
@@ -382,6 +389,7 @@ impl Unbloated {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let history = History::load();
         let settings = Settings::load();
+        let volume = settings.volume;
         LIGHT.store(settings.light_theme, std::sync::atomic::Ordering::Relaxed);
         let root_focus = cx.focus_handle();
         window.focus(&root_focus);
@@ -471,7 +479,8 @@ impl Unbloated {
             generations: HashMap::new(),
             current: history.last().map(|w| w.video.clone()),
             history,
-            player: Player::new(),
+            player: Player::new(volume),
+            volume_set: Instant::now(),
             embed: None,
             preloaded: false,
             fullscreen: false,
@@ -1673,6 +1682,26 @@ impl Unbloated {
         cx.notify();
     }
 
+    /// Change the volume by `delta` percent (unmuting when raising it).
+    fn change_volume(&mut self, delta: f32, cx: &mut Context<Self>) {
+        if delta > 0. && self.state.as_ref().is_some_and(|s| s.muted) {
+            self.player.toggle_mute();
+        }
+        self.set_volume(self.settings.volume + delta, cx);
+    }
+
+    fn set_volume(&mut self, volume: f32, cx: &mut Context<Self>) {
+        let volume = volume.clamp(0., 100.).round();
+        self.settings.volume = volume;
+        self.settings.save();
+        self.volume_set = Instant::now();
+        self.player.set_volume(volume);
+        if !self.settings.volume_control {
+            self.notice = Some(format!("Volume {volume}%"));
+        }
+        cx.notify();
+    }
+
     fn toggle_play(&mut self, cx: &mut Context<Self>) {
         if self.state.is_some() {
             self.player.toggle_pause();
@@ -1714,6 +1743,8 @@ impl Unbloated {
             "l" if active => self.player.seek_relative(10.),
             "f" if active => self.player.set_fullscreen(true),
             "m" => self.player.toggle_mute(),
+            "up" | "=" => self.change_volume(5., cx),
+            "down" | "-" => self.change_volume(-5., cx),
             "c" => self.copy_link(cx),
             "n" => {
                 if let Some(v) = self.next_video() {
@@ -1818,6 +1849,8 @@ impl Unbloated {
             "." if active => self.player.seek_relative(10.),
             "F" if active => self.player.set_fullscreen(true),
             "m" => self.player.toggle_mute(),
+            "+" | "=" => self.change_volume(5., cx),
+            "-" => self.change_volume(-5., cx),
             "n" => {
                 if let Some(v) = self.next_video() {
                     self.play(v, None, cx);
@@ -2024,6 +2057,13 @@ impl Unbloated {
         if let Some(s) = &state {
             if s.idle || (s.playing && Some(&s.path) == url.as_ref()) {
                 self.loading = false;
+            }
+            // Volume keys over the video are handled by mpv itself: remember its volume.
+            if let Some(v) = s.volume.filter(|v| (*v as f32 - self.settings.volume).abs() >= 1. && self.volume_set.elapsed() > Duration::from_secs(1)) {
+                self.settings.volume = v as f32;
+                self.settings.save();
+                self.player.set_volume(self.settings.volume);
+                cx.notify();
             }
         }
         if !self.player.alive() {
@@ -3045,7 +3085,7 @@ impl Unbloated {
             (false, _) => ("play", "Play".to_string()),
         };
         let time = if self.loading {
-            "Loading…".to_string()
+            String::new()
         } else {
             format!("{} / {}", fmt_duration(pos), fmt_duration(dur))
         };
@@ -3059,7 +3099,13 @@ impl Unbloated {
             .into_iter()
             .flatten()
             .collect();
-            (!parts.is_empty()).then(|| div().text_xs().text_color(themed(MUTED)).child(parts.join("  ·  ")))
+            div()
+                .flex()
+                .items_center()
+                .text_xs()
+                .text_color(themed(MUTED))
+                .child(parts.join("  ·  "))
+                .child(div().ml_auto().pl_2().flex_none().child(time))
         };
 
         div()
@@ -3070,7 +3116,7 @@ impl Unbloated {
             .p_4()
             .child(screen)
             .child(div().text_color(themed(TEXT)).line_clamp(2).child(video.title.clone()))
-            .children(info)
+            .child(info)
             .child({
                 let name = video.channel.clone().unwrap_or_default();
                 let subs = self.current_status().and_then(|s| s.subscribers.clone()).filter(|_| self.settings.show_subs);
@@ -3202,6 +3248,7 @@ impl Unbloated {
                                 cx.notify();
                             }),
                     )
+                    .when(self.settings.volume_control, |d| d.child(self.volume_bar(cx)))
                     .when(self.account_buttons() || self.settings.share_button || self.settings.download_button, |d| {
                         d.child(div().w(px(8.)))
                     })
@@ -3225,8 +3272,35 @@ impl Unbloated {
                                 .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.copy_link(cx)),
                         )
                     })
-                    .child(div().ml_auto().pl_2().flex_none().text_xs().text_color(themed(MUTED)).child(time)),
             )
+    }
+
+    /// Mute button and a ten-step volume bar (click a step to set the volume).
+    fn volume_bar(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let muted = self.state.as_ref().is_some_and(|s| s.muted);
+        let volume = self.settings.volume;
+        let filled = if muted { 0 } else { (volume / 10.).round() as usize };
+        let silent = muted || volume == 0.;
+        div()
+            .flex()
+            .items_center()
+            .mr_2()
+            .child(
+                icon_button("mute", if silent { "volume-off" } else { "volume" }, if muted { "Unmute (M)" } else { "Mute (M)" }, true)
+                    .on_click_hinted(&self.hint_reg(), cx, |this, _, _, _| this.player.toggle_mute()),
+            )
+            .child(div().flex().items_center().h(px(30.)).children((1..=10usize).map(|i| {
+                div()
+                    .id(("volume", i))
+                    .h_full()
+                    .px(px(1.5))
+                    .flex()
+                    .items_center()
+                    .cursor_pointer()
+                    .child(div().w(px(5.)).h(px(14.)).rounded(px(1.)).bg(if i <= filled { themed(ACCENT) } else { themed(BORDER) }))
+                    .tooltip(tip(format!("Volume {}%", i * 10)))
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_volume(i as f32 * 10., cx)))
+            })))
     }
 
     /// Notices and the current video's download status, in the bottom-right corner (under the
@@ -4081,7 +4155,7 @@ impl Render for Unbloated {
                 Lower::UpNext => self.video_list("up-next", &self.up_next.clone(), None, cx),
             };
             right
-                .child(player.h(relative(self.settings.player)).flex_none())
+                .child(player.h(relative(self.settings.player)).min_h(px(PLAYER_MIN_H)).overflow_hidden().flex_none())
                 .child(divider("split-player", Split::Player, cx))
                 .child(
                     div()
