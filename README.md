@@ -311,9 +311,9 @@ Without it, search and playback still work.
     0.8.1) and pushes to the AUR, or does nothing if the AUR already has that version.
   - Automatic: the release workflow's `aur` job runs the script after each `v*` tag, using the
     repository secret `AUR_SSH_KEY` (a dedicated key registered on the AUR account, no
-    passphrase). Without the secret that job only prints a notice. The key was checked against the
-    AUR from here, but the job itself has not run in CI yet, and it trusts `ssh-keyscan` for the
-    AUR's host key rather than a pinned one.
+    passphrase). Without the secret that job only prints a notice. It has run once, on the v0.8.2 tag,
+    and pushed that version to the AUR. It trusts `ssh-keyscan` for the AUR's host key rather
+    than a pinned one.
   - By hand: `packaging/aur/publish.sh 0.8.2` with any key the AUR knows (`GIT_SSH_COMMAND` picks
     one); `--dry-run` stops before the push.
   - It doesn't bump `pkgrel`: a packaging-only fix to the PKGBUILD needs a manual push.
