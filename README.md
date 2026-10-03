@@ -92,7 +92,8 @@ list, your playlists, your history, search and a player.
 - **No mpv chrome by default**: mpv's own on-screen controls and key bindings are switched off
   over the video, so the app's shortcuts work there too. Turn them back on in Settings (*mpv
   controls and hotkeys*) if you want mpv's `osc`, wheel volume, `s` for screenshots and so on.
-- Click the video to pause, double-click for fullscreen.
+- Click the video to pause, double-click for fullscreen. The app's own shortcuts work with the
+  pointer over the video too, since mpv's key bindings are off by default.
 - **Recommendations** under the player (your YouTube home feed), or turn them off.
 
 ### Account actions
