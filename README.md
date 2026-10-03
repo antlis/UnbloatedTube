@@ -274,17 +274,17 @@ Without it, search and playback still work.
   - `xdg-open` for Open in browser (`open` on macOS, `start` on Windows)
   - the config, data and cache locations (`~/.config`, `~/.local/share`, `~/.cache`)
 - **Wayland** is untested.
-- **Prebuilt binaries (packaging, first).** Compiling from source is slow: the build pulls in about
+- **Prebuilt binaries (packaging).** Compiling from source is slow: the build pulls in about
   728 crates (mostly GPUI's dependencies) and took well over 15 minutes in a clean Nix build on 8
   cores, so every user of a source package (Nix, AUR source or `-git`, `cargo install`) would wait
   that long. Build once in CI instead and let everyone else download the result:
-  - done, run once (a manual "Run workflow" build, about 7 minutes): `.github/workflows/release.yml`
-    builds a Linux x86_64 release binary on every `v*` tag (on ubuntu-22.04), packs it with the
-    README, changelog, desktop entry and icon into a `.tar.gz` with a checksum, and publishes a
-    GitHub release whose notes are that version's changelog section. The manual run built and
-    uploaded the archive (checksum verified, needs glibc 2.35); the publishing step has not run
-    yet, since that needs a `v*` tag. Still to do: the first tagged release, and running the
-    binary on another distro
+  - done: `.github/workflows/release.yml` builds a Linux x86_64 release binary on every `v*` tag
+    (on ubuntu-22.04, about 7 minutes), packs it with the README, changelog, desktop entry and
+    icon into a `.tar.gz` with a checksum, and publishes a GitHub release whose notes are that
+    version's changelog section. First published release: v0.8.0 (needs glibc 2.35; checksum
+    verified on the earlier test build, not on the release asset). Still to do: run the binary on
+    another distro, and a way to attach more assets (the `.deb`, `.rpm` and so on below) to the
+    same release
   - build on an older distro image (not the newest) so the binary's glibc requirement stays low
     and it runs on more distros
   - the same build feeds the `.deb` and `.rpm` packages and an AUR `-bin` package (below)
@@ -299,15 +299,16 @@ Without it, search and playback still work.
   `nixpkgs` submission. A first build compiles every crate. The package pins its own nixpkgs
   (`nix/unstable.nix`) for yt-dlp, deno and mpv, which is fine for `nix-env` but not what a
   nixpkgs package would do.
-- **AUR package** (Arch). A `PKGBUILD` that builds from the release tag, with `mpv`, `yt-dlp` and
-  `deno` as dependencies; a source or `-git` package compiles everything on the user's machine, so a `-bin` package
-  using the prebuilt release binary should come with it, or first.
+- **AUR package** (Arch). A `PKGBUILD` with `mpv`, `yt-dlp` and `deno` as dependencies. A
+  `-bin` package can now be written first: it downloads the GitHub release archive (v0.8.0 and
+  later) and checks its `.sha256`, so nobody compiles anything. A source or `-git` package
+  compiles all ~730 crates on the user's machine, so it comes second.
 - **crates.io.** `cargo install unbloated-youtube`. All dependencies are already on crates.io
   (no git or path dependencies), but `Cargo.toml` still lacks `description`, `license` and
   `repository`, and the repository has no `LICENSE` file; those are required to publish. It
   needs the same system libraries and runtime tools (`mpv`, `yt-dlp`, `deno`) as a source build,
   so the README must say so.
-- **More packaging** (ideas, none started):
+- **More packaging** (ideas, none started; the `.deb` and `.rpm` can be built from the release binary):
   - `.deb` and `.rpm` packages declaring `mpv`, `yt-dlp` and `deno` as dependencies, built in CI
     (e.g. with `cargo-deb` and `cargo-generate-rpm`) and attached to GitHub releases
   - an AppImage with the binary and `mpv`, `yt-dlp` and `deno` bundled; the Vulkan driver stays
