@@ -262,6 +262,17 @@ Without it, search and playback still work.
   `repository`, and the repository has no `LICENSE` file; those are required to publish. It
   needs the same system libraries and runtime tools (`mpv`, `yt-dlp`, `deno`) as a source build,
   so the README must say so.
+- **More packaging** (ideas, none started):
+  - `.deb` and `.rpm` packages declaring `mpv`, `yt-dlp` and `deno` as dependencies, built in CI
+    (e.g. with `cargo-deb` and `cargo-generate-rpm`) and attached to GitHub releases
+  - an AppImage with the binary and `mpv`, `yt-dlp` and `deno` bundled; the Vulkan driver stays
+    the host's, and a bundled `yt-dlp` goes stale quickly
+  - a Flatpak; `mpv` is easy to include, but the X11 embedding, `yt-dlp` updates and reading
+    the browser's cookies from inside the sandbox need care
+  - prebuilt binaries on GitHub releases, with a README line listing the tools to install
+- **Tool checks.** On startup, check that `mpv`, `yt-dlp` and `deno` are found and say which one
+  is missing; downloading `yt-dlp` and `deno` into the app's data directory on first run is
+  another option.
 - **Comments, next steps** (the Comments tab shows only top-level comments for now):
   - replies to a comment (yt-dlp can fetch them)
   - sort by top or newest
