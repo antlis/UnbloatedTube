@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Unbloated YouTube
+GenericName=YouTube client
+Comment=Lightweight, configurable YouTube desktop client
+Exec=unbloated-youtube
+Icon=unbloated-youtube
+Terminal=false
+Categories=AudioVideo;Video;Player;Network;
+Keywords=youtube;video;mpv;
+StartupWMClass=unbloated-youtube

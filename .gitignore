@@ -1,3 +1,4 @@
 target/
 .nix-env
 .nix-env.tmp
+result

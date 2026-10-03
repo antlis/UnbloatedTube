@@ -174,7 +174,16 @@ for YouTube's JavaScript challenges).
 
 ### NixOS
 
-`shell.nix` provides everything, with yt-dlp, deno and mpv pinned to a recent nixpkgs-unstable:
+To install it, `default.nix` builds a package (`package.nix`) that puts mpv, yt-dlp and deno on its
+`PATH` and installs the desktop entry and icon; they come from a pinned nixpkgs-unstable:
+
+```sh
+nix-build              # ./result/bin/unbloated-youtube
+nix-env -f . -i        # or add it to environment.systemPackages / home.packages
+```
+
+This compiles all ~730 crates (about 25 minutes on 2 cores, with several GB of disk); see the TODO
+on prebuilt binaries. For development, `shell.nix` provides the same tools:
 
 ```sh
 nix-shell --run 'cargo build --release'
@@ -252,9 +261,12 @@ Without it, search and playback still work.
   - `xdg-open` for Open in browser (`open` on macOS, `start` on Windows)
   - the config, data and cache locations (`~/.config`, `~/.local/share`, `~/.cache`)
 - **Wayland** is untested.
-- **Nix packaging.** Only `shell.nix` (a dev shell) exists. Add a proper package or flake that
-  builds the binary and wraps it with `mpv`, `yt-dlp` and `deno` on `PATH` (and the Vulkan/X11
-  libraries GPUI needs), so it installs without `./run` and the dev shell.
+- **Nix packaging.** `default.nix` and `package.nix` build and wrap the app (done, tested with
+  `nix-build`: it starts from a clean environment with mpv, yt-dlp and deno on its `PATH`). Still
+  open: a flake, a binary cache so users don't compile it (see *Prebuilt binaries*), and a
+  `nixpkgs` submission. A first build compiles every crate. The package pins its own nixpkgs
+  (`nix/unstable.nix`) for yt-dlp, deno and mpv, which is fine for `nix-env` but not what a
+  nixpkgs package would do.
 - **AUR package** (Arch). A `PKGBUILD` that builds from the release tag, with `mpv`, `yt-dlp` and
   `deno` as dependencies; first a `-git` or source package, then possibly a binary one.
 - **crates.io.** `cargo install unbloated-youtube`. All dependencies are already on crates.io
