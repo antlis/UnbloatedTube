@@ -2070,8 +2070,7 @@ impl Unbloated {
         };
         let Some(ix) = cursor.checked_sub(offset) else {
             // In Continue watching, which scrolls on its own.
-            let visible = (self.settings.continue_height / ROW_H).max(1.) as usize;
-            let top = self.continue_scroll.0.borrow().base_handle.logical_scroll_top().0;
+            let (top, visible) = scroll_window(&self.continue_scroll, ROW_H, self.settings.continue_height);
             if cursor < top {
                 self.continue_scroll.scroll_to_item(cursor, ScrollStrategy::Top);
             } else if cursor >= top + visible {
@@ -2079,8 +2078,7 @@ impl Unbloated {
             }
             return;
         };
-        let visible = ((f32::from(window.viewport_size().height) - 160.) / row_h).max(1.) as usize;
-        let top = self.vim_scroll.0.borrow().base_handle.logical_scroll_top().0;
+        let (top, visible) = scroll_window(&self.vim_scroll, row_h, f32::from(window.viewport_size().height) - 160.);
         if ix < top {
             self.vim_scroll.scroll_to_item(ix, ScrollStrategy::Top);
         } else if ix >= top + visible {
@@ -4232,6 +4230,17 @@ impl Render for Unbloated {
         let tabs: Vec<_> = [
             (st.subscriptions, "Subscriptions", Tab::Subscriptions),
             (st.playlists, "Playlists", Tab::Playlists),
+/// First visible row and how many rows fit, for a uniform list of `row_h`-tall rows. (GPUI's own
+/// `logical_scroll_top` always says 0 for uniform lists.) `fallback_h` is used until the list has
+/// been laid out once.
+fn scroll_window(handle: &UniformListScrollHandle, row_h: f32, fallback_h: f32) -> (usize, usize) {
+    let state = handle.0.borrow();
+    let top = (f32::from(-state.base_handle.offset().y) / row_h).max(0.).floor() as usize;
+    let h = f32::from(state.base_handle.bounds().size.height);
+    let visible = (if h > 0. { h } else { fallback_h } / row_h).floor().max(1.) as usize;
+    (top, visible)
+}
+
             (st.history, "History", Tab::History),
         ]
         .into_iter()

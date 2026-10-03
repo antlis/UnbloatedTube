@@ -25,6 +25,10 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
   (subscribe, save, like, download, share, share at time, open in browser) below. The time stays
   beside the views and date.
 
+### Fixed
+- `j`/`k` in Vim mode: going up now scrolls the list back, so the selected row can no longer
+  end up out of view.
+
 ## 0.2.0 - 2026-10-03
 
 ### Added
