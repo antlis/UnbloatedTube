@@ -1534,9 +1534,55 @@ impl Unbloated {
         });
     }
 
+    /// Remove `video` from `playlist` on YouTube (Liked videos: unlike it), then from the open list.
+    fn remove_from_playlist(&mut self, playlist: Group, video: Video, cx: &mut Context<Self>) {
+        self.notice = Some(format!("Removing from {}…", playlist.title));
+        let (pid, vid) = (playlist.id.clone(), video.id.clone());
+        self.with_account(
+            cx,
+            move |a| if pid == "LL" { a.like(&vid, false) } else { a.remove_from_playlist(&pid, &vid) },
+            move |this, res, _| {
+                this.notice = Some(match res {
+                    Ok(()) => {
+                        if let Load::Ready(v) | Load::Loading(v) = &mut this.playlists.videos {
+                            v.retain(|x| x.id != video.id);
+                            if this.playlists.open.as_ref().is_some_and(|g| g.id == playlist.id) {
+                                store::save_list(&format!("group-{}", playlist.id), v);
+                            }
+                        }
+                        format!("Removed from {}", playlist.title)
+                    }
+                    Err(e) => e,
+                });
+            },
+        );
+    }
+
     /// What Next / autoplay plays: the Up next queue first, then the list the video came from.
     fn next_video(&self) -> Option<Video> {
         self.up_next.first().cloned().or_else(|| self.neighbor(1))
+    }
+
+    /// Add the open playlist's videos to Up next (skipping ones already queued).
+    fn enqueue_all(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        let videos = self.visible(&self.browser_videos(tab));
+        let before = self.up_next.len();
+        for v in videos {
+            if !self.up_next.iter().any(|q| q.id == v.id) {
+                self.up_next.push(v);
+            }
+        }
+        store::save_data("up_next", &self.up_next);
+        let added = self.up_next.len() - before;
+        self.lower = Lower::UpNext;
+        if self.current.is_none() && !self.up_next.is_empty() {
+            let v = self.up_next.remove(0);
+            store::save_data("up_next", &self.up_next);
+            self.start(v, false);
+        }
+        // After `start`, which clears notices.
+        self.notice = Some(format!("Added {added} videos to Up next"));
+        cx.notify();
     }
 
     fn enqueue(&mut self, video: Video, cx: &mut Context<Self>) {
@@ -2039,6 +2085,7 @@ impl Unbloated {
         watched: bool,
         in_up_next: bool,
         selected: bool,
+        playlist: Option<Group>,
         cx: &mut Context<Self>,
     ) -> Stateful<gpui::Div> {
         let playing = self.current.as_ref().is_some_and(|c| c.id == video.id);
@@ -2065,6 +2112,24 @@ impl Unbloated {
                     if in_up_next { this.dequeue(&v.id, cx) } else { this.enqueue(v.clone(), cx) }
                 }))
         };
+        // In an open playlist: remove the video from it.
+        let remove = playlist.map(|g| {
+            let v = video.clone();
+            div()
+                .id("row-remove")
+                .flex_none()
+                .p(px(6.))
+                .rounded_md()
+                .invisible()
+                .group_hover("video-row", |s| s.visible())
+                .hover(|d| d.bg(rgb(BORDER)))
+                .child(svg().path(icons::path("trash")).size(px(14.)).text_color(rgb(TEXT)))
+                .tooltip(tip_left(if g.id == "LL" { "Unlike (remove from Liked videos)".to_string() } else { format!("Remove from {}", g.title) }))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.remove_from_playlist(g.clone(), v.clone(), cx);
+                }))
+        });
         let meta = [video.channel.clone(), video.duration.map(fmt_duration)]
             .into_iter()
             .flatten()
@@ -2111,6 +2176,7 @@ impl Unbloated {
                     )
                     .child(div().text_xs().text_color(rgb(MUTED)).truncate().child(meta)),
             )
+            .children(remove)
             .child(action)
             .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.play(video.clone(), Some(queue.clone()), cx))
     }
@@ -2120,6 +2186,7 @@ impl Unbloated {
         // With Shorts turned off, they're hidden from every list.
         let videos: Arc<[Video]> = self.visible(videos).into();
         let in_up_next = list_id == "up-next";
+        let playlist = if list_id == "group" && self.tab == Tab::Playlists { self.playlists.open.clone() } else { None };
         // Watched: finished here, or in your YouTube history. Not dimmed in History itself.
         let watched: Arc<HashSet<String>> = Arc::new(if list_id == "history" {
             HashSet::new()
@@ -2140,7 +2207,7 @@ impl Unbloated {
                     .map(|i| {
                         let seen = watched.contains(&videos[i].id);
                         let selected = left.is_some_and(|o| this.vim_selected(o + i));
-                        this.video_row(i, videos[i].clone(), videos.clone(), seen, in_up_next, selected, cx)
+                        this.video_row(i, videos[i].clone(), videos.clone(), seen, in_up_next, selected, playlist.clone(), cx)
                     })
                     .collect()
             }),
@@ -2228,7 +2295,7 @@ impl Unbloated {
                 range
                     .map(|i| {
                         let selected = this.vim_selected(i);
-                        this.video_row(("continue", i), queue[i].clone(), queue.clone(), false, false, selected, cx)
+                        this.video_row(("continue", i), queue[i].clone(), queue.clone(), false, false, selected, None, cx)
                     })
                     .collect()
             }),
@@ -2670,6 +2737,12 @@ impl Unbloated {
                             }),
                     )
             });
+            let queue_button = (tab == Tab::Playlists).then(|| {
+                self.icon_chip("queue-all", "save", false, "Add all to Up next").on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.enqueue_all(tab, cx);
+                })
+            });
             let group_editor = (is_channel && self.editing_groups).then(|| self.render_group_editor(&open.id, window, cx));
 
             let view = self.browser_ref(tab).view;
@@ -2706,6 +2779,7 @@ impl Unbloated {
                         .children(flag_chips)
                         .children(groups_button)
                         .children(sub_button)
+                        .children(queue_button)
                         .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
                             this.browser(tab).open = None;
                             cx.notify();

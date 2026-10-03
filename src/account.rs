@@ -120,6 +120,18 @@ impl Account {
             _ => Err("YouTube didn't add it (you can only add to your own playlists)".into()),
         }
     }
+
+    pub fn remove_from_playlist(&self, playlist_id: &str, video_id: &str) -> Result<(), String> {
+        let body = json!({
+            "playlistId": playlist_id,
+            "actions": [{ "action": "ACTION_REMOVE_VIDEO_BY_VIDEO_ID", "removedVideoId": video_id }],
+        });
+        let resp = self.post("browse/edit_playlist", body)?;
+        match resp["status"].as_str() {
+            Some("STATUS_SUCCEEDED") => Ok(()),
+            _ => Err("YouTube didn't remove it (you can only edit your own playlists)".into()),
+        }
+    }
 }
 
 /// Call `f` for every key/value pair in a JSON tree.

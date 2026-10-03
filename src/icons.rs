@@ -43,6 +43,7 @@ const ICONS: &[(&str, &str)] = &[
     ("recent", icon!(r#"<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>"#)),
     ("folder", icon!(r#"<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>"#)),
     ("pip", icon!(r#"<rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12" y="11" width="7" height="6" rx="1" fill="black"/>"#)),
+    ("trash", icon!(r#"<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>"#)),
     ("close", icon!(r#"<path d="M6 6l12 12M18 6L6 18"/>"#)),
     ("refresh", icon!(r#"<path d="M21 12a9 9 0 1 1-2.6-6.4L21 8M21 3v5h-5"/>"#)),
     ("settings", icon!(r#"<path d="M3 6h11M18 6h3M3 12h3M10 12h11M3 18h13M20 18h1"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>"#)),
