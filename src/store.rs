@@ -162,6 +162,10 @@ pub struct Settings {
     pub shorts: bool,
     /// Vim-style keys: j/k move a selection in lists, f shows click hints.
     pub vim: bool,
+    /// Desktop notifications for uploads of channels with the bell on.
+    pub notifications: bool,
+    /// How often to check for new uploads, in minutes.
+    pub notify_minutes: u32,
     /// Draw minimize / maximize / close, for desktops (or tiling WMs) without a title bar.
     pub window_buttons: bool,
     pub subscribe_button: bool,
@@ -202,6 +206,8 @@ impl Default for Settings {
             recommendations: true,
             shorts: true,
             vim: false,
+            notifications: true,
+            notify_minutes: 15,
             window_buttons: true,
             subscribe_button: true,
             save_button: true,
@@ -277,4 +283,16 @@ pub struct ChannelGroup {
     pub name: String,
     /// Channel ids (or handles, for channels without a known id).
     pub channels: Vec<String>,
+}
+
+/// Per-channel switches (by channel id): muted in New uploads, notify on upload.
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct ChannelFlags {
+    #[serde(default)]
+    pub muted: std::collections::HashSet<String>,
+    #[serde(default)]
+    pub notify: std::collections::HashSet<String>,
+    /// Videos already notified about, so restarts don't repeat them.
+    #[serde(default)]
+    pub notified: std::collections::HashSet<String>,
 }

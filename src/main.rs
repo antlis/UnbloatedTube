@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use store::{ChannelGroup, Config, History, Seen, Settings};
+use store::{ChannelFlags, ChannelGroup, Config, History, Seen, Settings};
 use yt::{Group, Video, fmt_duration};
 
 const BG: u32 = 0x0f0f0f;
@@ -92,6 +92,13 @@ const PLAYER_TOGGLES: [Toggle; 5] = [
 ];
 
 const QUALITIES: [u32; 5] = [480, 720, 1080, 1440, 2160];
+const NOTIFY_MINUTES: [u32; 4] = [5, 15, 30, 60];
+
+const NOTIFY_TOGGLES: [Toggle; 1] = [(
+    "Upload notifications",
+    "Desktop notification when a channel with the bell on (in its header) uploads",
+    |s| &mut s.notifications,
+)];
 
 /// SponsorBlock categories: label, API name.
 const SEGMENTS: [(&str, &str); 8] = [
@@ -256,6 +263,10 @@ struct Unbloated {
     hint_targets: Rc<RefCell<Vec<HintTarget>>>,
     /// Hint mode: the targets when `f` was pressed, and the letters typed so far.
     hints: Option<(Vec<HintTarget>, String)>,
+    /// Muted / notify-on-upload channels.
+    flags: ChannelFlags,
+    /// Re-checks the feed for notifications every few minutes.
+    _notify_poll: Task<()>,
     /// Channel groups, and the one Subscriptions is filtered to.
     groups: Vec<ChannelGroup>,
     active_group: Option<String>,
@@ -323,6 +334,22 @@ impl Unbloated {
             .into_iter()
             .find_map(|(on, tab)| on.then_some(tab))
             .unwrap_or(Tab::Settings);
+        // Refresh the feed every few minutes while some channel has notifications on.
+        let notify_poll = cx.spawn(async move |this, cx| {
+            loop {
+                let Ok(minutes) = this.update(cx, |this, _| this.settings.notify_minutes.max(1)) else { break };
+                cx.background_executor().timer(Duration::from_secs(minutes as u64 * 60)).await;
+                let res = this.update(cx, |this, cx| {
+                    let wanted = this.settings.notifications && !this.flags.notify.is_empty() && this.cfg.has_auth();
+                    if wanted && !matches!(this.feed, Load::Loading(_)) {
+                        this.fetch(cx, "feed", |s| &mut s.feed, Some("feed".into()), |cfg, on| yt::feed(cfg, on));
+                    }
+                });
+                if res.is_err() {
+                    break;
+                }
+            }
+        });
         let poll = cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_millis(250)).await;
@@ -359,6 +386,8 @@ impl Unbloated {
             show_keys: false,
             confirm_unsub: None,
             groups: store::load_data("groups").unwrap_or_default(),
+            flags: store::load_data("channel_flags").unwrap_or_default(),
+            _notify_poll: notify_poll,
             active_group: None,
             editing_groups: false,
             new_group: None,
@@ -511,11 +540,14 @@ impl Unbloated {
                 }
             }
             "history" if self.current.is_none() => self.current = self.yt_history.items().first().cloned(),
-            "feed" if !self.seen.baseline && matches!(self.feed, Load::Ready(_)) => {
-                // First run: what's in the feed now is old news; count only what comes after.
-                self.seen.ids.extend(self.feed.items().iter().map(|v| v.id.clone()));
-                self.seen.baseline = true;
-                self.seen.save();
+            "feed" => {
+                if !self.seen.baseline && matches!(self.feed, Load::Ready(_)) {
+                    // First run: what's in the feed now is old news; count only what comes after.
+                    self.seen.ids.extend(self.feed.items().iter().map(|v| v.id.clone()));
+                    self.seen.baseline = true;
+                    self.seen.save();
+                }
+                self.notify_uploads();
             }
             _ => {}
         }
@@ -641,7 +673,7 @@ impl Unbloated {
         let played: HashSet<&str> = self.history.items.iter().map(|w| w.video.id.as_str()).collect();
         let mut counts = HashMap::new();
         for v in self.feed.items() {
-            if self.seen.ids.contains(&v.id) || played.contains(v.id.as_str()) || !self.in_active_group(v) {
+            if self.seen.ids.contains(&v.id) || played.contains(v.id.as_str()) || !self.in_active_group(v) || self.is_muted(v) {
                 continue;
             }
             *counts.entry(FEED_ID.to_string()).or_default() += 1;
@@ -650,6 +682,69 @@ impl Unbloated {
             }
         }
         counts
+    }
+
+    /// Desktop notifications for feed videos of channels with the bell on, not notified yet.
+    fn notify_uploads(&mut self) {
+        let fresh: Vec<Video> = self
+            .feed
+            .items()
+            .iter()
+            .filter(|v| channel_of(v).is_some_and(|c| self.flags.notify.contains(c)))
+            .filter(|v| !self.flags.notified.contains(&v.id) && !self.seen.ids.contains(&v.id))
+            .cloned()
+            .collect();
+        // Forget ids that left the feed, so the set stays small.
+        let in_feed: HashSet<&str> = self.feed.items().iter().map(|v| v.id.as_str()).collect();
+        self.flags.notified.retain(|id| in_feed.contains(id.as_str()));
+        if fresh.is_empty() {
+            store::save_data("channel_flags", &self.flags);
+            return;
+        }
+        self.flags.notified.extend(fresh.iter().map(|v| v.id.clone()));
+        store::save_data("channel_flags", &self.flags);
+        if !self.settings.notifications {
+            return;
+        }
+        // A few: one each; many (e.g. after a long time closed): one summary.
+        let messages: Vec<(String, String)> = if fresh.len() <= 3 {
+            fresh.iter().map(|v| (v.channel.clone().unwrap_or_default(), v.title.clone())).collect()
+        } else {
+            let mut names: Vec<String> = fresh.iter().filter_map(|v| v.channel.clone()).collect();
+            names.dedup();
+            vec![(format!("{} new videos", fresh.len()), names.join(", "))]
+        };
+        std::thread::spawn(move || {
+            for (summary, body) in messages {
+                let _ = notify_rust::Notification::new().appname("unbloated-youtube").summary(&summary).body(&body).show();
+            }
+        });
+    }
+
+    /// Turn mute / notify on or off for a channel.
+    fn toggle_flag(&mut self, notify: bool, channel: &str, cx: &mut Context<Self>) {
+        let set = if notify { &mut self.flags.notify } else { &mut self.flags.muted };
+        let on = set.insert(channel.to_string());
+        if !on {
+            set.remove(channel);
+        }
+        if notify && on {
+            // Only uploads from now on: what's in the feed already isn't news.
+            let ids: Vec<String> = self.feed.items().iter().filter(|v| channel_of(v) == Some(channel)).map(|v| v.id.clone()).collect();
+            self.flags.notified.extend(ids);
+        }
+        store::save_data("channel_flags", &self.flags);
+        self.notice = Some(match (notify, on) {
+            (true, true) => "Notifications on for this channel".into(),
+            (true, false) => "Notifications off for this channel".into(),
+            (false, true) => "Muted: hidden from New uploads".into(),
+            (false, false) => "Unmuted".into(),
+        });
+        cx.notify();
+    }
+
+    fn is_muted(&self, v: &Video) -> bool {
+        channel_of(v).is_some_and(|c| self.flags.muted.contains(c))
     }
 
     /// The group Subscriptions is filtered to, if any.
@@ -668,7 +763,7 @@ impl Unbloated {
         let b = self.browser_ref(tab);
         let videos = b.videos.items();
         if b.open.as_ref().is_some_and(|g| g.id == FEED_ID) {
-            videos.iter().filter(|v| self.in_active_group(v)).cloned().collect()
+            videos.iter().filter(|v| self.in_active_group(v) && !self.is_muted(v)).cloned().collect()
         } else {
             videos.to_vec()
         }
@@ -742,6 +837,8 @@ impl Unbloated {
         div()
             .id(id)
             .flex_none()
+            .flex()
+            .items_center()
             .px_3()
             .py(px(3.))
             .rounded_full()
@@ -2012,7 +2109,12 @@ impl Unbloated {
         // Each section: header and its matching rows (hidden when none match).
         let mut sections: Vec<(&str, Vec<AnyElement>)> = Vec::new();
         let mut offset = 0;
-        for (title, toggles) in [("SHOW", &TOGGLES[..]), ("PLAYER BUTTONS", &BUTTON_TOGGLES[..]), ("PLAYER", &PLAYER_TOGGLES[..])] {
+        for (title, toggles) in [
+            ("SHOW", &TOGGLES[..]),
+            ("PLAYER BUTTONS", &BUTTON_TOGGLES[..]),
+            ("PLAYER", &PLAYER_TOGGLES[..]),
+            ("NOTIFICATIONS", &NOTIFY_TOGGLES[..]),
+        ] {
             let rows = toggles
                 .iter()
                 .enumerate()
@@ -2052,6 +2154,15 @@ impl Unbloated {
             if matches(label, hint) {
                 player.push(self.text_field(i, window, cx).into_any_element());
             }
+        }
+        if self.settings.notifications && matches("Check every", "notifications minutes interval") {
+            let row = self.choice_row(
+                "Check every",
+                NOTIFY_MINUTES.iter().map(|m| (format!("{m} min"), *m == self.settings.notify_minutes)).collect(),
+                |s, i| s.notify_minutes = NOTIFY_MINUTES[i],
+                cx,
+            );
+            sections[3].1.push(row.into_any_element());
         }
         let show_account = matches("Account", "login logged in cookies");
         let nothing = sections.iter().all(|(_, rows)| rows.is_empty())
@@ -2210,6 +2321,35 @@ impl Unbloated {
                         cx.notify();
                     })
             });
+            let flag_chips = is_channel.then(|| {
+                let (notify, muted) = (self.flags.notify.contains(&open.id), self.flags.muted.contains(&open.id));
+                let (a, b) = (open.id.clone(), open.id.clone());
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .child(
+                        self.chip("channel-notify", "", notify)
+                            .mr_2()
+                            .px_2()
+                            .h(px(22.))
+                            .child(svg().path(icons::path("bell")).size(px(12.)).text_color(rgb(TEXT)))
+                            .tooltip(tip(if notify { "Notifications on (click to turn off)" } else { "Notify me about new uploads" }))
+                            .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.toggle_flag(true, &a, cx);
+                            }),
+                    )
+                    .child(
+                        self.chip("channel-mute", if muted { "Muted" } else { "Mute" }, muted)
+                            .mr_2()
+                            .tooltip(tip("Hide this channel's uploads from New uploads"))
+                            .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.toggle_flag(false, &b, cx);
+                            }),
+                    )
+            });
             let group_editor = (is_channel && self.editing_groups).then(|| self.render_group_editor(&open.id, window, cx));
             let sub_button = sub_button.map(|b| b.ml_0());
             let view = self.browser_ref(tab).view;
@@ -2240,6 +2380,7 @@ impl Unbloated {
                         .child(div().mr_3().text_color(rgb(MUTED)).child(back))
                         .items_center()
                         .child(div().flex_1().min_w_0().text_color(rgb(TEXT)).truncate().child(open.title.clone()))
+                        .children(flag_chips)
                         .children(groups_button)
                         .children(sub_button)
                         .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
@@ -2298,6 +2439,8 @@ impl Unbloated {
                         };
                         let new = counts.get(&group.id).copied().unwrap_or(0);
                         let selected = this.vim_selected(i);
+                        let muted = this.flags.muted.contains(&group.id);
+                        let bell = this.flags.notify.contains(&group.id);
                         div()
                             .id(i)
                             .when(selected, |d| d.bg(rgb(BORDER)))
@@ -2312,7 +2455,16 @@ impl Unbloated {
                             .cursor_pointer()
                             .hover(|d| d.bg(rgb(HOVER)))
                             .child(avatar)
-                            .child(div().flex_1().min_w_0().truncate().child(group.title.clone()))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .when(muted, |d| d.text_color(rgb(MUTED)))
+                                    .child(group.title.clone()),
+                            )
+                            .when(bell, |d| d.child(svg().path(icons::path("bell")).size(px(12.)).flex_none().text_color(rgb(MUTED))))
+                            .when(muted, |d| d.child(svg().path(icons::path("muted")).size(px(13.)).flex_none().text_color(rgb(MUTED))))
                             .when(new > 0, |d| {
                                 d.child(
                                     div()
