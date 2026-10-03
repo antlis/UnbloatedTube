@@ -4,6 +4,22 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## 0.2.0 - 2026-10-03
+
+### Added
+- **Volume**: mute button and a ten-step volume bar next to the speed button (hide it in
+  Settings > Player buttons > Volume), `↑`/`↓` keys (`+`/`-` in Vim mode) that also work with
+  the pointer over the video, listed in the `?` cheat sheets. The volume is remembered.
+- **Open in browser** button: opens the video's page in your default browser
+  (Settings > Player buttons > Open in browser).
+- **Chapters tab** under the player (Settings > Show > Chapters): a clickable list of the
+  video's chapters that highlights the current one. It appears only for videos with chapters.
+
+### Changed
+- The playback time moved to the right end of the views and date line, which keeps all
+  player buttons in one row. The "Loading…" text next to it is gone; the red bar shows loading.
+- The player pane has a minimum height so the controls always fit under the video.
+
 ## 0.1.0 - 2026-10-03
 
 First tagged release. It includes everything under "Development history" below, plus:

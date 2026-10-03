@@ -69,12 +69,16 @@ list, your playlists, your history, search and a player.
   list you picked the video from.
 - **Picture-in-picture**: move playback into a small always-on-top mpv window and keep
   browsing.
+- **Volume**: mute button and a volume bar next to the speed button, or `↑`/`↓` (`+`/`-` in Vim
+  mode), also while the pointer is over the video. Remembered between runs.
+- **Chapters tab** under the player for videos that have chapters: click one to jump there; the
+  current chapter is highlighted and kept in view.
 - Click the video to pause, double-click for fullscreen.
 - **Recommendations** under the player (your YouTube home feed), or turn them off.
 
 ### Account actions
 
-Subscribe/unsubscribe, save to playlist, like, dislike, copy link and download, all as
+Subscribe/unsubscribe, save to playlist, like, dislike, copy link, open in browser and download, all as
 icon buttons with tooltips. Each one can be hidden in Settings (like and dislike are hidden by
 default).
 
@@ -84,8 +88,8 @@ Everything is a toggle or a field on the Settings page, which has its own search
 
 | Group | Options |
 | --- | --- |
-| Tabs & lists | Subscriptions, Playlists, History, Recommendations, **Shorts** (everywhere) |
-| Buttons | Subscribe, Save to playlist, Like, Dislike, Share, Download |
+| Tabs & lists | Subscriptions, Playlists, History, Recommendations, Chapters, **Shorts** (everywhere) |
+| Buttons | Subscribe, Save to playlist, Like, Dislike, Volume, Share, Open in browser, Download |
 | Player | Max quality (480p–4K), autoplay, **audio only**, prefer hardware-friendly codecs (skip AV1), hardware decoding, speed |
 | SponsorBlock | **Skip sponsored segments**, choosing which: sponsor, self-promotion, like/subscribe reminders, intro, credits, preview, filler, non-music |
 | Video info | **Views**, **upload date** (playing video), **subscriber counts** (channels) |
@@ -105,6 +109,7 @@ remembered.
 | J / L | Back / forward 10 s |
 | F | Fullscreen |
 | M | Mute |
+| ↑ / ↓ | Volume up / down 5% (`+` / `-` in Vim mode) |
 | N / P | Next / previous |
 | C | Copy the video's link |
 | / | Search |
