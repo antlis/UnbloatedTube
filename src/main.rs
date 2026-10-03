@@ -263,6 +263,14 @@ struct Unbloated {
     hint_targets: Rc<RefCell<Vec<HintTarget>>>,
     /// Hint mode: the targets when `f` was pressed, and the letters typed so far.
     hints: Option<(Vec<HintTarget>, String)>,
+    /// Picture-in-picture: mpv plays in its own small always-on-top window.
+    pip: bool,
+    /// Search mode: the header shows a full-width search field instead of the tabs.
+    searching: bool,
+    /// Tab to return to when leaving search.
+    prev_tab: Tab,
+    /// Last queries, newest first.
+    recent_searches: Vec<String>,
     /// Muted / notify-on-upload channels.
     flags: ChannelFlags,
     /// Re-checks the feed for notifications every few minutes.
@@ -385,6 +393,10 @@ impl Unbloated {
             lower: Lower::Recommended,
             show_keys: false,
             confirm_unsub: None,
+            pip: false,
+            searching: false,
+            prev_tab: Tab::Subscriptions,
+            recent_searches: store::load_data("searches").unwrap_or_default(),
             groups: store::load_data("groups").unwrap_or_default(),
             flags: store::load_data("channel_flags").unwrap_or_default(),
             _notify_poll: notify_poll,
@@ -577,6 +589,10 @@ impl Unbloated {
             return;
         }
         self.tab = Tab::Search;
+        self.recent_searches.retain(|q| *q != query);
+        self.recent_searches.insert(0, query.clone());
+        self.recent_searches.truncate(10);
+        store::save_data("searches", &self.recent_searches);
         // A new query replaces the old results right away instead of after it finishes.
         self.search = Load::Idle;
         self.fetch(cx, "search", |s| &mut s.search, None, move |cfg, on| yt::search(cfg, &query, on));
@@ -588,13 +604,82 @@ impl Unbloated {
                 self.run_search(cx);
                 window.blur();
             }
-            Edit::Cancel => window.blur(),
+            Edit::Cancel => self.close_search(window, cx),
             Edit::Changed => {}
             // Arrows etc. inside the field mustn't reach the shortcuts.
             Edit::Ignored => cx.stop_propagation(),
         }
         cx.stop_propagation();
         cx.notify();
+    }
+
+    /// Enter search mode (/ or the search icon): full-width field, focused.
+    fn open_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.searching {
+            self.prev_tab = if self.tab == Tab::Search { Tab::Subscriptions } else { self.tab };
+            self.searching = true;
+            self.tab = Tab::Search;
+        }
+        window.focus(&self.search_focus);
+        cx.notify();
+    }
+
+    /// Leave search mode, back to the tab it was opened from.
+    fn close_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.searching = false;
+        self.tab = self.prev_tab;
+        window.blur();
+        cx.notify();
+    }
+
+    /// Search mode with nothing searched yet (or the field cleared): recent queries.
+    fn render_recent_searches(&self, cx: &mut Context<Self>) -> AnyElement {
+        if self.recent_searches.is_empty() {
+            return self.status("Type and press Enter to search YouTube.");
+        }
+        div()
+            .flex()
+            .flex_col()
+            .py_2()
+            .child(div().px_3().pb_1().text_xs().text_color(rgb(MUTED)).child("RECENT SEARCHES"))
+            .children(self.recent_searches.iter().enumerate().map(|(i, q)| {
+                let q = q.clone();
+                div()
+                    .id(("recent", i))
+                    .px_3()
+                    .py_2()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .text_sm()
+                    .text_color(rgb(TEXT))
+                    .cursor_pointer()
+                    .hover(|d| d.bg(rgb(HOVER)))
+                    .child(svg().path(icons::path("recent")).size(px(14.)).text_color(rgb(MUTED)))
+                    .child(q.clone())
+                    .on_click_hinted(&self.hint_reg(), cx, move |this, _, window, cx| {
+                        this.query = q.clone();
+                        this.run_search(cx);
+                        window.blur();
+                    })
+            }))
+            .child(
+                div()
+                    .id("clear-recent")
+                    .px_3()
+                    .pt_2()
+                    .text_xs()
+                    .text_color(rgb(MUTED))
+                    .cursor_pointer()
+                    .hover(|d| d.text_color(rgb(TEXT)))
+                    .child("Clear recent searches")
+                    .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                        this.recent_searches.clear();
+                        store::save_data("searches", &this.recent_searches);
+                        cx.notify();
+                    }),
+            )
+            .into_any_element()
     }
 
     fn open_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1013,6 +1098,7 @@ impl Unbloated {
 
     fn select_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
         self.tab = tab;
+        self.searching = false;
         let idle = match tab {
             Tab::Search | Tab::Settings => false,
             Tab::History => matches!(self.yt_history, Load::Idle),
@@ -1348,8 +1434,9 @@ impl Unbloated {
                     self.play(v, None, cx);
                 }
             }
-            "/" => window.focus(&self.search_focus),
+            "/" => self.open_search(window, cx),
             "escape" if self.saving => self.close_save(cx),
+            "escape" if self.searching => self.close_search(window, cx),
             "escape" if matches!(self.tab, Tab::Subscriptions | Tab::Playlists) => self.browser(self.tab).open = None,
             _ => return,
         }
@@ -1397,6 +1484,8 @@ impl Unbloated {
             "h" | "backspace" | "escape" => {
                 if self.saving {
                     self.close_save(cx);
+                } else if self.searching {
+                    self.close_search(window, cx);
                 } else if matches!(self.tab, Tab::Subscriptions | Tab::Playlists) {
                     self.browser(self.tab).open = None;
                 }
@@ -1442,7 +1531,7 @@ impl Unbloated {
                     self.play(v, None, cx);
                 }
             }
-            "/" => window.focus(&self.search_focus),
+            "/" => self.open_search(window, cx),
             _ => return false,
         }
         true
@@ -1525,9 +1614,6 @@ impl Unbloated {
             .into_iter()
             .filter_map(|(on, t)| on.then_some(t))
             .collect();
-        if !matches!(self.search, Load::Idle) {
-            tabs.push(Tab::Search);
-        }
         tabs.push(Tab::Settings);
         tabs
     }
@@ -1878,6 +1964,9 @@ impl Unbloated {
         match self.tab {
             Tab::History => {}
             Tab::Settings => return self.render_settings(window, cx),
+            Tab::Search if self.query.trim().is_empty() || matches!(self.search, Load::Idle) => {
+                return self.render_recent_searches(cx);
+            }
             Tab::Search => {
                 return match self.placeholder(&self.search, "No results.", Rows::Videos) {
                     Some(p) => p,
@@ -3238,7 +3327,7 @@ impl Render for Unbloated {
             return div().size_full().bg(gpui::black()).child(self.screen(&video, true, cx));
         }
         let st = &self.settings;
-        let mut tabs: Vec<_> = [
+        let tabs: Vec<_> = [
             (st.subscriptions, "Subscriptions", Tab::Subscriptions),
             (st.playlists, "Playlists", Tab::Playlists),
             (st.history, "History", Tab::History),
@@ -3246,35 +3335,70 @@ impl Render for Unbloated {
         .into_iter()
         .filter_map(|(on, label, tab)| on.then_some((label, tab)))
         .collect();
-        if !matches!(self.search, Load::Idle) {
-            tabs.push(("Search", Tab::Search));
-        }
-        let focused = self.search_focus.is_focused(window);
-        let search_box = div()
-            .id("search")
-            .track_focus(&self.search_focus)
-            .ml_auto()
-            .w(px(260.))
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(rgb(HOVER))
-            .border_1()
-            .border_color(if focused { rgb(MUTED) } else { rgb(BORDER) })
-            .text_sm()
-            .truncate()
-            .cursor_text()
-            .map(|d| match (self.query.is_empty(), focused) {
-                (true, false) => d.text_color(rgb(MUTED)).child("Search YouTube"),
-                (_, true) => d.text_color(rgb(TEXT)).child(format!("{}▏", self.query)),
-                (false, false) => d.text_color(rgb(TEXT)).child(self.query.clone()),
-            })
-            .on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| {
-                window.focus(&this.search_focus);
-                cx.notify();
-            })
-            .on_key_down(cx.listener(Self::search_key));
-        let header = div()
+        let header_icon = |id: &'static str, icon: &'static str| {
+            div()
+                .id(id)
+                .flex_none()
+                .p(px(7.))
+                .rounded_md()
+                .cursor_pointer()
+                .hover(|d| d.bg(rgb(HOVER)))
+                .child(svg().path(icons::path(icon)).size(px(16.)).text_color(rgb(MUTED)))
+        };
+        let header = if self.searching {
+            // Search mode: ← back, a full-width field, ✕ to clear.
+            let focused = self.search_focus.is_focused(window);
+            let field = div()
+                .id("search")
+                .track_focus(&self.search_focus)
+                .flex_1()
+                .min_w_0()
+                .mx_1()
+                .px_3()
+                .py_1()
+                .rounded_md()
+                .bg(rgb(HOVER))
+                .border_1()
+                .border_color(if focused { rgb(MUTED) } else { rgb(BORDER) })
+                .text_sm()
+                .truncate()
+                .cursor_text()
+                .map(|d| match (self.query.is_empty(), focused) {
+                    (true, _) => d.text_color(rgb(MUTED)).child(if focused { "▏Search YouTube" } else { "Search YouTube" }),
+                    (false, true) => d.text_color(rgb(TEXT)).child(format!("{}▏", self.query)),
+                    (false, false) => d.text_color(rgb(TEXT)).child(self.query.clone()),
+                })
+                .on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| {
+                    window.focus(&this.search_focus);
+                    cx.notify();
+                })
+                .on_key_down(cx.listener(Self::search_key));
+            div()
+                .flex()
+                .items_center()
+                .px_2()
+                .py(px(5.))
+                .border_b_1()
+                .border_color(rgb(BORDER))
+                .child(
+                    header_icon("search-back", "arrow-left")
+                        .tooltip(tip("Back (Esc)"))
+                        .on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| this.close_search(window, cx)),
+                )
+                .child(field)
+                .when(!self.query.is_empty(), |d| {
+                    d.child(
+                        header_icon("search-clear", "close")
+                            .tooltip(tip("Clear"))
+                            .on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| {
+                                this.query.clear();
+                                window.focus(&this.search_focus);
+                                cx.notify();
+                            }),
+                    )
+                })
+        } else {
+            div()
             .flex()
             .items_center()
             .px_2()
@@ -3283,7 +3407,12 @@ impl Render for Unbloated {
             .children(tabs.into_iter().map(|(label, tab)| {
                 tab_button(label, self.tab == tab).on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.select_tab(tab, cx))
             }))
-            .child(search_box)
+            .child(div().flex_1())
+            .child(
+                header_icon("search-open", "search")
+                    .tooltip(tip("Search (/)"))
+                    .on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| this.open_search(window, cx)),
+            )
             .child({
                 let icon = svg().path(icons::path("refresh")).size(px(16.)).text_color(rgb(MUTED));
                 let icon = if self.tab_loading() {
@@ -3322,7 +3451,8 @@ impl Render for Unbloated {
                     }))
                     .tooltip(tip("Settings"))
                     .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.select_tab(Tab::Settings, cx)),
-            );
+            )
+        };
 
         let header_bar = if self.tab_loading() {
             loading_bar("list-loading").into_any_element()
