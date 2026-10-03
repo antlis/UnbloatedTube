@@ -191,7 +191,7 @@ enum Lower {
 
 /// Keyboard shortcuts (also listed in Settings). Keys reach mpv instead while the pointer is
 /// over the video; mpv's own defaults there are similar (Space, arrows, f).
-const SHORTCUTS: [(&str, &str); 22] = [
+const SHORTCUTS: [(&str, &str); 23] = [
     ("Space / K", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     ("J / L", "Back / forward 10 seconds"),
@@ -207,6 +207,7 @@ const SHORTCUTS: [(&str, &str); 22] = [
     ("⇧E", "Player full height (hide the lower pane), and back"),
     ("[ / ]", "Previous / next lower tab (Recommended, Chapters, Up next)"),
     ("1 - 4", "Switch tab: Subscriptions, Playlists, History, Settings"),
+    ("Tab / ⇧Tab", "Move the focus ring (Enter or Space presses, Esc clears)"),
     ("B", "Hide or show the left column"),
     ("⇧B", "Hide or show the right column"),
     ("/", "Search"),
@@ -217,10 +218,10 @@ const SHORTCUTS: [(&str, &str); 22] = [
 ];
 
 /// Cheatsheet groups: title, how many SHORTCUTS entries it takes (in order), and its column.
-const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 13, 1)];
+const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 14, 1)];
 
 /// Vim mode's keys (case matters: ⇧ means Shift).
-const VIM_SHORTCUTS: [(&str, &str); 28] = [
+const VIM_SHORTCUTS: [(&str, &str); 29] = [
     ("Space", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     (", / .", "Back / forward 10 seconds"),
@@ -243,6 +244,7 @@ const VIM_SHORTCUTS: [(&str, &str); 28] = [
     ("⇧E", "Player full height (hide the lower pane), and back"),
     ("[ / ]", "Previous / next lower tab (Recommended, Chapters, Up next)"),
     ("1 - 4", "Switch tab: Subscriptions, Playlists, History, Settings"),
+    ("Tab / ⇧Tab", "Move the focus ring (Enter or Space presses, Esc clears)"),
     ("b", "Hide or show the left column"),
     ("⇧B", "Hide or show the right column"),
     ("/", "Search"),
@@ -250,7 +252,7 @@ const VIM_SHORTCUTS: [(&str, &str); 28] = [
     ("?", "Show these shortcuts"),
     ("Esc", "Cancel / close / back"),
 ];
-const VIM_SHEET_GROUPS: [(&str, usize, usize); 3] = [("Playback", 10, 0), ("Navigation", 14, 1), ("General", 4, 0)];
+const VIM_SHEET_GROUPS: [(&str, usize, usize); 3] = [("Playback", 10, 0), ("Navigation", 15, 1), ("General", 4, 0)];
 
 /// An entry of the left column's list, for Vim navigation.
 #[derive(Clone)]
@@ -324,6 +326,8 @@ struct Unbloated {
     vim_positions: HashMap<String, usize>,
     /// Clickable elements and their click actions, collected every frame (Vim mode) for `f`.
     hint_targets: Rc<RefCell<Vec<HintTarget>>>,
+    /// The element the Tab focus ring is on (where it was last seen); None when the ring is off.
+    kb_focus: Option<GBounds<GPixels>>,
     /// Hint mode: the targets when `f` was pressed, and the letters typed so far.
     hints: Option<(Vec<HintTarget>, String)>,
     /// Picture-in-picture: mpv plays in its own small always-on-top window.
@@ -511,6 +515,7 @@ impl Unbloated {
             vim_y: false,
             vim_positions: HashMap::new(),
             hint_targets: Rc::new(RefCell::new(Vec::new())),
+            kb_focus: None,
             hints: None,
             settings_filter: String::new(),
             settings_focus: cx.focus_handle(),
@@ -1892,6 +1897,29 @@ impl Unbloated {
             cx.notify();
             return;
         }
+        if k.key == "tab" && !k.modifiers.control && !k.modifiers.alt && !k.modifiers.platform {
+            self.kb_step(k.modifiers.shift, window);
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+        if self.kb_focus.is_some() {
+            match k.key.as_str() {
+                "enter" | "space" if !k.modifiers.control && !k.modifiers.alt && self.kb_activate(window, cx) => {
+                    cx.stop_propagation();
+                    cx.notify();
+                    return;
+                }
+                "escape" => {
+                    self.kb_focus = None;
+                    cx.stop_propagation();
+                    cx.notify();
+                    return;
+                }
+                // Any other key goes back to being a shortcut (Space pauses again, and so on).
+                _ => self.kb_focus = None,
+            }
+        }
         if self.settings.vim && self.vim_key(ev, window, cx) {
             cx.stop_propagation();
             cx.notify();
@@ -2090,9 +2118,76 @@ impl Unbloated {
         }
     }
 
+    /// Clickable things on screen in Tab order: the left column first, then the right one, each
+    /// from top to bottom.
+    fn kb_targets(&self, window: &Window) -> Vec<HintTarget> {
+        let size = window.viewport_size();
+        let divider_x = if self.left_collapsed {
+            px(0.)
+        } else if self.right_collapsed {
+            size.width
+        } else {
+            size.width * self.settings.split
+        };
+        let mut targets: Vec<HintTarget> = self
+            .hint_targets
+            .borrow()
+            .iter()
+            .filter(|(b, _)| {
+                let c = b.center();
+                b.size.width > px(1.) && b.size.height > px(1.) && c.x > px(0.) && c.x < size.width && c.y > px(0.) && c.y < size.height
+            })
+            .cloned()
+            .collect();
+        targets.sort_by_key(|(b, _)| ((b.center().x >= divider_x) as u8, (f32::from(b.origin.y) / 12.).round() as i32, f32::from(b.origin.x) as i32));
+        targets
+    }
+
+    /// The target the ring is on: the one closest to where it was last seen.
+    fn kb_current(&self, targets: &[HintTarget]) -> Option<usize> {
+        let at = self.kb_focus?;
+        let gap = |b: &GBounds<GPixels>| {
+            [b.origin.x - at.origin.x, b.origin.y - at.origin.y, b.size.width - at.size.width, b.size.height - at.size.height]
+                .iter()
+                .map(|d| f32::from(*d).abs())
+                .sum::<f32>()
+        };
+        (0..targets.len()).min_by(|&i, &j| gap(&targets[i].0).total_cmp(&gap(&targets[j].0)))
+    }
+
+    /// Tab / Shift+Tab: move the focus ring to the next / previous clickable thing.
+    fn kb_step(&mut self, back: bool, window: &mut Window) {
+        if self.show_keys || self.saving || self.channel_menu.is_some() || self.hints.is_some() {
+            return;
+        }
+        // Leave a text field, so typing doesn't go into it any more.
+        window.focus(&self.root_focus);
+        let targets = self.kb_targets(window);
+        let n = targets.len();
+        if n == 0 {
+            return;
+        }
+        let next = match (self.kb_current(&targets), back) {
+            (Some(i), false) => (i + 1) % n,
+            (Some(i), true) => (i + n - 1) % n,
+            (None, false) => 0,
+            (None, true) => n - 1,
+        };
+        self.kb_focus = Some(targets[next].0);
+    }
+
+    /// Enter / Space on the focus ring: do what clicking that thing does.
+    fn kb_activate(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let targets = self.kb_targets(window);
+        let Some(i) = self.kb_current(&targets) else { return false };
+        let action = targets[i].1.clone();
+        action(self, window, cx);
+        true
+    }
+
     /// Where `on_click_hinted` registers click targets this frame.
     fn hint_reg(&self) -> HintReg {
-        HintReg { targets: self.hint_targets.clone(), on: self.settings.vim }
+        HintReg { targets: self.hint_targets.clone() }
     }
 
     /// Move the selection, scrolling only when it would leave the visible rows.
@@ -3955,11 +4050,9 @@ type HintTarget = (GBounds<GPixels>, Rc<dyn Fn(&mut Unbloated, &mut Window, &mut
 #[derive(Clone)]
 struct HintReg {
     targets: Rc<RefCell<Vec<HintTarget>>>,
-    /// Vim mode is on (otherwise nothing is registered).
-    on: bool,
 }
 
-/// `on_click` that also registers the element for `f` hints, which run the same handler.
+/// `on_click` that also registers the element for `f` hints and Tab focus, which run the same handler.
 trait OnClickHinted: StatefulInteractiveElement + ParentElement + Styled + Sized {
     fn on_click_hinted(
         self,
@@ -3970,9 +4063,6 @@ trait OnClickHinted: StatefulInteractiveElement + ParentElement + Styled + Sized
         let f = Rc::new(f);
         let click = f.clone();
         let el = self.on_click(cx.listener(move |this, ev, window, cx| click(this, ev, window, cx)));
-        if !h.on {
-            return el;
-        }
         let targets = h.targets.clone();
         let action: Rc<dyn Fn(&mut Unbloated, &mut Window, &mut Context<Unbloated>)> =
             Rc::new(move |this, window, cx| f(this, &gpui::ClickEvent::default(), window, cx));
@@ -4547,6 +4637,22 @@ impl Render for Unbloated {
             self.list_filter.clear();
             self.vim_scroll.scroll_to_item(self.vim_cursor, ScrollStrategy::Center);
         }
+        // The ring follows its element if the layout moved it since the last frame.
+        if self.kb_focus.is_some() {
+            let targets = self.kb_targets(window);
+            self.kb_focus = self.kb_current(&targets).map(|i| targets[i].0).or(self.kb_focus);
+        }
+        let kb_ring = self.kb_focus.map(|b| {
+            div()
+                .absolute()
+                .left(b.origin.x - px(2.))
+                .top(b.origin.y - px(2.))
+                .w(b.size.width + px(4.))
+                .h(b.size.height + px(4.))
+                .rounded_md()
+                .border_2()
+                .border_color(themed(ACCENT))
+        });
         // Collected again during this frame's paint (see hint_target).
         self.hint_targets.borrow_mut().clear();
         let hint_overlay = self.hints.as_ref().map(|(targets, typed)| hint_labels(targets, typed));
@@ -4557,11 +4663,20 @@ impl Render for Unbloated {
             .flex()
             .track_focus(&self.root_focus)
             .on_key_down(cx.listener(Self::shortcut))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    if this.kb_focus.take().is_some() {
+                        cx.notify();
+                    }
+                }),
+            )
             .bg(themed(BG))
             .text_color(themed(TEXT))
             .children((!self.left_collapsed).then_some(left))
             .child(divider("split-columns", Split::Columns, cx))
             .children((!self.right_collapsed).then_some(right))
+            .children(kb_ring)
             .children(self.render_channel_menu(cx))
             .children(self.render_toasts())
             .children(sheet)

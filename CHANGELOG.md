@@ -4,6 +4,14 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Added
+- **Keyboard focus ring**: `Tab` / `⇧Tab` move a visible ring through every clickable thing, the
+  left column first and then the right one; `Enter` or `Space` presses what has the ring, `Esc`
+  or a click clears it. Works in regular and Vim mode; the click targets are the same ones hint
+  mode uses, so they are now collected in regular mode too.
+
 ## 0.3.0 - 2026-10-03
 
 ### Added
