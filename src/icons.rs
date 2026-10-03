@@ -41,6 +41,8 @@ const ICONS: &[(&str, &str)] = &[
     ("search", icon!(r#"<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>"#)),
     ("arrow-left", icon!(r#"<path d="M19 12H5M12 19l-7-7 7-7"/>"#)),
     ("recent", icon!(r#"<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>"#)),
+    ("watch-later", icon!(r#"<circle cx="11" cy="13" r="8"/><path d="M11 9v4l3 2M19 3v6M16 6h6"/>"#)),
+    ("check", icon!(r#"<path d="M5 12l5 5L20 7"/>"#)),
     ("folder", icon!(r#"<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>"#)),
     ("pip", icon!(r#"<rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12" y="11" width="7" height="6" rx="1" fill="black"/>"#)),
     ("trash", icon!(r#"<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>"#)),

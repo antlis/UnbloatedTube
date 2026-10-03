@@ -163,6 +163,8 @@ pub struct Settings {
     pub chapters: bool,
     /// Comments tab under the player; comments are fetched only when the tab is opened.
     pub comments: bool,
+    /// Watch later tab under the player; the list is fetched when the tab is first opened.
+    pub watch_later_tab: bool,
     pub shorts: bool,
     /// Vim-style keys: j/k move a selection in lists, f shows click hints.
     pub vim: bool,
@@ -177,6 +179,7 @@ pub struct Settings {
     pub save_button: bool,
     pub like_button: bool,
     pub dislike_button: bool,
+    pub watch_later_button: bool,
     pub share_button: bool,
     pub share_time_button: bool,
     pub browser_button: bool,
@@ -227,6 +230,7 @@ impl Default for Settings {
             recommendations: true,
             chapters: true,
             comments: false,
+            watch_later_tab: false,
             shorts: true,
             vim: false,
             notifications: true,
@@ -241,6 +245,7 @@ impl Default for Settings {
             share_time_button: true,
             browser_button: true,
             download_button: true,
+            watch_later_button: true,
             show_views: true,
             show_date: true,
             show_subs: true,
