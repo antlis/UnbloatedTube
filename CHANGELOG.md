@@ -1,8 +1,12 @@
 # Changelog
 
 All notable changes to unbloated-youtube. Newest first.
+Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
+may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
-## Unreleased
+## 0.1.0 - 2026-10-03
+
+First tagged release. It includes everything under "Development history" below, plus:
 
 ### Added
 - **Light theme**: Settings > Show > Light theme. Applies immediately and is remembered.
@@ -14,9 +18,11 @@ All notable changes to unbloated-youtube. Newest first.
 ### Fixed
 - View count missing for videos uploaded in the last day or so (YouTube omits the short form).
 
-## 2026-10-03
+## Development history before 0.1.0
 
-### Added
+### 2026-10-03
+
+#### Added
 - Filter any list as you type (Ctrl+F): channels, playlists, a channel's or playlist's videos,
   history. Local and instant.
 - Resizable *Continue watching* in History (drag bar).
@@ -34,7 +40,7 @@ All notable changes to unbloated-youtube. Newest first.
 - Full title on hover for truncated titles.
 - README: motivation, features, settings, keys, architecture.
 
-### Changed
+#### Changed
 - Search is a mode instead of a tab.
 - Compact channel header with icon buttons.
 - Group bar: full-width filter on top, group chips with dim counts below.
@@ -42,12 +48,12 @@ All notable changes to unbloated-youtube. Newest first.
 - Shortcuts sheet scrolls when it doesn't fit the window.
 - Clearer like/dislike/save feedback; refused playlist edits say why.
 
-### Fixed
+#### Fixed
 - Playlists now load in full and saving to one confirms with a notice.
 - "N new" tooltip no longer cropped by the video.
 - Black video after changing player settings.
 
-## 2026-10-02
+### 2026-10-02
 
 First version: yt-dlp listings with settings, history and caches; a single mpv embedded in the
 window over IPC; account actions (subscribe, like, dislike, save to playlist) through

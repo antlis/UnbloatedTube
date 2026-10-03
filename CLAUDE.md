@@ -26,6 +26,11 @@ every user-visible change).
 - Never kill the user's running instance (kill test processes by PID, not `pkill -f`).
 - Don't change the user's real playlists or account while testing; undo anything you did.
 
+## Releases
+- Semantic versioning. To release: move the changelog's entries under a new `## X.Y.Z - date`
+  heading, bump `version` in Cargo.toml (and let Cargo.lock follow), commit "Release X.Y.Z",
+  then tag it: `git tag -a vX.Y.Z -m "unbloated-youtube X.Y.Z"`. Push the tag only when asked.
+
 ## Conventions
 - Minimal, surgical changes; match the surrounding style and comment density.
 - Don't commit or push unless asked.
