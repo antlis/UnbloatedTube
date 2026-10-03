@@ -4,7 +4,7 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
-## Unreleased
+## 0.5.0 - 2026-10-03
 
 ### Changed
 - One tab scheme for both columns: numbers `1`–`4` pick the header tabs and `5`–`7` the lower
