@@ -4,6 +4,33 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## 0.9.0 - 2026-10-03
+
+### Added
+- **Watch later button** (and `W` / `w` in Vim mode) next to Save to playlist: adds the playing
+  video to Watch later in one click. Every video in every list also gets a Watch later button on
+  hover, so you don't have to open a video first. One Settings toggle, on by default.
+- **Watch later tab** under the player (Settings → Watch later tab, off by default, needs your
+  login): your Watch later list, fetched when you open the tab, with a remove button on each row.
+  The lower-pane number keys now run 5–9.
+- **Remove from history**: hover a video in History or Continue watching and click the trash icon.
+  It forgets the entry (and its resume position) here; YouTube's own history is not changed.
+- **Groups in the right-click menu**: right-click a subscribed channel to see every group with a
+  tick on the ones it is in, and click one to add or remove it. Unsubscribe stays at the top; a
+  long list of groups scrolls, and the menu stays inside the window. A folder icon in the channel
+  list marks channels that are in a group (hover for the names).
+- **A count badge on a channel's folder button** shows how many groups it is in; hover for names.
+- The Open in browser tooltip shows its hotkey.
+- The comments list ends with "All N comments shown" when there are no more to load, and its
+  loading placeholder no longer shows thumbnails.
+
+### Fixed
+- The header's Search, Refresh and Settings tooltips open to the left, so the video no longer
+  covers them.
+- The window opens no bigger than the screen (at 1280×800 it could be taller than a scaled
+  display, putting the bottom of the right column, such as Load more comments, off-screen).
+- The channel right-click menu stays inside the left column, so the video no longer covers it.
+
 ## 0.8.2 - 2026-10-03
 
 ### Added
