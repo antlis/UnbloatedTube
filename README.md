@@ -270,6 +270,18 @@ Without it, search and playback still work.
   - a Flatpak; `mpv` is easy to include, but the X11 embedding, `yt-dlp` updates and reading
     the browser's cookies from inside the sandbox need care
   - prebuilt binaries on GitHub releases, with a README line listing the tools to install
+- **Casting (Chromecast and similar).** A "cast to" button that sends the playing video to a TV
+  or speaker and turns the app into a remote (play/pause, seek, volume, queue). Not started, and
+  untested; the options I know of:
+  - *Chromecast, Default Media Receiver*: find devices over mDNS, then load a stream URL that
+    yt-dlp resolved (the device fetches it itself; a single combined or HLS format works best,
+    often capped around 720p–1080p). Needs a CastV2 client, e.g. the `rust_cast` crate, or shelling out to `catt`.
+  - *Chromecast, YouTube receiver*: start the YouTube app on the device with the video id, the
+    way YouTube's own cast button does. Best quality and no streaming through your PC, but it
+    needs the Lounge pairing protocol, which is undocumented and can change.
+  - *DLNA/UPnP* (many TVs) and *AirPlay* (Apple TVs, some TVs): other targets for the same button.
+  - Casting sits outside mpv, so position, pause state and resume have to be synced with the
+    local history by hand.
 - **Tool checks.** On startup, check that `mpv`, `yt-dlp` and `deno` are found and say which one
   is missing; downloading `yt-dlp` and `deno` into the app's data directory on first run is
   another option.
