@@ -309,11 +309,12 @@ Without it, search and playback still work.
   `fakeroot`, but unchecked). Not published yet: that needs an AUR account and SSH key, then
   `git push` of the PKGBUILD and `.SRCINFO` to `ssh://aur@aur.archlinux.org/unbloated-youtube-bin.git`.
   Each release means bumping `pkgver` and `sha256sums` and regenerating `.SRCINFO`
-  (`makepkg --printsrcinfo`), which a release step could do. The `license` is `unknown` until the
-  repository has a LICENSE. A source or `-git` package (compiles all ~730 crates) comes second.
+  (`makepkg --printsrcinfo`), which a release step could do. The license is MIT, but the v0.8.0
+  archive has no LICENSE file: from the next release the archive carries it, and `package()`
+  should then install it to `/usr/share/licenses/$pkgname/`. A source or `-git` package (compiles all ~730 crates) comes second.
 - **crates.io.** `cargo install unbloated-youtube`. All dependencies are already on crates.io
-  (no git or path dependencies), but `Cargo.toml` still lacks `description`, `license` and
-  `repository`, and the repository has no `LICENSE` file; those are required to publish. It
+  (no git or path dependencies), and `Cargo.toml` now has `description`, `license` and
+  `repository`, so it is ready to publish (`cargo publish --dry-run` not tried yet). It
   needs the same system libraries and runtime tools (`mpv`, `yt-dlp`, `deno`) as a source build,
   so the README must say so.
 - **More packaging** (ideas, none started; the `.deb` and `.rpm` can be built from the release binary):
@@ -442,3 +443,7 @@ Without it, search and playback still work.
 - `~/.cache/unbloated-youtube/`: thumbnails, cached lists, `mpv.log`
 
 Folders from the app's old name (`jtube`) are moved over automatically on first start.
+
+## License
+
+[MIT](LICENSE). Contributions are welcome, and are licensed under the same terms.

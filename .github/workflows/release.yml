@@ -38,7 +38,7 @@ jobs:
           name="unbloated-youtube-${version}-x86_64-linux"
           mkdir "$name"
           strip -o "$name/unbloated-youtube" target/release/unbloated-youtube
-          cp README.md CHANGELOG.md packaging/unbloated-youtube.desktop packaging/unbloated-youtube.svg "$name/"
+          cp LICENSE README.md CHANGELOG.md packaging/unbloated-youtube.desktop packaging/unbloated-youtube.svg "$name/"
           tar czf "$name.tar.gz" "$name"
           sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
           echo "version=$version" >> "$GITHUB_OUTPUT"
