@@ -270,18 +270,74 @@ Without it, search and playback still work.
   - a Flatpak; `mpv` is easy to include, but the X11 embedding, `yt-dlp` updates and reading
     the browser's cookies from inside the sandbox need care
   - prebuilt binaries on GitHub releases, with a README line listing the tools to install
-- **Casting (Chromecast and similar).** A "cast to" button that sends the playing video to a TV
-  or speaker and turns the app into a remote (play/pause, seek, volume, queue). Not started, and
-  untested; the options I know of:
-  - *Chromecast, Default Media Receiver*: find devices over mDNS, then load a stream URL that
-    yt-dlp resolved (the device fetches it itself; a single combined or HLS format works best,
-    often capped around 720p–1080p). Needs a CastV2 client, e.g. the `rust_cast` crate, or shelling out to `catt`.
-  - *Chromecast, YouTube receiver*: start the YouTube app on the device with the video id, the
-    way YouTube's own cast button does. Best quality and no streaming through your PC, but it
-    needs the Lounge pairing protocol, which is undocumented and can change.
-  - *DLNA/UPnP* (many TVs) and *AirPlay* (Apple TVs, some TVs): other targets for the same button.
+- **Casting (play on another device).** A cast button that sends the playing video to a TV,
+  speaker or another machine. Nothing here is built or tested; it is a design with the
+  considerations written down. Two ways to send to your own mpv (a homelab box wired to the TV,
+  e.g. [tg-mpv-bot](https://github.com/antlis/tg-mpv-bot)), then other targets.
+
+  *Shared design.* The two projects are in different languages (Rust, Python), so what they share
+  is a protocol, not code. The app has no knowledge of any particular receiver: it only runs
+  whatever the chosen cast target says, and the receiver-specific part lives in the receiver's own
+  repository or in your dotfiles. Targets are named tables in `config.toml`:
+  ```toml
+  [cast.tv]
+  command = ["ssh", "homelab", "mpv-send", "{url}", "{start}"]
+  ```
+  - Placeholders: `{url}` (the video's page URL), `{start}` (current position in seconds), `{id}`,
+    `{title}`. The command is an argument list, never a shell string: URLs and titles come from
+    YouTube, so they must not be re-parsed by a shell. Over `ssh` the remote shell does parse them
+    again, so the receiving script must treat its arguments as data (quote them, or read them
+    from stdin).
+  - Runs on a background thread (nothing may block the UI), with a timeout; the exit code and the
+    first line of stderr go into a notice ("Sent to tv" / "Cast failed: …").
+  - The UI: a cast button in the account-actions row (hidden by default, like the other buttons,
+    with a Settings toggle), a hotkey, a picker when more than one target is configured, and an
+    indicator while something is being cast. The local video should pause when a cast starts
+    (otherwise both play); whether the cast counts as watched in History is still open.
+  - Sending the page URL rather than a stream URL is deliberate: the receiver's own mpv and yt-dlp
+    resolve it at full quality, and the app doesn't proxy any video. The catch is that the receiver
+    needs `yt-dlp` and `deno` and its own login for videos that need one (age-restricted, members,
+    private); the app's cookies are not sent. Resolved stream URLs are an alternative but expire
+    after hours and are tied to the requesting IP and client.
+
+  *Option 1: a command (no changes to the receiver).*
+  - The command talks to the receiver's mpv directly: a small script on the receiver that sends
+    `loadfile <url> replace start=<seconds>` to mpv's JSON IPC socket (`/tmp/mpv-socket` in
+    tg-mpv-bot's config), reached with `ssh` (key-based login; `ControlMaster` keeps repeat casts
+    fast), or `socat` over a tunnel.
+  - Cheap and works today, and the same mechanism covers other tools: `catt cast {url}` for a
+    Chromecast, `kdeconnect-cli` and so on.
+  - Limits: fire and forget. The app can start playback but not pause, seek or show what is playing
+    unless more commands are configured (`pause`, `seek`, `status` templates, which gets clumsy).
+    The bot does not know about the playback: no history entry, no now-playing panel, and a
+    `loadfile` on its socket may confuse its own playlist state (unchecked).
+
+  *Option 2: an HTTP endpoint in tg-mpv-bot.*
+  - The bot gets a small authenticated endpoint, e.g. `POST /play` with `{"url": …, "start": …}`
+    and a bearer token, which runs the same code as a link sent in Telegram. History, the
+    now-playing panel and the rest of the bot's features then follow along. It already depends on
+    aiohttp. The app's cast command becomes a `curl` call, so the app needs no change beyond
+    option 1; later `GET /status`, `/pause` and `/seek` could give the app real remote control.
+  - It gives up a property the bot advertises: it only makes outbound connections, so nothing is
+    exposed. A listener changes that. Bind it to the LAN or a Tailscale interface only, require
+    the token (compared in constant time, kept out of logs, stored in `config.toml` with
+    owner-only permissions), accept only `http(s)` URLs (mpv can open files, `ytdl://` and
+    options), and apply the bot's `ALLOWED_USERS`-style restriction by token rather than user id.
+  - Using Telegram itself as the transport does not work: a bot token can't message the bot.
+    Only a user account (MTProto) could, which is a different and heavier thing.
+
+  *Other targets (same button, different command or a built-in client).*
+  - *Chromecast, Default Media Receiver*: find devices over mDNS and load a stream URL that yt-dlp
+    resolved; the device fetches it itself. A single combined or HLS format works best, often
+    capped around 720p–1080p. Needs a CastV2 client (e.g. the `rust_cast` crate) or `catt`.
+  - *Chromecast, YouTube receiver*: start the YouTube app on the device with the video id, the way
+    YouTube's own cast button does. Best quality and no streaming through the PC, but it needs the
+    undocumented Lounge pairing protocol, which can change.
+  - *DLNA/UPnP* (many TVs) and *AirPlay* (Apple TVs, some TVs).
   - Casting sits outside mpv, so position, pause state and resume have to be synced with the
-    local history by hand.
+    local history by hand, and the queue (Up next, a playlist) needs a rule: replace or append.
+  - Plan: option 1 first (generic, small, useful at once); option 2 if the missing bot features
+    start to matter; built-in Chromecast only if `catt` through option 1 isn't enough.
 - **Tool checks.** On startup, check that `mpv`, `yt-dlp` and `deno` are found and say which one
   is missing; downloading `yt-dlp` and `deno` into the app's data directory on first run is
   another option.
