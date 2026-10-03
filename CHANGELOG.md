@@ -4,10 +4,14 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
-## Unreleased
+## 0.8.0 - 2026-10-03
 
 ### Added
 - **`O` opens the video in your browser** (`o` in Vim mode), like the Open in browser button.
+- **Prebuilt Linux binary** on each GitHub release (x86_64, glibc 2.35 or newer), with a desktop
+  entry and icon, so you don't have to compile it.
+- **Nix package** (`default.nix`, `package.nix`): installs the app with mpv, yt-dlp and deno on
+  its `PATH`, plus the desktop entry and icon.
 
 ## 0.7.0 - 2026-10-03
 
