@@ -177,8 +177,8 @@ const SHORTCUTS: [(&str, &str); 14] = [
     ("Esc", "Close this sheet"),
 ];
 
-/// Cheatsheet columns: title and how many SHORTCUTS entries it takes, in order.
-const SHEET_GROUPS: [(&str, usize); 2] = [("Playback", 7), ("Navigation", 7)];
+/// Cheatsheet groups: title, how many SHORTCUTS entries it takes (in order), and its column.
+const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 7, 0), ("Navigation", 7, 1)];
 
 /// Vim mode's keys (case matters: ⇧ means Shift).
 const VIM_SHORTCUTS: [(&str, &str); 20] = [
@@ -189,6 +189,7 @@ const VIM_SHORTCUTS: [(&str, &str); 20] = [
     ("m", "Mute"),
     ("n / p", "Next / previous video"),
     ("y y", "Copy the video's link"),
+    ("Click / Double-click", "Pause / fullscreen (on the video)"),
     ("j / k", "Move down / up the list"),
     ("g g / ⇧G", "First / last item"),
     ("Ctrl-d / Ctrl-u", "Move 10 down / up"),
@@ -201,9 +202,8 @@ const VIM_SHORTCUTS: [(&str, &str); 20] = [
     ("Ctrl-f", "Filter the list (channels, videos, history)"),
     ("?", "Show these shortcuts"),
     ("Esc", "Cancel / close / back"),
-    ("Click / Double-click", "Pause / fullscreen (on the video)"),
 ];
-const VIM_SHEET_GROUPS: [(&str, usize); 2] = [("Playback", 7), ("Navigation", 13)];
+const VIM_SHEET_GROUPS: [(&str, usize, usize); 3] = [("Playback", 8, 0), ("Navigation", 8, 1), ("General", 4, 0)];
 
 /// An entry of the left column's list, for Vim navigation.
 #[derive(Clone)]
@@ -3317,7 +3317,7 @@ impl Unbloated {
             div()
                 .min_w(px(28.))
                 .px_2()
-                .py(px(3.))
+                .py(px(2.))
                 .flex()
                 .justify_center()
                 .rounded_md()
@@ -3330,15 +3330,14 @@ impl Unbloated {
                 .child(k.to_string())
         };
         let (mut rest, groups) = if self.settings.vim { (&VIM_SHORTCUTS[..], &VIM_SHEET_GROUPS[..]) } else { (&SHORTCUTS[..], &SHEET_GROUPS[..]) };
-        let columns = groups.iter().map(|&(title, n)| {
+        let mut columns = [div().flex_1().min_w_0().flex().flex_col().gap_6(), div().flex_1().min_w_0().flex().flex_col().gap_6()];
+        for &(title, n, col) in groups {
             let (items, tail) = rest.split_at(n);
             rest = tail;
-            div()
-                .flex_1()
-                .min_w_0()
+            let group = div()
                 .flex()
                 .flex_col()
-                .gap_3()
+                .gap_2()
                 .child(div().pb_1().text_xs().text_color(rgb(ACCENT)).child(title.to_uppercase()))
                 .children(items.iter().map(|(keys, what)| {
                     div()
@@ -3356,8 +3355,10 @@ impl Unbloated {
                         )
                         // min_w_0 so long descriptions wrap inside the card.
                         .child(div().flex_1().min_w_0().text_sm().text_color(rgb(MUTED)).child(*what))
-                }))
-        });
+                }));
+            let c = std::mem::replace(&mut columns[col], div());
+            columns[col] = c.child(group);
+        }
         div()
             .id("cheatsheet")
             .occlude()
@@ -3378,6 +3379,7 @@ impl Unbloated {
                 div()
                     .w(px(980.))
                     .max_w(relative(0.92))
+                    .max_h(relative(0.92))
                     .p_8()
                     .rounded_xl()
                     .bg(rgb(PANEL))
@@ -3397,7 +3399,8 @@ impl Unbloated {
                             }))
                             .child(div().text_xs().text_color(rgb(MUTED)).child("? or Esc to close")),
                     )
-                    .child(div().flex().gap_10().children(columns)),
+                    // Scrolls when the window is too short for it.
+                    .child(div().id("sheet-body").flex_1().min_h_0().overflow_y_scroll().flex().items_start().gap_10().children(columns)),
             )
     }
 
