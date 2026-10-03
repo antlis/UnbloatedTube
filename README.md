@@ -168,8 +168,9 @@ things that have no shortcut of their own. See
 ## Running
 
 Built and tested on Linux with X11; the embedded player relies on X11 window embedding
-(`mpv --wid`), and Wayland is untested. Needs `mpv`, `yt-dlp` (recent: YouTube breaks old versions
-quickly) and `deno` (yt-dlp uses it for YouTube's JavaScript challenges).
+(`mpv --wid`), and Wayland is untested. Windows and macOS are planned (see [TODO](#todo)).
+Needs `mpv`, `yt-dlp` (recent: YouTube breaks old versions quickly) and `deno` (yt-dlp uses it
+for YouTube's JavaScript challenges).
 
 ### NixOS
 
@@ -241,6 +242,16 @@ Without it, search and playback still work.
   leaves audio playing.
 - **SponsorBlock** runs inside mpv as the `sponsorblock_minimal` script, with the categories
   you chose.
+
+## TODO
+
+- **Cross-platform (Windows, macOS).** Today it is Linux/X11 only. What's in the way:
+  - the embedded player (`embed.rs`): an X11 child window for `mpv --wid`; needs a per-platform
+    replacement or another way to show mpv's picture inside the window
+  - the "mpv dies with the app" guarantee (`PR_SET_PDEATHSIG`, Linux only)
+  - `xdg-open` for Open in browser (`open` on macOS, `start` on Windows)
+  - the config, data and cache locations (`~/.config`, `~/.local/share`, `~/.cache`)
+- **Wayland** is untested.
 
 ## Files
 
