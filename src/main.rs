@@ -326,6 +326,8 @@ struct Unbloated {
     saving: bool,
     /// Result of the last account action, shown next to its buttons.
     notice: Option<String>,
+    /// The notice as last seen by `tick`, and when it appeared; it's cleared after a few seconds.
+    notice_seen: Option<(String, std::time::Instant)>,
     /// Downloads by video id: progress, then the saved file path or an error.
     downloads: HashMap<String, Download>,
     ticks: u32,
@@ -434,6 +436,7 @@ impl Unbloated {
             ended: None,
             saving: false,
             notice: None,
+            notice_seen: None,
             downloads: HashMap::new(),
             ticks: 0,
             _poll: poll,
@@ -779,6 +782,27 @@ impl Unbloated {
             }
         }
         counts
+    }
+
+    /// Notices ("Link copied", "Saved to …") disappear after 4 seconds; a finished download's
+    /// line after 6. Watching the value here keeps every place that sets them simple.
+    fn expire_notices(&mut self, cx: &mut Context<Self>) {
+        let now = std::time::Instant::now();
+        match (&self.notice, &self.notice_seen) {
+            (None, _) => self.notice_seen = None,
+            (Some(n), Some((seen, at))) if n == seen => {
+                if now.duration_since(*at) > Duration::from_secs(4) {
+                    self.notice = None;
+                    self.notice_seen = None;
+                    cx.notify();
+                }
+            }
+            (Some(n), _) => self.notice_seen = Some((n.clone(), now)),
+        }
+        // Re-render once when a finished download's line should disappear.
+        if self.downloads.values().any(|d| d.done_at.is_some_and(|t| (6.0..6.3).contains(&t.elapsed().as_secs_f32()))) {
+            cx.notify();
+        }
     }
 
     /// Desktop notifications for feed videos of channels with the bell on, not notified yet.
@@ -1236,8 +1260,8 @@ impl Unbloated {
             d => d.strip_prefix("~/").map_or_else(|| PathBuf::from(d), |rest| home.join(rest)),
         };
         let (cfg, format, url, id) = (self.cfg.clone(), player::format(&self.settings), video.url(), video.id.clone());
-        self.downloads.insert(id.clone(), Download { progress: 0., result: None });
-        let shared: Arc<Mutex<Download>> = Arc::new(Mutex::new(Download { progress: 0., result: None }));
+        self.downloads.insert(id.clone(), Download { progress: 0., result: None, done_at: None });
+        let shared: Arc<Mutex<Download>> = Arc::new(Mutex::new(Download { progress: 0., result: None, done_at: None }));
         let sink = shared.clone();
         cx.background_executor()
             .spawn(async move {
@@ -1251,6 +1275,10 @@ impl Unbloated {
                 let now = shared.lock().unwrap().clone();
                 let done = now.result.is_some();
                 if this.update(cx, |this, cx| {
+                    let mut now = now;
+                    if done {
+                        now.done_at = Some(std::time::Instant::now());
+                    }
                     this.downloads.insert(id.clone(), now);
                     cx.notify();
                 })
@@ -1734,6 +1762,7 @@ impl Unbloated {
 
     fn tick(&mut self, state: Option<player::State>, window: &mut Window, cx: &mut Context<Self>) {
         self.ticks += 1;
+        self.expire_notices(cx);
         self.preload(cx);
         self.load_status(cx);
         let url = self.current.as_ref().map(|v| v.url());
@@ -2842,7 +2871,7 @@ impl Unbloated {
                     .when(self.account_buttons(), |d| d.children(self.account_buttons_els(cx)))
                     .when(self.settings.download_button, |d| {
                         let (tip_text, enabled) = match self.downloads.get(&video.id) {
-                            Some(Download { result: None, progress }) => (format!("Downloading {progress:.0}%"), false),
+                            Some(Download { result: None, progress, .. }) => (format!("Downloading {progress:.0}%"), false),
                             Some(Download { result: Some(Ok(f)), .. }) => (format!("Downloaded to {f}"), false),
                             _ => ("Download".to_string(), true),
                         };
@@ -2863,7 +2892,7 @@ impl Unbloated {
                     .child(div().ml_auto().pl_2().flex_none().text_xs().text_color(rgb(MUTED)).child(time)),
             )
             .when_some(self.notice.clone(), |d, n| d.child(div().text_xs().text_color(rgb(MUTED)).truncate().child(n)))
-            .when_some(self.downloads.get(&video.id).map(Download::status), |d, n| {
+            .when_some(self.downloads.get(&video.id).and_then(Download::visible_status), |d, n| {
                 d.child(div().text_xs().text_color(rgb(MUTED)).truncate().child(n))
             })
     }
@@ -3128,9 +3157,16 @@ impl Unbloated {
 struct Download {
     progress: f32,
     result: Option<Result<String, String>>,
+    /// When it finished; the result is shown for a few seconds, then hidden.
+    done_at: Option<std::time::Instant>,
 }
 
 impl Download {
+    /// Status line under the player: progress while running, the result briefly after.
+    fn visible_status(&self) -> Option<String> {
+        self.done_at.is_none_or(|t| t.elapsed() < Duration::from_secs(6)).then(|| self.status())
+    }
+
     fn status(&self) -> String {
         match &self.result {
             None => format!("Downloading… {:.0}%", self.progress),
