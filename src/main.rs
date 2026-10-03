@@ -917,6 +917,24 @@ impl Unbloated {
         cx.notify();
     }
 
+    /// A round icon button for the channel header; red when `on`.
+    fn icon_chip(&self, id: &'static str, icon: &str, on: bool, tooltip: impl Into<SharedString>) -> Stateful<gpui::Div> {
+        div()
+            .id(id)
+            .flex_none()
+            .size(px(28.))
+            .ml_1()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_full()
+            .bg(if on { rgb(ACCENT) } else { rgb(HOVER) })
+            .cursor_pointer()
+            .hover(|d| d.opacity(0.85))
+            .child(svg().path(icons::path(icon)).size(px(14.)).text_color(rgb(TEXT)))
+            .tooltip(tip(tooltip))
+    }
+
     /// A small rounded chip (filter bar, group editor).
     fn chip(&self, id: impl Into<ElementId>, label: impl Into<SharedString>, on: bool) -> Stateful<gpui::Div> {
         div()
@@ -2372,26 +2390,16 @@ impl Unbloated {
             // Subscribe / unsubscribe for a real channel (UC… id), when logged in.
             let sub_button = (tab == Tab::Subscriptions && open.id.starts_with("UC") && self.cfg.has_auth()).then(|| {
                 let confirming = self.confirm_unsub.as_deref() == Some(open.id.as_str());
-                let (label, bg, fg) = match (subscribed, confirming) {
-                    (true, true) => ("Unsubscribe?", ACCENT, TEXT),
-                    (true, false) => ("Subscribed", HOVER, MUTED),
-                    (false, _) => ("Subscribe", ACCENT, TEXT),
-                };
                 let g = open.clone();
-                div()
-                    .id("channel-sub")
-                    .ml_auto()
-                    .flex_none()
-                    .px_3()
-                    .py_1()
-                    .rounded_full()
-                    .bg(rgb(bg))
-                    .text_xs()
-                    .text_color(rgb(fg))
-                    .cursor_pointer()
-                    .hover(|d| d.opacity(0.85))
-                    .child(label)
-                    .when(subscribed && !confirming, |d| d.tooltip(tip("Click twice to unsubscribe")))
+                let button = if confirming {
+                    // The confirm step stays spelled out.
+                    self.chip("channel-sub", "Unsubscribe?", true).ml_1()
+                } else if subscribed {
+                    self.icon_chip("channel-sub", "subscribed", false, "Subscribed — click twice to unsubscribe")
+                } else {
+                    self.icon_chip("channel-sub", "subscribe", true, "Subscribe")
+                };
+                button
                     .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
                         // The header row itself means "back"; don't trigger it.
                         cx.stop_propagation();
@@ -2400,10 +2408,7 @@ impl Unbloated {
             });
             let is_channel = tab == Tab::Subscriptions && open.id != FEED_ID;
             let groups_button = is_channel.then(|| {
-                self.chip("channel-groups", "Groups", self.editing_groups)
-                    .when(sub_button.is_none(), |d| d.ml_auto())
-                    .mr_2()
-                    .tooltip(tip("Add this channel to your groups"))
+                self.icon_chip("channel-groups", "folder", self.editing_groups, "Add this channel to groups")
                     .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
                         cx.stop_propagation();
                         this.editing_groups = !this.editing_groups;
@@ -2418,29 +2423,32 @@ impl Unbloated {
                     .flex_none()
                     .items_center()
                     .child(
-                        self.chip("channel-notify", "", notify)
-                            .mr_2()
-                            .px_2()
-                            .h(px(22.))
-                            .child(svg().path(icons::path("bell")).size(px(12.)).text_color(rgb(TEXT)))
-                            .tooltip(tip(if notify { "Notifications on (click to turn off)" } else { "Notify me about new uploads" }))
-                            .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
+                        self.icon_chip(
+                            "channel-notify",
+                            "bell",
+                            notify,
+                            if notify { "Notifications on (click to turn off)" } else { "Notify me about new uploads" },
+                        )
+                        .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
                                 cx.stop_propagation();
                                 this.toggle_flag(true, &a, cx);
                             }),
                     )
                     .child(
-                        self.chip("channel-mute", if muted { "Muted" } else { "Mute" }, muted)
-                            .mr_2()
-                            .tooltip(tip("Hide this channel's uploads from New uploads"))
-                            .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
+                        self.icon_chip(
+                            "channel-mute",
+                            "muted",
+                            muted,
+                            if muted { "Muted: hidden from New uploads (click to unmute)" } else { "Hide this channel's uploads from New uploads" },
+                        )
+                        .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
                                 cx.stop_propagation();
                                 this.toggle_flag(false, &b, cx);
                             }),
                     )
             });
             let group_editor = (is_channel && self.editing_groups).then(|| self.render_group_editor(&open.id, window, cx));
-            let sub_button = sub_button.map(|b| b.ml_0());
+
             let view = self.browser_ref(tab).view;
             // Channels (not the New uploads feed or playlists) get Videos | Shorts tabs.
             let channel_tabs = tab == Tab::Subscriptions && open.id != FEED_ID && self.settings.shorts;
@@ -2466,7 +2474,8 @@ impl Unbloated {
                         .border_b_1()
                         .border_color(rgb(BORDER))
                         .hover(|d| d.bg(rgb(HOVER)))
-                        .child(div().mr_3().text_color(rgb(MUTED)).child(back))
+                        .child(svg().path(icons::path("arrow-left")).size(px(16.)).mr_3().flex_none().text_color(rgb(MUTED)))
+                        .tooltip(tip(back.trim_start_matches("← ").to_string()))
                         .items_center()
                         .child(div().flex_1().min_w_0().text_color(rgb(TEXT)).truncate().child(open.title.clone()))
                         .children(flag_chips)
