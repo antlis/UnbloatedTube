@@ -30,7 +30,9 @@ curl -fsSL -o "$work/$archive.sha256" "$base/$archive.sha256"
 sum=$(cut -d' ' -f1 "$work/$archive.sha256")
 
 mkdir "$work/pkg"
-sed -e "s/^pkgver=.*/pkgver=$version/" \
+# The template note about pkgver and sha256sums is for this repo, not for the AUR page.
+sed -e "/^# pkgver and sha256sums here are only a template/d" \
+    -e "s/^pkgver=.*/pkgver=$version/" \
     -e "s/^pkgrel=.*/pkgrel=1/" \
     -e "s/^sha256sums=.*/sha256sums=('$sum')/" "$here/PKGBUILD" > "$work/pkg/PKGBUILD"
 

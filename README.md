@@ -308,15 +308,14 @@ Without it, search and playback still work.
   on Arch, so the dependency names are from memory.
   - `packaging/aur/publish.sh VERSION` publishes a release: it downloads the archive, checks its
     `.sha256`, sets `pkgver` and `sha256sums`, generates `.SRCINFO` (identical to `makepkg`'s for
-    0.8.1) and pushes to the AUR, or does nothing if the AUR already has that version; `--dry-run`
-    stops before the push. It needs an SSH key the AUR knows (`GIT_SSH_COMMAND` picks one).
-  - Used by hand for now, after each release tag: `packaging/aur/publish.sh 0.8.2`. It works with
-    the SSH key already registered on the AUR account, so there is nothing to set up.
-  - Optional, not enabled: the release workflow has an `aur` job that runs the script after each
-    `v*` tag when the repository secret `AUR_SSH_KEY` holds a private key the AUR accepts (it must
-    have no passphrase; a dedicated key is safer than the main one). Without the secret it only
-    prints a notice. Never run in CI, and it trusts `ssh-keyscan` for the AUR's host key rather
-    than a pinned one.
+    0.8.1) and pushes to the AUR, or does nothing if the AUR already has that version.
+  - Automatic: the release workflow's `aur` job runs the script after each `v*` tag, using the
+    repository secret `AUR_SSH_KEY` (a dedicated key registered on the AUR account, no
+    passphrase). Without the secret that job only prints a notice. The key was checked against the
+    AUR from here, but the job itself has not run in CI yet, and it trusts `ssh-keyscan` for the
+    AUR's host key rather than a pinned one.
+  - By hand: `packaging/aur/publish.sh 0.8.2` with any key the AUR knows (`GIT_SSH_COMMAND` picks
+    one); `--dry-run` stops before the push.
   - It doesn't bump `pkgrel`: a packaging-only fix to the PKGBUILD needs a manual push.
   A source or `-git` package (compiles all ~730 crates) comes second.
 - **crates.io.** `cargo install unbloated-youtube`. All dependencies are already on crates.io
