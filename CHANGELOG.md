@@ -12,6 +12,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 - Right-click a channel in Subscriptions for a menu with **Unsubscribe** (asks for a second click
   to confirm). The menu closes by itself 2 seconds after the pointer leaves it, or on Esc or a click elsewhere.
 
+- **Tab keys**: `1`–`4` jump to Subscriptions, Playlists, History and Settings (as shown), in
+  both regular and Vim mode.
 
 ### Changed
 - The divider between the player and the lower pane (Recommended, Chapters, Up next) can be

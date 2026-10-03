@@ -117,6 +117,7 @@ remembered.
 | C | Copy the video's link |
 | ⇧C | Copy the link at the current time (`y t` in Vim mode) |
 | E | Lower pane (Recommended, Chapters, Up next) full height, and back (`e` in Vim mode) |
+| 1 – 4 | Switch tab: Subscriptions, Playlists, History, Settings |
 | / | Search |
 | Ctrl+F | Filter the list |
 | Esc | Close / back |

@@ -191,7 +191,7 @@ enum Lower {
 
 /// Keyboard shortcuts (also listed in Settings). Keys reach mpv instead while the pointer is
 /// over the video; mpv's own defaults there are similar (Space, arrows, f).
-const SHORTCUTS: [(&str, &str); 17] = [
+const SHORTCUTS: [(&str, &str); 18] = [
     ("Space / K", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     ("J / L", "Back / forward 10 seconds"),
@@ -204,6 +204,7 @@ const SHORTCUTS: [(&str, &str); 17] = [
     ("N", "Next (Up next first)"),
     ("P", "Previous"),
     ("E", "Lower pane full height, and back"),
+    ("1 - 4", "Switch tab: Subscriptions, Playlists, History, Settings"),
     ("/", "Search"),
     ("Ctrl-f", "Filter the list (channels, videos, history)"),
     ("?", "Show these shortcuts"),
@@ -212,10 +213,10 @@ const SHORTCUTS: [(&str, &str); 17] = [
 ];
 
 /// Cheatsheet groups: title, how many SHORTCUTS entries it takes (in order), and its column.
-const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 8, 1)];
+const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 9, 1)];
 
 /// Vim mode's keys (case matters: ⇧ means Shift).
-const VIM_SHORTCUTS: [(&str, &str); 23] = [
+const VIM_SHORTCUTS: [(&str, &str); 24] = [
     ("Space", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     (", / .", "Back / forward 10 seconds"),
@@ -235,12 +236,13 @@ const VIM_SHORTCUTS: [(&str, &str); 23] = [
     ("x", "Add the selected video to Up next"),
     ("f", "Click hints: type the label to click"),
     ("e", "Lower pane full height, and back"),
+    ("1 - 4", "Switch tab: Subscriptions, Playlists, History, Settings"),
     ("/", "Search"),
     ("Ctrl-f", "Filter the list (channels, videos, history)"),
     ("?", "Show these shortcuts"),
     ("Esc", "Cancel / close / back"),
 ];
-const VIM_SHEET_GROUPS: [(&str, usize, usize); 3] = [("Playback", 10, 0), ("Navigation", 9, 1), ("General", 4, 0)];
+const VIM_SHEET_GROUPS: [(&str, usize, usize); 3] = [("Playback", 10, 0), ("Navigation", 10, 1), ("General", 4, 0)];
 
 /// An entry of the left column's list, for Vim navigation.
 #[derive(Clone)]
@@ -1879,6 +1881,7 @@ impl Unbloated {
             "up" | "=" => self.change_volume(5., cx),
             "down" | "-" => self.change_volume(-5., cx),
             "e" => self.toggle_lower_full(window, cx),
+            "1" | "2" | "3" | "4" if !k.modifiers.shift => self.tab_number(k.key.parse().unwrap_or(0), cx),
             "c" if k.modifiers.shift => self.copy_link_at_time(cx),
             "c" => self.copy_link(cx),
             "n" => {
@@ -1942,6 +1945,7 @@ impl Unbloated {
             "y" if pending_y => self.copy_link(cx),
             "t" if pending_y => self.copy_link_at_time(cx),
             "e" => self.toggle_lower_full(window, cx),
+            "1" | "2" | "3" | "4" => self.tab_number(token.parse().unwrap_or(0), cx),
             "y" => self.vim_y = true,
             "g" => self.vim_g = true,
             "G" => self.vim_move(isize::MAX, len, window),
@@ -2082,6 +2086,13 @@ impl Unbloated {
         let i = tabs.iter().position(|t| *t == self.tab).unwrap_or(0) as isize;
         let next = (i + step).rem_euclid(tabs.len() as isize) as usize;
         self.select_tab(tabs[next], cx);
+    }
+
+    /// Jump to the `n`th header tab (1-based), as shown; nothing if there are fewer.
+    fn tab_number(&mut self, n: usize, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tab_list().get(n.wrapping_sub(1)).copied() {
+            self.select_tab(tab, cx);
+        }
     }
 
     /// Header tabs in order, as shown.
