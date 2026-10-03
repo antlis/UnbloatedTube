@@ -33,6 +33,17 @@ impl Video {
     }
 }
 
+/// A top-level comment on a video.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Comment {
+    pub author: String,
+    pub text: String,
+    pub likes: Option<u64>,
+    /// "2 years ago", as YouTube words it.
+    pub age: String,
+    pub pinned: bool,
+}
+
 /// A subscribed channel or a playlist: a title plus the URL listing its videos.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Group {
@@ -113,6 +124,52 @@ fn stream(cfg: &Config, target: &str, limit: usize, mut on: impl FnMut(Entry)) -
     let _ = child.stderr.take().unwrap().read_to_string(&mut err);
     let ok = child.wait().map_err(|e| e.to_string())?.success();
     if ok || any { Ok(()) } else { Err(short_error(&err)) }
+}
+
+/// The top `limit` comments of a video (no replies). yt-dlp can't stream them: one JSON
+/// document arrives when it is done, so `on` is called for all of them at the end.
+pub fn comments(cfg: &Config, video_id: &str, limit: usize, on: &mut dyn FnMut(Comment)) -> Result<(), String> {
+    #[derive(Deserialize)]
+    struct Info {
+        #[serde(default)]
+        comments: Option<Vec<Raw>>,
+    }
+    #[derive(Deserialize)]
+    struct Raw {
+        #[serde(default)]
+        author: Option<String>,
+        #[serde(default)]
+        text: Option<String>,
+        #[serde(default)]
+        like_count: Option<u64>,
+        #[serde(default, rename = "_time_text")]
+        time_text: Option<String>,
+        #[serde(default)]
+        is_pinned: bool,
+    }
+    let out = Command::new("yt-dlp")
+        .env("PYCRYPTODOME_DISABLE_GMP", "1")
+        .args(["--no-update", "--no-warnings", "--skip-download", "--write-comments", "-j", "--no-playlist"])
+        .args(["--extractor-args", &format!("youtube:max_comments={limit},{limit},0,0;comment_sort=top")])
+        .args(cfg.cookie_args())
+        .arg(format!("https://www.youtube.com/watch?v={video_id}"))
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run yt-dlp: {e}"))?;
+    if !out.status.success() {
+        return Err(short_error(&String::from_utf8_lossy(&out.stderr)));
+    }
+    let info: Info = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+    for c in info.comments.unwrap_or_default() {
+        on(Comment {
+            author: c.author.unwrap_or_default(),
+            text: c.text.unwrap_or_default(),
+            likes: c.like_count,
+            age: c.time_text.unwrap_or_default(),
+            pinned: c.is_pinned,
+        });
+    }
+    Ok(())
 }
 
 fn short_error(stderr: &str) -> String {

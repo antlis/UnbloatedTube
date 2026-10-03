@@ -4,6 +4,13 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Added
+- **Comments tab** under the player, off by default (Settings → Comments). The top 40 comments
+  are fetched only when you open the tab, once per video; "Load more comments" at the bottom
+  fetches 40 more.
+
 ## 0.6.0 - 2026-10-03
 
 ### Added

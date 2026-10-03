@@ -23,7 +23,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use store::{ChannelFlags, ChannelGroup, Config, History, Seen, Settings};
-use yt::{Group, Video, fmt_count, fmt_duration};
+use yt::{Comment, Group, Video, fmt_count, fmt_duration};
 
 const BG: u32 = 0x0f0f0f;
 const PANEL: u32 = 0x161616;
@@ -74,6 +74,9 @@ enum Split {
     Continue,
 }
 
+/// Comments fetched per page: the first fetch, and each "Load more".
+const COMMENTS_PAGE: usize = 40;
+
 /// The "New uploads" pseudo-channel at the top of Subscriptions.
 const FEED_ID: &str = "feed";
 
@@ -96,12 +99,13 @@ fn channel_of(v: &Video) -> Option<&str> {
 /// Settings page toggles: label, hint, field.
 type Toggle = (&'static str, &'static str, fn(&mut Settings) -> &mut bool);
 
-const TOGGLES: [Toggle; 9] = [
+const TOGGLES: [Toggle; 10] = [
     ("Subscriptions", "Your subscribed channels", |s| &mut s.subscriptions),
     ("Playlists", "Watch later, Liked and your playlists", |s| &mut s.playlists),
     ("History", "What you watched, here and on YouTube", |s| &mut s.history),
     ("Recommendations", "Your YouTube home feed under the player", |s| &mut s.recommendations),
     ("Chapters", "Chapters tab under the player, for videos that have them", |s| &mut s.chapters),
+    ("Comments", "Comments tab under the player, loaded when you open it", |s| &mut s.comments),
     ("Shorts", "Shorts tab on channels, and Shorts in feeds and search", |s| &mut s.shorts),
     ("Vim mode", "j/k move, Enter opens, h goes back, f shows click hints; ? lists all keys", |s| &mut s.vim),
     ("Window buttons", "Minimize, maximize and close, top right", |s| &mut s.window_buttons),
@@ -189,6 +193,7 @@ enum Lower {
     Recommended,
     UpNext,
     Chapters,
+    Comments,
 }
 
 /// Keyboard shortcuts (also listed in Settings). Keys reach mpv instead while the pointer is
@@ -209,7 +214,7 @@ const SHORTCUTS: [(&str, &str); 24] = [
     ("⇧E", "Player full height (hide the lower pane), and back"),
     ("[ / ]", "Previous / next tab (header tabs, then the lower pane's)"),
     ("1 - 4", "Switch tab: Subscriptions, Playlists, History, Settings"),
-    ("5 - 7", "Switch lower tab: Recommended, Chapters, Up next"),
+    ("5 - 8", "Switch lower tab: Recommended, Chapters, Comments, Up next"),
     ("Tab / ⇧Tab", "Move the focus ring (Enter or Space presses, Esc clears)"),
     ("B", "Hide or show the left column"),
     ("⇧B", "Hide or show the right column"),
@@ -247,7 +252,7 @@ const VIM_SHORTCUTS: [(&str, &str); 30] = [
     ("⇧E", "Player full height (hide the lower pane), and back"),
     ("[ / ]", "Previous / next tab (header tabs, then the lower pane's)"),
     ("1 - 4", "Switch tab: Subscriptions, Playlists, History, Settings"),
-    ("5 - 7", "Switch lower tab: Recommended, Chapters, Up next"),
+    ("5 - 8", "Switch lower tab: Recommended, Chapters, Comments, Up next"),
     ("Tab / ⇧Tab", "Move the focus ring (Enter or Space presses, Esc clears)"),
     ("b", "Hide or show the left column"),
     ("⇧B", "Hide or show the right column"),
@@ -301,6 +306,11 @@ struct Unbloated {
     yt_history: Load<Video>,
     playlists: Browser,
     recs: Load<Video>,
+    /// Comments of the video `comments_for`; fetched when the Comments tab is first shown.
+    comments: Load<Comment>,
+    comments_for: Option<String>,
+    /// How many comments the last fetch asked for; "Load more" raises it.
+    comments_limit: usize,
     /// Latest uploads across subscriptions, for the "New uploads" row and per-channel counts.
     feed: Load<Video>,
     seen: Seen,
@@ -479,6 +489,9 @@ impl Unbloated {
             yt_history: Load::Idle,
             playlists: Browser::new(),
             recs: Load::Idle,
+            comments: Load::Idle,
+            comments_for: None,
+            comments_limit: COMMENTS_PAGE,
             feed: Load::Idle,
             seen: Seen::load(),
             query: String::new(),
@@ -1981,7 +1994,7 @@ impl Unbloated {
             "b" => self.toggle_left_collapsed(cx),
             "[" => self.cycle_tabs(-1, cx),
             "]" => self.cycle_tabs(1, cx),
-            "1" | "2" | "3" | "4" | "5" | "6" | "7" if !k.modifiers.shift => self.tab_number(k.key.parse().unwrap_or(0), cx),
+            "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" if !k.modifiers.shift => self.tab_number(k.key.parse().unwrap_or(0), cx),
             "c" if k.modifiers.shift => self.copy_link_at_time(cx),
             "c" => self.copy_link(cx),
             "n" => {
@@ -2050,7 +2063,7 @@ impl Unbloated {
             "b" => self.toggle_left_collapsed(cx),
             "[" => self.cycle_tabs(-1, cx),
             "]" => self.cycle_tabs(1, cx),
-            "1" | "2" | "3" | "4" | "5" | "6" | "7" => self.tab_number(token.parse().unwrap_or(0), cx),
+            "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" => self.tab_number(token.parse().unwrap_or(0), cx),
             "y" => self.vim_y = true,
             "g" => self.vim_g = true,
             "G" => self.vim_move(isize::MAX, len, window),
@@ -2267,6 +2280,9 @@ impl Unbloated {
         if !self.chapter_list().is_empty() {
             tabs.push(Lower::Chapters);
         }
+        if self.comments_on() {
+            tabs.push(Lower::Comments);
+        }
         tabs.push(Lower::UpNext);
         tabs
     }
@@ -2274,7 +2290,7 @@ impl Unbloated {
     /// The lower pane tab shown now (see the lower pane in `render`).
     fn shown_lower(&self, tabs: &[Lower]) -> Lower {
         match self.lower {
-            Lower::Chapters | Lower::Recommended if !tabs.contains(&self.lower) => tabs[0],
+            Lower::Chapters | Lower::Comments | Lower::Recommended if !tabs.contains(&self.lower) => tabs[0],
             tab => tab,
         }
     }
@@ -2304,7 +2320,7 @@ impl Unbloated {
         cx.notify();
     }
 
-    /// Jump to a tab by number, as shown: 1-4 are the header tabs, 5-7 the lower pane's.
+    /// Jump to a tab by number, as shown: 1-4 are the header tabs, 5-8 the lower pane's.
     /// Nothing if there are fewer.
     fn tab_number(&mut self, n: usize, cx: &mut Context<Self>) {
         if n <= 4 {
@@ -4017,6 +4033,93 @@ impl Unbloated {
         })
     }
 
+    /// Comments tab is on and there is a video to show them for.
+    fn comments_on(&self) -> bool {
+        self.settings.comments && self.current.is_some()
+    }
+
+    /// Comments of the current video, fetched on first view (and again after the video changes).
+    fn render_comments(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let id = self.current.as_ref().map(|v| v.id.clone());
+        if self.comments_for != id {
+            self.comments_for = id;
+            self.comments_limit = COMMENTS_PAGE;
+            // Not the previous video's comments while these load.
+            self.comments = Load::Idle;
+            self.fetch_comments(cx);
+        }
+        if let Some(p) = self.placeholder(&self.comments, "No comments.", Rows::Videos) {
+            return p;
+        }
+        // A full page suggests there are more (yt-dlp can't continue, so more means refetching).
+        let loading = matches!(self.comments, Load::Loading(_));
+        let more = loading || self.comments.items().len() >= self.comments_limit;
+        div()
+            .id("comments")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .children(self.comments.items().iter().enumerate().map(|(i, c)| {
+                let meta = [Some(c.author.clone()), (!c.age.is_empty()).then(|| c.age.clone()), c.likes.filter(|n| *n > 0).map(|n| format!("{} likes", fmt_count(n)))]
+                    .into_iter()
+                    .flatten()
+                    .chain(c.pinned.then(|| "pinned".to_string()))
+                    .collect::<Vec<_>>()
+                    .join(" · ");
+                div()
+                    .id(i)
+                    .w_full()
+                    .px_3()
+                    .py_2()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .border_b_1()
+                    .border_color(themed(BORDER))
+                    .child(div().text_xs().text_color(themed(MUTED)).child(meta))
+                    .child(div().text_sm().text_color(themed(TEXT)).child(c.text.clone()))
+            }))
+            .when(more, |d| {
+                d.child(
+                    div().p_3().flex().justify_center().child(
+                        div()
+                            .id("comments-more")
+                            .px_3()
+                            .py_1()
+                            .rounded_md()
+                            .text_sm()
+                            .text_color(themed(MUTED))
+                            .when(!loading, |b| b.cursor_pointer().hover(|b| b.bg(themed(HOVER))))
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .when(loading, |b| {
+                                b.child(svg().path(icons::path("refresh")).size(px(14.)).text_color(themed(MUTED)).with_animation(
+                                    "comments-spin",
+                                    Animation::new(Duration::from_millis(900)).repeat(),
+                                    |s, t| s.with_transformation(Transformation::rotate(radians(t * std::f32::consts::TAU))),
+                                ))
+                            })
+                            .child(if loading { "Loading more comments…" } else { "Load more comments" })
+                            .when(!loading, |b| {
+                                b.on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                                    this.comments_limit += COMMENTS_PAGE;
+                                    this.fetch_comments(cx);
+                                })
+                            }),
+                    ),
+                )
+            })
+            .into_any_element()
+    }
+
+    /// Fetch the first `comments_limit` comments of the current video; what is shown stays until they arrive.
+    fn fetch_comments(&mut self, cx: &mut Context<Self>) {
+        let id = self.current.as_ref().map(|v| v.id.clone()).unwrap_or_default();
+        let limit = self.comments_limit;
+        self.fetch(cx, "comments", |s| &mut s.comments, None, move |cfg, on| yt::comments(cfg, &id, limit, on));
+    }
+
     /// The playing video's chapters (empty when off in Settings or the video has none).
     fn chapter_list(&self) -> Arc<[(f64, String)]> {
         match &self.state {
@@ -4657,14 +4760,17 @@ impl Render for Unbloated {
         };
         let show_recs = self.settings.recommendations;
         let chapters = self.chapter_list();
-        let right = if (show_recs || !self.up_next.is_empty() || !chapters.is_empty()) && !self.player_full {
+        let show_comments = self.comments_on();
+        let right = if (show_recs || !self.up_next.is_empty() || !chapters.is_empty() || show_comments) && !self.player_full {
             let lower = match self.lower {
+                Lower::Comments if show_comments => Lower::Comments,
                 Lower::Chapters if !chapters.is_empty() => Lower::Chapters,
-                Lower::Chapters | Lower::Recommended if show_recs => Lower::Recommended,
+                Lower::Chapters | Lower::Comments | Lower::Recommended if show_recs => Lower::Recommended,
                 _ => Lower::UpNext,
             };
             let body = match lower {
                 Lower::Chapters => self.render_chapters(chapters.clone(), cx),
+                Lower::Comments => self.render_comments(cx),
                 Lower::Recommended => self.render_recs(cx),
                 Lower::UpNext if self.up_next.is_empty() => self.status("Nothing queued. Hover a video and press + to add it."),
                 Lower::UpNext => self.video_list("up-next", &self.up_next.clone(), None, cx),
@@ -4695,6 +4801,11 @@ impl Render for Unbloated {
                                     },
                                 ),
                             )
+                        })
+                        .when(show_comments, |d| {
+                            d.child(tab_button("Comments", lower == Lower::Comments).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                                this.show_lower(Lower::Comments, cx);
+                            }))
                         })
                         .child(
                             tab_button(

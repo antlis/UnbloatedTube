@@ -161,6 +161,8 @@ pub struct Settings {
     pub recommendations: bool,
     /// Chapters tab under the player, for videos that have chapters.
     pub chapters: bool,
+    /// Comments tab under the player; comments are fetched only when the tab is opened.
+    pub comments: bool,
     pub shorts: bool,
     /// Vim-style keys: j/k move a selection in lists, f shows click hints.
     pub vim: bool,
@@ -224,6 +226,7 @@ impl Default for Settings {
             history: true,
             recommendations: true,
             chapters: true,
+            comments: false,
             shorts: true,
             vim: false,
             notifications: true,

@@ -78,6 +78,8 @@ list, your playlists, your history, search and a player.
   mode), also while the pointer is over the video. Remembered between runs.
 - **Chapters tab** under the player for videos that have chapters: click one to jump there; the
   current chapter is highlighted and kept in view.
+- **Comments tab** under the player, off by default (Settings → Comments): the top 40 comments are
+  fetched only when you open the tab, and "Load more comments" at the bottom gets 40 more.
 - **Resizable player**: drag the divider between the video and the lower pane anywhere, up to
   the top; `E` gives the lower pane the whole right column and back; `⇧E` does the same for the player. The left column collapses too
   (`B`, or drag its divider to the edge), and so does the right one (`⇧B`, or drag the divider
@@ -108,7 +110,7 @@ Everything is a toggle or a field on the Settings page, which has its own search
 
 | Group | Options |
 | --- | --- |
-| Tabs & lists | Subscriptions, Playlists, History, Recommendations, Chapters, **Shorts** (everywhere) |
+| Tabs & lists | Subscriptions, Playlists, History, Recommendations, Chapters, Comments (off by default), **Shorts** (everywhere) |
 | Buttons | Subscribe, Save to playlist, Like, Dislike, Volume, Share, Share at current time, Open in browser, Download |
 | Player | Max quality (480p–4K), autoplay, **audio only**, prefer hardware-friendly codecs (skip AV1), hardware decoding, hover controls on the video, mpv's own controls and hotkeys, speed |
 | SponsorBlock | **Skip sponsored segments**, choosing which: sponsor, self-promotion, like/subscribe reminders, intro, credits, preview, filler, non-music |
@@ -133,12 +135,12 @@ remembered.
 | N / P | Next / previous |
 | C | Copy the video's link |
 | ⇧C | Copy the link at the current time (`y t` in Vim mode) |
-| E | Lower pane (Recommended, Chapters, Up next) full height, and back (`e` in Vim mode) |
+| E | Lower pane (Recommended, Chapters, Comments, Up next) full height, and back (`e` in Vim mode) |
 | ⇧E | Player full height (hide the lower pane), and back |
 | Tab / ⇧Tab | Move a focus ring through every clickable thing (tabs, rows, buttons, switches); Enter or Space presses it, Esc clears it |
 | 1 – 4 | Switch tab: Subscriptions, Playlists, History, Settings |
-| 5 – 7 | Switch lower pane tab: Recommended, Chapters, Up next (as shown) |
-| [ / ] | Previous / next tab: through 1–4, then 5–7, wrapping around |
+| 5 – 8 | Switch lower pane tab: Recommended, Chapters, Comments, Up next (as shown) |
+| [ / ] | Previous / next tab: through 1–4, then 5–8, wrapping around |
 | B | Hide or show the left column (`b` in Vim mode) |
 | ⇧B | Hide or show the right column |
 | / | Search |
