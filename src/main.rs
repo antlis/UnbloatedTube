@@ -12,7 +12,7 @@ use gpui::{
     Animation, AnimationExt, Pixels, AnyElement, App, Application, ClipboardItem, Bounds, Context, CursorStyle, ElementId, FocusHandle, Hsla, KeyDownEvent, MouseButton,
     MouseMoveEvent, ObjectFit, SharedString, Stateful, Task,
     Transformation, TitlebarOptions, Window, WindowBounds, WindowOptions, canvas, div, img, prelude::*, px, radians, relative, rgb, size, svg,
-    uniform_list,
+    uniform_list, ScrollStrategy, UniformListScrollHandle, Bounds as GBounds, Pixels as GPixels,
 };
 use player::Player;
 use serde::{Serialize, de::DeserializeOwned};
@@ -35,7 +35,7 @@ const ACCENT: u32 = 0xff4e45;
 const ROW_H: f32 = 64.;
 const SEEK_SEGMENTS: usize = 80;
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum Tab {
     Subscriptions,
     Playlists,
@@ -73,11 +73,13 @@ fn channel_of(v: &Video) -> Option<&str> {
 /// Settings page toggles: label, hint, field.
 type Toggle = (&'static str, &'static str, fn(&mut Settings) -> &mut bool);
 
-const TOGGLES: [Toggle; 5] = [
+const TOGGLES: [Toggle; 7] = [
     ("Subscriptions", "Your subscribed channels", |s| &mut s.subscriptions),
     ("Playlists", "Watch later, Liked and your playlists", |s| &mut s.playlists),
     ("History", "What you watched, here and on YouTube", |s| &mut s.history),
     ("Recommendations", "Your YouTube home feed under the player", |s| &mut s.recommendations),
+    ("Shorts", "Shorts tab on channels, and Shorts in feeds and search", |s| &mut s.shorts),
+    ("Vim mode", "j/k move, Enter opens, h goes back, f shows click hints; ? lists all keys", |s| &mut s.vim),
     ("Window buttons", "Minimize, maximize and close, top right", |s| &mut s.window_buttons),
 ];
 
@@ -139,15 +141,80 @@ impl<T> Load<T> {
 }
 
 /// A tab listing groups (channels or playlists); clicking one shows its videos.
+#[derive(Clone, Copy, PartialEq)]
+enum Lower {
+    Recommended,
+    UpNext,
+}
+
+/// Keyboard shortcuts (also listed in Settings). Keys reach mpv instead while the pointer is
+/// over the video; mpv's own defaults there are similar (Space, arrows, f).
+const SHORTCUTS: [(&str, &str); 12] = [
+    ("Space / K", "Play / pause"),
+    ("← / →", "Back / forward 5 seconds"),
+    ("J / L", "Back / forward 10 seconds"),
+    ("F", "Fullscreen (Esc or f to leave)"),
+    ("M", "Mute"),
+    ("Click / Double-click", "Pause / fullscreen (on the video)"),
+    ("N", "Next (Up next first)"),
+    ("P", "Previous"),
+    ("/", "Search"),
+    ("?", "Show these shortcuts"),
+    ("Esc", "Close the playlist picker, or go back from a channel"),
+    ("Esc", "Close this sheet"),
+];
+
+/// Cheatsheet columns: title and how many SHORTCUTS entries it takes, in order.
+const SHEET_GROUPS: [(&str, usize); 2] = [("Playback", 6), ("Navigation", 6)];
+
+/// Vim mode's keys (case matters: ⇧ means Shift).
+const VIM_SHORTCUTS: [(&str, &str); 18] = [
+    ("Space", "Play / pause"),
+    ("← / →", "Back / forward 5 seconds"),
+    (", / .", "Back / forward 10 seconds"),
+    ("⇧F", "Fullscreen (Esc or f to leave)"),
+    ("m", "Mute"),
+    ("n / p", "Next / previous video"),
+    ("j / k", "Move down / up the list"),
+    ("g g / ⇧G", "First / last item"),
+    ("Ctrl-d / Ctrl-u", "Move 10 down / up"),
+    ("Enter / l", "Open or play"),
+    ("h / Backspace", "Back"),
+    ("⇧H / ⇧L", "Previous / next tab"),
+    ("x", "Add the selected video to Up next"),
+    ("f", "Click hints: type the label to click"),
+    ("/", "Search"),
+    ("?", "Show these shortcuts"),
+    ("Esc", "Cancel / close / back"),
+    ("Click / Double-click", "Pause / fullscreen (on the video)"),
+];
+const VIM_SHEET_GROUPS: [(&str, usize); 2] = [("Playback", 6), ("Navigation", 12)];
+
+/// An entry of the left column's list, for Vim navigation.
+#[derive(Clone)]
+enum Item {
+    Group(Group),
+    /// A video and the list it plays from (for Prev / Next).
+    Video(Video, Arc<[Video]>),
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum ChannelView {
+    Videos,
+    Shorts,
+}
+
 struct Browser {
     groups: Load<Group>,
     open: Option<Group>,
     videos: Load<Video>,
+    /// Videos or Shorts tab of an open channel.
+    view: ChannelView,
 }
 
 impl Browser {
     fn new() -> Self {
-        Self { groups: Load::Idle, open: None, videos: Load::Idle }
+        Self { groups: Load::Idle, open: None, videos: Load::Idle, view: ChannelView::Videos }
     }
 }
 
@@ -171,6 +238,28 @@ struct Unbloated {
     search_focus: FocusHandle,
     save_filter: String,
     save_focus: FocusHandle,
+    /// Focused when no text field is, so keyboard shortcuts work.
+    root_focus: FocusHandle,
+    /// Videos queued with "+", played before the list's next video.
+    up_next: Vec<Video>,
+    /// Which list is shown under the player.
+    lower: Lower,
+    /// Vim mode: selected index in the left column's list, which list it is, and its scroll.
+    vim_cursor: usize,
+    vim_list: String,
+    vim_scroll: UniformListScrollHandle,
+    /// First "g" of "gg" was pressed.
+    vim_g: bool,
+    /// Selection per list, restored when going back to it.
+    vim_positions: HashMap<String, usize>,
+    /// Clickable elements and their click actions, collected every frame (Vim mode) for `f`.
+    hint_targets: Rc<RefCell<Vec<HintTarget>>>,
+    /// Hint mode: the targets when `f` was pressed, and the letters typed so far.
+    hints: Option<(Vec<HintTarget>, String)>,
+    /// Channel waiting for the second click on "Unsubscribe?".
+    confirm_unsub: Option<String>,
+    /// The keyboard shortcuts card (opened with ?).
+    show_keys: bool,
     settings_filter: String,
     settings_focus: FocusHandle,
     /// Focus of the settings text fields, in TEXT_FIELDS order.
@@ -218,6 +307,8 @@ impl Unbloated {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let history = History::load();
         let settings = Settings::load();
+        let root_focus = cx.focus_handle();
+        window.focus(&root_focus);
         let tab = [(settings.subscriptions, Tab::Subscriptions), (settings.playlists, Tab::Playlists), (settings.history, Tab::History)]
             .into_iter()
             .find_map(|(on, tab)| on.then_some(tab))
@@ -252,6 +343,18 @@ impl Unbloated {
             search_focus: cx.focus_handle(),
             save_filter: String::new(),
             save_focus: cx.focus_handle(),
+            root_focus,
+            up_next: store::load_data("up_next").unwrap_or_default(),
+            lower: Lower::Recommended,
+            show_keys: false,
+            confirm_unsub: None,
+            vim_cursor: 0,
+            vim_list: String::new(),
+            vim_scroll: UniformListScrollHandle::new(),
+            vim_g: false,
+            vim_positions: HashMap::new(),
+            hint_targets: Rc::new(RefCell::new(Vec::new())),
+            hints: None,
             settings_filter: String::new(),
             settings_focus: cx.focus_handle(),
             field_focus: [cx.focus_handle(), cx.focus_handle(), cx.focus_handle()],
@@ -284,6 +387,13 @@ impl Unbloated {
         }
         if app.settings.recommendations {
             app.load_recs(cx);
+        }
+        // Cached YouTube history (no network) so watched videos are dimmed from the start;
+        // the History tab refreshes it.
+        if app.settings.history {
+            if let Some(items) = store::load_list("history") {
+                app.yt_history = Load::Ready(items);
+            }
         }
         if app.current.is_none() && app.settings.history {
             // No local history yet: fall back to YouTube's own history for "last watched".
@@ -401,7 +511,7 @@ impl Unbloated {
             Tab::Search => self.run_search(cx),
             Tab::History => self.fetch(cx, "history", |s| &mut s.yt_history, Some("history".into()), |cfg, on| yt::history(cfg, on)),
             tab => match self.browser(tab).open.clone() {
-                Some(g) => self.open_group(tab, g, cx),
+                Some(_) => self.load_group_videos(tab, cx),
                 None if tab == Tab::Subscriptions => {
                     self.fetch(cx, "subs", |s| &mut s.subs.groups, Some("subs".into()), |cfg, on| yt::subscriptions(cfg, on));
                     if self.cfg.has_auth() && !matches!(self.feed, Load::Loading(_)) {
@@ -432,7 +542,8 @@ impl Unbloated {
             }
             Edit::Cancel => window.blur(),
             Edit::Changed => {}
-            Edit::Ignored => return,
+            // Arrows etc. inside the field mustn't reach the shortcuts.
+            Edit::Ignored => cx.stop_propagation(),
         }
         cx.stop_propagation();
         cx.notify();
@@ -478,7 +589,10 @@ impl Unbloated {
             }
             Edit::Cancel => self.close_save(cx),
             Edit::Changed => {}
-            Edit::Ignored => return,
+            Edit::Ignored => {
+                cx.stop_propagation();
+                return;
+            }
         }
         cx.stop_propagation();
         cx.notify();
@@ -489,6 +603,7 @@ impl Unbloated {
         let visible = self.player.alive()
             && !(self.loading && self.hide_while_loading)
             && !self.saving
+            && !self.show_keys
             // Audio only: keep showing the thumbnail.
             && !self.settings.audio_only;
         if let Some(e) = &self.embed {
@@ -521,6 +636,38 @@ impl Unbloated {
         counts
     }
 
+    /// Subscribe to `channel`, or unsubscribe after a confirming second click.
+    fn toggle_channel_sub(&mut self, channel: Group, subscribed: bool, cx: &mut Context<Self>) {
+        if subscribed && self.confirm_unsub.as_deref() != Some(channel.id.as_str()) {
+            self.confirm_unsub = Some(channel.id.clone());
+            cx.notify();
+            return;
+        }
+        self.confirm_unsub = None;
+        let (id, on) = (channel.id.clone(), !subscribed);
+        self.with_account(cx, move |a| a.subscribe(&id, on), move |this, res, _| match res {
+            Ok(()) => {
+                if let Load::Ready(groups) | Load::Loading(groups) = &mut this.subs.groups {
+                    groups.retain(|g| g.id != channel.id);
+                    if on {
+                        groups.push(channel.clone());
+                        groups.sort_by_key(|g| g.title.to_lowercase());
+                    }
+                }
+                store::save_list("subs", this.subs.groups.items());
+                // Keep the player's subscribe button in sync if it's the same channel.
+                if let Some((_, st)) = &mut this.status {
+                    if st.channel_id.as_deref() == Some(channel.id.as_str()) {
+                        st.subscribed = on;
+                    }
+                }
+                this.notice = Some(format!("{} {}", if on { "Subscribed to" } else { "Unsubscribed from" }, channel.title));
+            }
+            Err(e) => this.notice = Some(e),
+        });
+        cx.notify();
+    }
+
     /// Show a channel's videos in the left column (subscribed or not).
     fn show_channel(&mut self, channel: Group, cx: &mut Context<Self>) {
         self.tab = Tab::Subscriptions;
@@ -536,11 +683,28 @@ impl Unbloated {
                 self.seen.save();
             }
         }
-        let url = group.url.clone();
-        // Revisiting a channel or playlist shows its last list instantly, then refreshes.
-        let cache = Some(format!("group-{}", group.id));
+        self.confirm_unsub = None;
         let b = self.browser(tab);
         b.open = Some(group);
+        b.view = ChannelView::Videos;
+        self.load_group_videos(tab, cx);
+    }
+
+    fn set_channel_view(&mut self, view: ChannelView, cx: &mut Context<Self>) {
+        if self.subs.view != view {
+            self.subs.view = view;
+            self.load_group_videos(Tab::Subscriptions, cx);
+        }
+    }
+
+    /// (Re)load the open group's list: a channel's videos or Shorts, or a playlist.
+    fn load_group_videos(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        let b = self.browser(tab);
+        let Some(group) = b.open.clone() else { return };
+        let shorts = b.view == ChannelView::Shorts;
+        let url = if shorts { group.url.replace("/videos", "/shorts") } else { group.url.clone() };
+        // Revisiting a channel or playlist shows its last list instantly, then refreshes.
+        let cache = Some(format!("group-{}{}", group.id, if shorts { "-shorts" } else { "" }));
         b.videos = Load::Idle;
         if tab == Tab::Subscriptions {
             self.fetch(cx, "subs.videos", |s| &mut s.subs.videos, cache, move |cfg, on| yt::group_videos(cfg, &url, on));
@@ -605,6 +769,10 @@ impl Unbloated {
     fn play(&mut self, video: Video, queue: Option<Arc<[Video]>>, cx: &mut Context<Self>) {
         if let Some(queue) = queue {
             self.queue = queue;
+        }
+        if let Some(i) = self.up_next.iter().position(|v| v.id == video.id) {
+            self.up_next.remove(i);
+            store::save_data("up_next", &self.up_next);
         }
         self.history.touch(&video);
         self.history.save();
@@ -816,6 +984,330 @@ impl Unbloated {
         });
     }
 
+    /// What Next / autoplay plays: the Up next queue first, then the list the video came from.
+    fn next_video(&self) -> Option<Video> {
+        self.up_next.first().cloned().or_else(|| self.neighbor(1))
+    }
+
+    fn enqueue(&mut self, video: Video, cx: &mut Context<Self>) {
+        if !self.up_next.iter().any(|v| v.id == video.id) {
+            self.notice = Some(format!("Added to Up next: {}", video.title));
+            self.up_next.push(video);
+            store::save_data("up_next", &self.up_next);
+        }
+        cx.notify();
+    }
+
+    fn dequeue(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.up_next.retain(|v| v.id != id);
+        store::save_data("up_next", &self.up_next);
+        cx.notify();
+    }
+
+    fn toggle_play(&mut self, cx: &mut Context<Self>) {
+        if self.state.is_some() {
+            self.player.toggle_pause();
+        } else if let Some(v) = self.current.clone() {
+            self.play(v, None, cx);
+        }
+    }
+
+    /// Keyboard shortcuts; see SHORTCUTS. Text fields stop the keys they use from reaching here.
+    fn shortcut(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let k = &ev.keystroke;
+        if self.settings.vim && self.vim_key(ev, window, cx) {
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+        if k.modifiers.control || k.modifiers.alt || k.modifiers.platform {
+            return;
+        }
+        let active = self.state.is_some();
+        // "?" is Shift+/ on most layouts: check the typed character before the "/" key.
+        if k.key_char.as_deref() == Some("?") || (self.show_keys && k.key == "escape") {
+            self.show_keys = !self.show_keys;
+            self.sync_embed();
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+        match k.key.as_str() {
+            "space" | "k" => self.toggle_play(cx),
+            "left" if active => self.player.seek_relative(-5.),
+            "right" if active => self.player.seek_relative(5.),
+            "j" if active => self.player.seek_relative(-10.),
+            "l" if active => self.player.seek_relative(10.),
+            "f" if active => self.player.set_fullscreen(true),
+            "m" => self.player.toggle_mute(),
+            "n" => {
+                if let Some(v) = self.next_video() {
+                    self.play(v, None, cx);
+                }
+            }
+            "p" => {
+                if let Some(v) = self.neighbor(-1) {
+                    self.play(v, None, cx);
+                }
+            }
+            "/" => window.focus(&self.search_focus),
+            "escape" if self.saving => self.close_save(cx),
+            "escape" if matches!(self.tab, Tab::Subscriptions | Tab::Playlists) => self.browser(self.tab).open = None,
+            _ => return,
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// Vim mode keys; returns whether the key was used. See VIM_SHORTCUTS.
+    fn vim_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let k = &ev.keystroke;
+        if k.modifiers.alt || k.modifiers.platform {
+            return false;
+        }
+        // The typed character when there is one ("G" for Shift+g), else the key's name.
+        let token = match (&k.key_char, k.modifiers.control) {
+            (_, true) => format!("C-{}", k.key),
+            (Some(c), false) if c != " " => c.clone(),
+            _ => k.key.clone(),
+        };
+        if self.hints.is_some() {
+            self.hint_key(&token, window, cx);
+            return true;
+        }
+        let pending_g = std::mem::take(&mut self.vim_g);
+        let active = self.state.is_some();
+        let len = self.left_items().len();
+        let page = 10;
+        match token.as_str() {
+            "?" => {
+                self.show_keys = !self.show_keys;
+                self.sync_embed();
+            }
+            "escape" if self.show_keys => {
+                self.show_keys = false;
+                self.sync_embed();
+            }
+            "j" | "down" => self.vim_move(1, len, window),
+            "k" | "up" => self.vim_move(-1, len, window),
+            "C-d" => self.vim_move(page, len, window),
+            "C-u" => self.vim_move(-page, len, window),
+            "g" if pending_g => self.vim_move(isize::MIN, len, window),
+            "g" => self.vim_g = true,
+            "G" => self.vim_move(isize::MAX, len, window),
+            "enter" | "l" => self.vim_activate(cx),
+            "h" | "backspace" | "escape" => {
+                if self.saving {
+                    self.close_save(cx);
+                } else if matches!(self.tab, Tab::Subscriptions | Tab::Playlists) {
+                    self.browser(self.tab).open = None;
+                }
+            }
+            "H" => self.vim_tab(-1, cx),
+            "L" => self.vim_tab(1, cx),
+            "f" => {
+                let window_size = window.viewport_size();
+                // Only what's on screen (the list may have laid out rows below the fold).
+                let targets: Vec<_> = self
+                    .hint_targets
+                    .borrow()
+                    .iter()
+                    .filter(|(b, _)| {
+                        let c = b.center();
+                        c.y > px(0.) && c.y < window_size.height && c.x > px(0.) && c.x < window_size.width
+                    })
+                    .cloned()
+                    .collect();
+                if !targets.is_empty() {
+                    self.hints = Some((targets, String::new()));
+                }
+            }
+            "x" => {
+                if let Some(Item::Video(v, _)) = self.left_items().get(self.vim_cursor).cloned() {
+                    self.enqueue(v, cx);
+                }
+            }
+            "space" => self.toggle_play(cx),
+            "left" if active => self.player.seek_relative(-5.),
+            "right" if active => self.player.seek_relative(5.),
+            "," if active => self.player.seek_relative(-10.),
+            "." if active => self.player.seek_relative(10.),
+            "F" if active => self.player.set_fullscreen(true),
+            "m" => self.player.toggle_mute(),
+            "n" => {
+                if let Some(v) = self.next_video() {
+                    self.play(v, None, cx);
+                }
+            }
+            "p" => {
+                if let Some(v) = self.neighbor(-1) {
+                    self.play(v, None, cx);
+                }
+            }
+            "/" => window.focus(&self.search_focus),
+            _ => return false,
+        }
+        true
+    }
+
+    /// A key in hint mode: narrow down by label, click the target once a label is complete.
+    fn hint_key(&mut self, token: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((targets, typed)) = &mut self.hints else { return };
+        match token {
+            "escape" => self.hints = None,
+            "backspace" => {
+                typed.pop();
+            }
+            t if t.len() == 1 && HINT_CHARS.contains(t) => {
+                typed.push_str(t);
+                let labels = hint_label_list(targets.len());
+                let matching: Vec<usize> = (0..targets.len()).filter(|&i| labels[i].starts_with(typed.as_str())).collect();
+                match matching.as_slice() {
+                    [] => self.hints = None,
+                    [i] if labels[*i] == *typed => {
+                        // Run the element's own click handler.
+                        let action = targets[*i].1.clone();
+                        self.hints = None;
+                        action(self, window, cx);
+                    }
+                    _ => {}
+                }
+            }
+            _ => self.hints = None,
+        }
+    }
+
+    /// Where `on_click_hinted` registers click targets this frame.
+    fn hint_reg(&self) -> HintReg {
+        HintReg { targets: self.hint_targets.clone(), on: self.settings.vim }
+    }
+
+    /// Move the selection, scrolling only when it would leave the visible rows.
+    fn vim_move(&mut self, by: isize, len: usize, window: &Window) {
+        if len == 0 {
+            return;
+        }
+        let cursor = (self.vim_cursor as isize).saturating_add(by).clamp(0, len as isize - 1) as usize;
+        self.vim_cursor = cursor;
+        // History shows Continue watching rows above its scrolling list.
+        let (offset, row_h) = match self.tab {
+            Tab::History => (self.history_items().0.len(), ROW_H),
+            Tab::Subscriptions | Tab::Playlists if self.browser_ref(self.tab).open.is_none() => (0, 44.),
+            _ => (0, ROW_H),
+        };
+        let Some(ix) = cursor.checked_sub(offset) else { return };
+        let visible = ((f32::from(window.viewport_size().height) - 160.) / row_h).max(1.) as usize;
+        let top = self.vim_scroll.0.borrow().base_handle.logical_scroll_top().0;
+        if ix < top {
+            self.vim_scroll.scroll_to_item(ix, ScrollStrategy::Top);
+        } else if ix >= top + visible {
+            self.vim_scroll.scroll_to_item(ix, ScrollStrategy::Bottom);
+        }
+    }
+
+    fn vim_activate(&mut self, cx: &mut Context<Self>) {
+        match self.left_items().get(self.vim_cursor).cloned() {
+            Some(Item::Group(g)) => self.open_group(self.tab, g, cx),
+            Some(Item::Video(v, queue)) => self.play(v, Some(queue), cx),
+            None => {}
+        }
+    }
+
+    fn vim_tab(&mut self, step: isize, cx: &mut Context<Self>) {
+        let tabs = self.tab_list();
+        let i = tabs.iter().position(|t| *t == self.tab).unwrap_or(0) as isize;
+        let next = (i + step).rem_euclid(tabs.len() as isize) as usize;
+        self.select_tab(tabs[next], cx);
+    }
+
+    /// Header tabs in order, as shown.
+    fn tab_list(&self) -> Vec<Tab> {
+        let st = &self.settings;
+        let mut tabs: Vec<Tab> = [(st.subscriptions, Tab::Subscriptions), (st.playlists, Tab::Playlists), (st.history, Tab::History)]
+            .into_iter()
+            .filter_map(|(on, t)| on.then_some(t))
+            .collect();
+        if !matches!(self.search, Load::Idle) {
+            tabs.push(Tab::Search);
+        }
+        tabs.push(Tab::Settings);
+        tabs
+    }
+
+    /// Identifies the list in the left column; the Vim selection resets when it changes.
+    fn left_key(&self) -> String {
+        match self.tab {
+            Tab::Subscriptions | Tab::Playlists => {
+                let b = self.browser_ref(self.tab);
+                format!("{:?}-{:?}-{:?}", self.tab, b.open.as_ref().map(|g| &g.id), b.view)
+            }
+            tab => format!("{tab:?}"),
+        }
+    }
+
+    /// The left column's list in display order (same order the views render).
+    fn left_items(&self) -> Vec<Item> {
+        let videos = |list: Vec<Video>| -> Vec<Item> {
+            let list: Arc<[Video]> = self.visible(&list).into();
+            list.iter().map(|v| Item::Video(v.clone(), list.clone())).collect()
+        };
+        match self.tab {
+            Tab::Settings => Vec::new(),
+            Tab::Search => videos(self.search.items().to_vec()),
+            Tab::History => {
+                let (partial, all) = self.history_items();
+                let mut items = videos(partial);
+                items.extend(videos(all));
+                items
+            }
+            tab => match &self.browser_ref(tab).open {
+                Some(_) => videos(self.browser_ref(tab).videos.items().to_vec()),
+                None => self.group_items(tab, &self.unseen_counts()).into_iter().map(Item::Group).collect(),
+            },
+        }
+    }
+
+    /// Videos as lists show them (Shorts hidden when turned off).
+    fn visible(&self, videos: &[Video]) -> Vec<Video> {
+        videos.iter().filter(|v| self.settings.shorts || !v.short).cloned().collect()
+    }
+
+    /// History tab: Continue watching (started, not finished), then local + YouTube history.
+    fn history_items(&self) -> (Vec<Video>, Vec<Video>) {
+        let mut all: Vec<Video> = self.history.items.iter().map(|w| w.video.clone()).collect();
+        let seen: HashSet<String> = all.iter().map(|v| v.id.clone()).collect();
+        all.extend(self.yt_history.items().iter().filter(|v| !seen.contains(&v.id)).cloned());
+        let partial = self
+            .history
+            .items
+            .iter()
+            .filter(|w| w.position > 30. && !w.finished)
+            .take(4)
+            .map(|w| w.video.clone())
+            .collect();
+        (partial, all)
+    }
+
+    /// A browser tab's groups in display order. Subscriptions: New uploads first, then channels
+    /// with new videos, then the rest (each part A–Z).
+    fn group_items(&self, tab: Tab, counts: &HashMap<String, usize>) -> Vec<Group> {
+        let mut g: Vec<Group> = self.browser_ref(tab).groups.items().to_vec();
+        if tab == Tab::Subscriptions {
+            g.sort_by_key(|g| !counts.contains_key(&g.id));
+            g.insert(0, Group { id: FEED_ID.into(), title: "New uploads".into(), url: ":ytsubs".into(), thumb: None });
+        }
+        g
+    }
+
+    fn shortcuts(&self) -> &'static [(&'static str, &'static str)] {
+        if self.settings.vim { &VIM_SHORTCUTS } else { &SHORTCUTS }
+    }
+
+    /// Whether row `i` of the left list is the Vim selection.
+    fn vim_selected(&self, i: usize) -> bool {
+        self.settings.vim && self.vim_cursor == i
+    }
+
     /// The video `step` places away from the current one in the queue.
     fn neighbor(&self, step: isize) -> Option<Video> {
         let current = self.current.as_ref()?;
@@ -838,11 +1330,20 @@ impl Unbloated {
             self.loading = false;
         }
         // Until mpv plays the new video, its state still describes the previous one.
+        if state.is_some() {
+            self.player.bind_mouse();
+        }
+        if state.as_ref().is_some_and(|s| s.help) {
+            self.player.clear_help();
+            self.show_keys = !self.show_keys;
+            cx.notify();
+        }
         let state = state.filter(|s| !s.idle && !self.loading);
         if let (Some(s), Some(v)) = (&state, &self.current) {
-            // Finished videos restart from the beginning next time.
-            let pos = if s.duration > 0. && s.position > s.duration - 15. { 0. } else { s.position };
-            self.history.set_position(&v.id, pos);
+            // Finished videos restart from the beginning next time, and show as watched.
+            let finished = s.duration > 0. && s.position > s.duration - 15.;
+            let pos = if finished { 0. } else { s.position };
+            self.history.set_position(&v.id, pos, finished || (self.history.is_finished(&v.id) && pos < 30.));
             if self.ticks % 20 == 0 {
                 self.history.save();
             }
@@ -850,7 +1351,7 @@ impl Unbloated {
         if let (true, Some(s), Some(v)) = (self.settings.autoplay, &state, &self.current) {
             if s.ended && self.ended.as_ref() != Some(&v.id) {
                 self.ended = Some(v.id.clone());
-                if let Some(next) = self.neighbor(1) {
+                if let Some(next) = self.next_video() {
                     self.play(next, None, cx);
                     return;
                 }
@@ -926,17 +1427,48 @@ impl Unbloated {
     fn thumb_el(&mut self, key: &str, url: Option<String>, w: f32, h: f32, radius: Pixels, cx: &mut Context<Self>) -> AnyElement {
         let frame = div().w(px(w)).h(px(h)).flex_none().overflow_hidden().rounded(radius).bg(rgb(HOVER));
         match self.thumb(key, url, cx) {
-            Thumb::Ready(path) => frame.child(img(path).size_full().object_fit(ObjectFit::Cover)).into_any_element(),
+            // Round the image itself: the frame's overflow clip is rectangular, so a rounded
+            // frame alone would leave square corners (e.g. on round avatars).
+            Thumb::Ready(path) => frame.child(img(path).size_full().rounded(radius).object_fit(ObjectFit::Cover)).into_any_element(),
             Thumb::Pending => pulse(SharedString::from(format!("thumb-{key}")), frame),
             Thumb::Missing => frame.into_any_element(),
         }
     }
 
-    fn video_row(&mut self, id: impl Into<ElementId>, video: Video, queue: Arc<[Video]>, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
+    /// `watched`: dim the row. `in_up_next`: the row is in the Up next list (✕ instead of +).
+    fn video_row(
+        &mut self,
+        id: impl Into<ElementId>,
+        video: Video,
+        queue: Arc<[Video]>,
+        watched: bool,
+        in_up_next: bool,
+        selected: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<gpui::Div> {
         let playing = self.current.as_ref().is_some_and(|c| c.id == video.id);
         let progress = match (self.history.position(&video.id), video.duration) {
+            _ if self.history.is_finished(&video.id) => Some(1.),
             (p, Some(d)) if p > 0. && d > 0. => Some((p / d).min(1.) as f32),
             _ => None,
+        };
+        let action = {
+            let v = video.clone();
+            let (icon, tooltip) = if in_up_next { ("close", "Remove from Up next") } else { ("add", "Add to Up next") };
+            div()
+                .id("row-action")
+                .flex_none()
+                .p(px(6.))
+                .rounded_md()
+                .invisible()
+                .group_hover("video-row", |s| s.visible())
+                .hover(|d| d.bg(rgb(BORDER)))
+                .child(svg().path(icons::path(icon)).size(px(14.)).text_color(rgb(TEXT)))
+                .tooltip(tip(tooltip))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    if in_up_next { this.dequeue(&v.id, cx) } else { this.enqueue(v.clone(), cx) }
+                }))
         };
         let meta = [video.channel.clone(), video.duration.map(fmt_duration)]
             .into_iter()
@@ -954,8 +1486,12 @@ impl Unbloated {
             .items_center()
             .gap_3()
             .cursor_pointer()
+            .group("video-row")
             .when(playing, |d| d.bg(rgb(HOVER)))
-            .hover(|d| d.bg(rgb(HOVER)))
+            .when(selected, |d| d.bg(rgb(BORDER)))
+            // Watched videos are dimmed, back to full on hover.
+            .when(watched && !playing && !selected, |d| d.opacity(0.45))
+            .hover(|d| d.bg(rgb(HOVER)).opacity(1.))
             .child(
                 div().relative().child(thumb).when_some(progress, |d, p| {
                     d.child(div().absolute().bottom_0().left_0().h(px(3.)).w(px(96. * p)).bg(rgb(ACCENT)))
@@ -971,18 +1507,41 @@ impl Unbloated {
                     .child(div().text_sm().text_color(rgb(TEXT)).truncate().child(video.title.clone()))
                     .child(div().text_xs().text_color(rgb(MUTED)).truncate().child(meta)),
             )
-            .on_click(cx.listener(move |this, _, _, cx| this.play(video.clone(), Some(queue.clone()), cx)))
+            .child(action)
+            .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.play(video.clone(), Some(queue.clone()), cx))
     }
 
-    fn video_list(&self, list_id: &'static str, videos: &[Video], cx: &mut Context<Self>) -> AnyElement {
-        let videos: Arc<[Video]> = videos.into();
+    /// `left`: this is the left column's list, whose rows start at that index for Vim selection.
+    fn video_list(&self, list_id: &'static str, videos: &[Video], left: Option<usize>, cx: &mut Context<Self>) -> AnyElement {
+        // With Shorts turned off, they're hidden from every list.
+        let videos: Arc<[Video]> = self.visible(videos).into();
+        let in_up_next = list_id == "up-next";
+        // Watched: finished here, or in your YouTube history. Not dimmed in History itself.
+        let watched: Arc<HashSet<String>> = Arc::new(if list_id == "history" {
+            HashSet::new()
+        } else {
+            self.history
+                .items
+                .iter()
+                .filter(|w| w.finished)
+                .map(|w| w.video.id.clone())
+                .chain(self.yt_history.items().iter().map(|v| v.id.clone()))
+                .collect()
+        });
         uniform_list(
             list_id,
             videos.len(),
             cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
-                range.map(|i| this.video_row(i, videos[i].clone(), videos.clone(), cx)).collect()
+                range
+                    .map(|i| {
+                        let seen = watched.contains(&videos[i].id);
+                        let selected = left.is_some_and(|o| this.vim_selected(o + i));
+                        this.video_row(i, videos[i].clone(), videos.clone(), seen, in_up_next, selected, cx)
+                    })
+                    .collect()
             }),
         )
+        .when(left.is_some(), |l| l.track_scroll(self.vim_scroll.clone()))
         .flex_1()
         .into_any_element()
     }
@@ -1021,21 +1580,42 @@ impl Unbloated {
             Tab::Search => {
                 return match self.placeholder(&self.search, "No results.", Rows::Videos) {
                     Some(p) => p,
-                    None => self.video_list("search", &self.search.items().to_vec(), cx),
+                    None => self.video_list("search", &self.search.items().to_vec(), Some(0), cx),
                 };
             }
             tab => return self.render_browser(tab, cx),
         }
         // Videos played in unbloated-youtube first, then the rest of YouTube's history.
-        let mut videos: Vec<Video> = self.history.items.iter().map(|w| w.video.clone()).collect();
+        let (partial, videos) = self.history_items();
         if videos.is_empty() {
             if let Some(p) = self.placeholder(&self.yt_history, "Nothing here.", Rows::Videos) {
                 return p;
             }
         }
-        let seen: HashSet<String> = videos.iter().map(|v| v.id.clone()).collect();
-        videos.extend(self.yt_history.items().iter().filter(|v| !seen.contains(&v.id)).cloned());
-        self.video_list("history", &videos, cx)
+        if partial.is_empty() {
+            return self.video_list("history", &videos, Some(0), cx);
+        }
+        let label = |text: &'static str| div().px_3().pt_3().pb_1().text_xs().text_color(rgb(MUTED)).child(text);
+        let queue: Arc<[Video]> = partial.clone().into();
+        let offset = partial.len();
+        let rows: Vec<_> = partial
+            .into_iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let selected = self.vim_selected(i);
+                self.video_row(("continue", i), v, queue.clone(), false, false, selected, cx)
+            })
+            .collect();
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .child(label("CONTINUE WATCHING"))
+            .children(rows)
+            .child(label("HISTORY"))
+            .child(div().flex().flex_col().flex_1().min_h_0().child(self.video_list("history", &videos, Some(offset), cx)))
+            .into_any_element()
     }
 
     fn toggle(&mut self, field: fn(&mut Settings) -> &mut bool, cx: &mut Context<Self>) {
@@ -1084,7 +1664,7 @@ impl Unbloated {
                     .cursor_pointer()
                     .hover(|d| d.opacity(0.85))
                     .child(label)
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                    .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
                         let list = &mut this.settings.skip_segments;
                         match list.iter().position(|s| s == name) {
                             Some(i) => {
@@ -1094,7 +1674,7 @@ impl Unbloated {
                         }
                         this.settings.save();
                         this.apply_player_settings(cx);
-                    }))
+                    })
             })))
     }
 
@@ -1125,11 +1705,11 @@ impl Unbloated {
                     .cursor_pointer()
                     .hover(|d| d.opacity(0.85))
                     .child(text)
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                    .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
                         set(&mut this.settings, i);
                         this.settings.save();
                         this.apply_player_settings(cx);
-                    }))
+                    })
             }))
     }
 
@@ -1162,10 +1742,10 @@ impl Unbloated {
                         (true, false) => d.text_color(rgb(MUTED)).child(hint),
                         _ => d.text_color(rgb(TEXT)).child(format!("{value}{}", if focused { "▏" } else { "" })),
                     })
-                    .on_click(cx.listener(move |_, _, window, cx| {
+                    .on_click_hinted(&self.hint_reg(), cx, move |_, _, window, cx| {
                         window.focus(&focus);
                         cx.notify();
-                    }))
+                    })
                     .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, window, cx| {
                         match edit_text(field(&mut this.settings), ev, cx) {
                             Edit::Submit | Edit::Cancel => {
@@ -1174,7 +1754,10 @@ impl Unbloated {
                                 this.apply_player_settings(cx);
                             }
                             Edit::Changed => this.settings.save(),
-                            Edit::Ignored => return,
+                            Edit::Ignored => {
+                cx.stop_propagation();
+                return;
+            }
                         }
                         cx.stop_propagation();
                         cx.notify();
@@ -1219,7 +1802,7 @@ impl Unbloated {
                         .child(div().text_xs().text_color(rgb(MUTED)).child(hint)),
                 )
                 .child(switch.flex_none().ml_3())
-                .on_click(cx.listener(move |this, _, _, cx| this.toggle(field, cx)))
+                .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.toggle(field, cx))
                 .into_any_element()
         };
         // Each section: header and its matching rows (hidden when none match).
@@ -1267,7 +1850,10 @@ impl Unbloated {
             }
         }
         let show_account = matches("Account", "login logged in cookies");
-        let nothing = sections.iter().all(|(_, rows)| rows.is_empty()) && !show_account;
+        let nothing = sections.iter().all(|(_, rows)| rows.is_empty())
+            && !show_account
+            && !self.shortcuts().iter().any(|(k, what)| matches(k, what))
+            && !matches("Keyboard shortcuts", "keys");
         let focused = self.settings_focus.is_focused(window);
         let search = div()
             .id("settings-search")
@@ -1286,10 +1872,10 @@ impl Unbloated {
                 (true, false) => d.text_color(rgb(MUTED)).child("Search settings"),
                 _ => d.text_color(rgb(TEXT)).child(format!("{}{}", self.settings_filter, if focused { "▏" } else { "" })),
             })
-            .on_click(cx.listener(|this, _, window, cx| {
+            .on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| {
                 window.focus(&this.settings_focus);
                 cx.notify();
-            }))
+            })
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 match edit_text(&mut this.settings_filter, ev, cx) {
                     Edit::Submit => window.blur(),
@@ -1298,7 +1884,10 @@ impl Unbloated {
                         window.blur();
                     }
                     Edit::Changed => {}
-                    Edit::Ignored => return,
+                    Edit::Ignored => {
+                cx.stop_propagation();
+                return;
+            }
                 }
                 cx.stop_propagation();
                 cx.notify();
@@ -1339,6 +1928,19 @@ impl Unbloated {
                     "SponsorBlock script not found: start the app from its nix-shell (sets UNBLOATED_SPONSORBLOCK).",
                 ))
             })
+            .when(self.shortcuts().iter().any(|(k, what)| matches(k, what)) || matches("Keyboard shortcuts", "keys"), |d| {
+                d.child(div().px_4().pt_4().pb_2().text_xs().text_color(rgb(MUTED)).child("KEYBOARD SHORTCUTS")).children(
+                    self.shortcuts().iter().filter(|(k, what)| matches(k, what) || matches("Keyboard shortcuts", "keys")).map(|(k, what)| {
+                        div()
+                            .px_4()
+                            .py_1()
+                            .flex()
+                            .text_sm()
+                            .child(div().w(px(190.)).flex_none().text_color(rgb(TEXT)).child(*k))
+                            .child(div().text_color(rgb(MUTED)).child(*what))
+                    }),
+                )
+            })
             .when(show_account, |d| {
                 d.child(div().px_4().pt_4().pb_2().text_xs().text_color(rgb(MUTED)).child("ACCOUNT"))
                     .child(div().px_4().text_sm().text_color(rgb(TEXT)).child(login))
@@ -1363,10 +1965,43 @@ impl Unbloated {
             // A channel opened from a video's channel link may not be a subscription.
             let subscribed = open.id == FEED_ID || self.subs.groups.items().iter().any(|g| g.id == open.id);
             let back = if tab == Tab::Subscriptions && !subscribed { "← Back" } else { back };
+            // Subscribe / unsubscribe for a real channel (UC… id), when logged in.
+            let sub_button = (tab == Tab::Subscriptions && open.id.starts_with("UC") && self.cfg.has_auth()).then(|| {
+                let confirming = self.confirm_unsub.as_deref() == Some(open.id.as_str());
+                let (label, bg, fg) = match (subscribed, confirming) {
+                    (true, true) => ("Unsubscribe?", ACCENT, TEXT),
+                    (true, false) => ("Subscribed", HOVER, MUTED),
+                    (false, _) => ("Subscribe", ACCENT, TEXT),
+                };
+                let g = open.clone();
+                div()
+                    .id("channel-sub")
+                    .ml_auto()
+                    .flex_none()
+                    .px_3()
+                    .py_1()
+                    .rounded_full()
+                    .bg(rgb(bg))
+                    .text_xs()
+                    .text_color(rgb(fg))
+                    .cursor_pointer()
+                    .hover(|d| d.opacity(0.85))
+                    .child(label)
+                    .when(subscribed && !confirming, |d| d.tooltip(tip("Click twice to unsubscribe")))
+                    .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
+                        // The header row itself means "back"; don't trigger it.
+                        cx.stop_propagation();
+                        this.toggle_channel_sub(g.clone(), subscribed, cx);
+                    })
+            });
+            let view = self.browser_ref(tab).view;
+            // Channels (not the New uploads feed or playlists) get Videos | Shorts tabs.
+            let channel_tabs = tab == Tab::Subscriptions && open.id != FEED_ID && self.settings.shorts;
             let videos = &self.browser_ref(tab).videos;
-            let body = match self.placeholder(videos, "No videos.", Rows::Videos) {
+            let empty = if view == ChannelView::Shorts { "No Shorts." } else { "No videos." };
+            let body = match self.placeholder(videos, empty, Rows::Videos) {
                 Some(p) => p,
-                None => self.video_list("group", &videos.items().to_vec(), cx),
+                None => self.video_list("group", &videos.items().to_vec(), Some(0), cx),
             };
             return div()
                 .flex()
@@ -1385,12 +2020,31 @@ impl Unbloated {
                         .border_color(rgb(BORDER))
                         .hover(|d| d.bg(rgb(HOVER)))
                         .child(div().mr_3().text_color(rgb(MUTED)).child(back))
-                        .child(div().text_color(rgb(TEXT)).truncate().child(open.title))
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                        .items_center()
+                        .child(div().text_color(rgb(TEXT)).truncate().child(open.title.clone()))
+                        .children(sub_button)
+                        .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
                             this.browser(tab).open = None;
                             cx.notify();
-                        })),
+                        }),
                 )
+                .when(channel_tabs, |d| {
+                    d.child(
+                        div()
+                            .flex()
+                            .px_2()
+                            .border_b_1()
+                            .border_color(rgb(BORDER))
+                            .child(
+                                tab_button("Videos", view == ChannelView::Videos)
+                                    .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.set_channel_view(ChannelView::Videos, cx)),
+                            )
+                            .child(
+                                tab_button("Shorts", view == ChannelView::Shorts)
+                                    .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.set_channel_view(ChannelView::Shorts, cx)),
+                            ),
+                    )
+                })
                 .child(body)
                 .into_any_element();
         }
@@ -1399,16 +2053,7 @@ impl Unbloated {
             return p;
         }
         let counts = Arc::new(if tab == Tab::Subscriptions { self.unseen_counts() } else { HashMap::new() });
-        let mut g: Vec<Group> = groups.items().to_vec();
-        if tab == Tab::Subscriptions {
-            // Channels with new videos first (stable, so each part stays A–Z).
-            g.sort_by_key(|g| !counts.contains_key(&g.id));
-            g.insert(
-                0,
-                Group { id: FEED_ID.into(), title: "New uploads".into(), url: ":ytsubs".into(), thumb: None },
-            );
-        }
-        let g: Arc<[Group]> = g.into();
+        let g: Arc<[Group]> = self.group_items(tab, &counts).into();
         uniform_list(
             list_id,
             g.len(),
@@ -1431,8 +2076,10 @@ impl Unbloated {
                             this.thumb_el(&group.id, group.thumb.clone(), 28., 28., px(14.), cx)
                         };
                         let new = counts.get(&group.id).copied().unwrap_or(0);
+                        let selected = this.vim_selected(i);
                         div()
                             .id(i)
+                            .when(selected, |d| d.bg(rgb(BORDER)))
                             .w_full()
                             .h(px(44.))
                             .px_3()
@@ -1462,11 +2109,12 @@ impl Unbloated {
                                 )
                                 .tooltip(tip(format!("{new} new video{}", if new == 1 { "" } else { "s" })))
                             })
-                            .on_click(cx.listener(move |this, _, _, cx| this.open_group(tab, group.clone(), cx)))
+                            .on_click_hinted(&this.hint_reg(), cx, move |this, _, _, cx| this.open_group(tab, group.clone(), cx))
                     })
                     .collect()
             }),
         )
+        .track_scroll(self.vim_scroll.clone())
         .flex_1()
         .into_any_element()
     }
@@ -1517,10 +2165,11 @@ impl Unbloated {
             None => (resume, video.duration.unwrap_or(0.), true, false),
         };
         let filled = if dur > 0. { ((pos / dur) * SEEK_SEGMENTS as f64) as usize } else { 0 };
+        let chapters = self.state.as_ref().map(|s| s.chapters.clone()).unwrap_or_default();
 
         let (play_icon, play_tip) = match (active, paused) {
-            (true, true) => ("play", "Play".to_string()),
-            (true, false) => ("pause", "Pause".to_string()),
+            (true, true) => ("play", "Play (Space)".to_string()),
+            (true, false) => ("pause", "Pause (Space)".to_string()),
             (false, _) if resume > 0. => ("play", format!("Resume at {}", fmt_duration(resume))),
             (false, _) => ("play", "Play".to_string()),
         };
@@ -1544,7 +2193,15 @@ impl Unbloated {
                 match channel_group(&video) {
                     // Styled as a chip (avatar, name, chevron) so it reads as clickable.
                     Some(g) => {
-                        let thumb = self.subs.groups.items().iter().find(|s| s.id == g.id).and_then(|s| s.thumb.clone());
+                        // Avatar from your subscriptions, else from YouTube's info on this video.
+                        let thumb = self
+                            .subs
+                            .groups
+                            .items()
+                            .iter()
+                            .find(|s| s.id == g.id)
+                            .and_then(|s| s.thumb.clone())
+                            .or_else(|| self.current_status().and_then(|st| st.avatar.clone()));
                         let avatar = self.thumb_el(&g.id, thumb, 20., 20., px(10.), cx);
                         div().flex().child(
                             div()
@@ -1565,7 +2222,7 @@ impl Unbloated {
                                 .child(name)
                                 .child(div().text_color(rgb(MUTED)).child("›"))
                                 .tooltip(tip("Show this channel's videos"))
-                                .on_click(cx.listener(move |this, _, _, cx| this.show_channel(g.clone(), cx))),
+                                .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.show_channel(g.clone(), cx)),
                         )
                     }
                     None => div().text_xs().text_color(rgb(MUTED)).child(name),
@@ -1579,13 +2236,25 @@ impl Unbloated {
                     .h(px(10.))
                     .items_center()
                     .children((0..SEEK_SEGMENTS).map(|i| {
+                        let step = dur / SEEK_SEGMENTS as f64;
+                        let at = step * i as f64;
+                        // Hover shows the time there and the chapter it falls in; chapter starts
+                        // get a small gap so the bar shows where chapters begin.
+                        let chapter = chapters.iter().rev().find(|(t, _)| *t <= at).map(|(_, title)| title.clone());
+                        let starts_chapter = i > 0 && chapters.iter().any(|(t, _)| *t > 0. && *t >= at && *t < at + step);
+                        let tooltip = match chapter.filter(|c| !c.is_empty()) {
+                            Some(c) => format!("{} · {c}", fmt_duration(at)),
+                            None => fmt_duration(at),
+                        };
                         div()
                             .id(("seek", i))
                             .flex_1()
                             .h_full()
                             .py(px(3.))
+                            .when(starts_chapter, |d| d.ml(px(3.)))
                             .cursor_pointer()
                             .child(div().size_full().bg(if i < filled { rgb(ACCENT) } else { rgb(BORDER) }))
+                            .when(dur > 0., |d| d.tooltip(tip(tooltip)))
                             .when(active, |d| {
                                 d.on_click(cx.listener(move |this, _, _, _| {
                                     this.player.seek_absolute(dur * i as f64 / SEEK_SEGMENTS as f64)
@@ -1598,26 +2267,26 @@ impl Unbloated {
                 div()
                     .flex()
                     .items_center()
-                    .child(icon_button("play", play_icon, play_tip, true).on_click(cx.listener(move |this, _, _, cx| {
+                    .child(icon_button("play", play_icon, play_tip, true).on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
                         if this.state.is_some() {
                             this.player.toggle_pause();
                         } else {
                             this.play(replay.clone(), None, cx);
                         }
-                    })))
-                    .child(self.step_button("prev", "prev", "Previous", -1, cx))
-                    .child(self.step_button("next", "next", "Next", 1, cx))
+                    }))
+                    .child(self.step_button("prev", "prev", "Previous (P)", -1, cx))
+                    .child(self.step_button("next", "next", "Next (N)", 1, cx))
                     .child(
-                        icon_button("back10", "back", "Back 10 seconds", active)
-                            .on_click(cx.listener(|this, _, _, _| this.player.seek_relative(-10.))),
+                        icon_button("back10", "back", "Back 10 seconds (J)", active)
+                            .on_click_hinted(&self.hint_reg(), cx, |this, _, _, _| this.player.seek_relative(-10.)),
                     )
                     .child(
-                        icon_button("fwd10", "forward", "Forward 10 seconds", active)
-                            .on_click(cx.listener(|this, _, _, _| this.player.seek_relative(10.))),
+                        icon_button("fwd10", "forward", "Forward 10 seconds (L)", active)
+                            .on_click_hinted(&self.hint_reg(), cx, |this, _, _, _| this.player.seek_relative(10.)),
                     )
                     .child(
-                        icon_button("full", "fullscreen", "Fullscreen (f, Esc to leave)", active)
-                            .on_click(cx.listener(|this, _, _, _| this.player.set_fullscreen(true))),
+                        icon_button("full", "fullscreen", "Fullscreen (F, Esc to leave)", active)
+                            .on_click_hinted(&self.hint_reg(), cx, |this, _, _, _| this.player.set_fullscreen(true)),
                     )
                     .child(
                         div()
@@ -1635,13 +2304,13 @@ impl Unbloated {
                             .hover(|d| d.bg(rgb(BORDER)))
                             .child(format!("{}×", self.settings.speed))
                             .tooltip(tip("Playback speed (click to change)"))
-                            .on_click(cx.listener(|this, _, _, cx| {
+                            .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
                                 let i = SPEEDS.iter().position(|s| *s == this.settings.speed).map_or(1, |i| (i + 1) % SPEEDS.len());
                                 this.settings.speed = SPEEDS[i];
                                 this.settings.save();
                                 this.player.set_speed(this.settings.speed);
                                 cx.notify();
-                            })),
+                            }),
                     )
                     .when(self.account_buttons() || self.settings.share_button || self.settings.download_button, |d| {
                         d.child(div().w(px(8.)))
@@ -1656,16 +2325,16 @@ impl Unbloated {
                         let v = video.clone();
                         d.child(
                             icon_button("download", "download", tip_text, enabled)
-                                .when(enabled, |d| d.on_click(cx.listener(move |this, _, _, cx| this.download(v.clone(), cx)))),
+                                .when(enabled, |d| d.on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.download(v.clone(), cx))),
                         )
                     })
                     .when(self.settings.share_button, |d| {
                         let link = format!("https://youtu.be/{}", video.id);
-                        d.child(icon_button("share", "share", "Copy link", true).on_click(cx.listener(move |this, _, _, cx| {
+                        d.child(icon_button("share", "share", "Copy link", true).on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(link.clone()));
                             this.notice = Some(format!("Link copied: {link}"));
                             cx.notify();
-                        })))
+                        }))
                     })
                     .child(div().ml_auto().pl_2().flex_none().text_xs().text_color(rgb(MUTED)).child(time)),
             )
@@ -1688,28 +2357,28 @@ impl Unbloated {
             out.push(
                 icon_button("subscribe", icon, tip, ready)
                     .when(ready && !s.subscribed, |d| d.bg(rgb(ACCENT)))
-                    .when(ready, |d| d.on_click(cx.listener(|this, _, _, cx| this.toggle_subscribe(cx)))),
+                    .when(ready, |d| d.on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.toggle_subscribe(cx))),
             );
         }
         if set.save_button {
             out.push(icon_button("save", "save", "Save to playlist", ready).when(ready, |d| {
-                d.on_click(cx.listener(|this, _, window, cx| {
+                d.on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| {
                     if this.saving { this.close_save(cx) } else { this.open_save(window, cx) }
-                }))
+                })
             }));
         }
         if set.like_button {
             let (icon, tip) = if s.liked { ("liked", "Remove like") } else { ("like", "Like") };
             out.push(
                 icon_button("like", icon, tip, ready)
-                    .when(ready, |d| d.on_click(cx.listener(|this, _, _, cx| this.toggle_like(cx)))),
+                    .when(ready, |d| d.on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.toggle_like(cx))),
             );
         }
         if set.dislike_button {
             let (icon, tip) = if s.disliked { ("disliked", "Remove dislike") } else { ("dislike", "Dislike") };
             out.push(
                 icon_button("dislike", icon, tip, ready)
-                    .when(ready, |d| d.on_click(cx.listener(|this, _, _, cx| this.toggle_dislike(cx)))),
+                    .when(ready, |d| d.on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.toggle_dislike(cx))),
             );
         }
         out
@@ -1750,7 +2419,7 @@ impl Unbloated {
                                 .hover(|d| d.bg(rgb(HOVER)))
                                 .child(cover)
                                 .child(div().truncate().child(g.title.clone()))
-                                .on_click(cx.listener(move |this, _, _, cx| this.save_to(g.clone(), cx)))
+                                .on_click_hinted(&this.hint_reg(), cx, move |this, _, _, cx| this.save_to(g.clone(), cx))
                         })
                         .collect()
                 }),
@@ -1787,7 +2456,7 @@ impl Unbloated {
                             .child(div().text_color(rgb(TEXT)).child("Save to playlist"))
                             .child(div().text_xs().text_color(rgb(MUTED)).truncate().child(title)),
                     )
-                    .child(icon_button("save-close", "close", "Close (Esc)", true).mr_0().on_click(cx.listener(|this, _, _, cx| this.close_save(cx)))),
+                    .child(icon_button("save-close", "close", "Close (Esc)", true).mr_0().on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.close_save(cx))),
             )
             .child(
                 div()
@@ -1809,6 +2478,96 @@ impl Unbloated {
             .child(div().flex().flex_col().flex_1().min_h_0().child(body))
     }
 
+    /// Full-window keyboard cheatsheet (?): keys as keycaps, grouped in columns.
+    fn render_cheatsheet(&self, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
+        let keycap = |k: &str| {
+            div()
+                .min_w(px(28.))
+                .px_2()
+                .py(px(3.))
+                .flex()
+                .justify_center()
+                .rounded_md()
+                .bg(rgb(HOVER))
+                .border_1()
+                .border_b_2()
+                .border_color(rgb(BORDER))
+                .text_sm()
+                .text_color(rgb(TEXT))
+                .child(k.to_string())
+        };
+        let (mut rest, groups) = if self.settings.vim { (&VIM_SHORTCUTS[..], &VIM_SHEET_GROUPS[..]) } else { (&SHORTCUTS[..], &SHEET_GROUPS[..]) };
+        let columns = groups.iter().map(|&(title, n)| {
+            let (items, tail) = rest.split_at(n);
+            rest = tail;
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(div().pb_1().text_xs().text_color(rgb(ACCENT)).child(title.to_uppercase()))
+                .children(items.iter().map(|(keys, what)| {
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_4()
+                        .child(
+                            div()
+                                .w(px(170.))
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .children(keys.split(" / ").map(keycap)),
+                        )
+                        // min_w_0 so long descriptions wrap inside the card.
+                        .child(div().flex_1().min_w_0().text_sm().text_color(rgb(MUTED)).child(*what))
+                }))
+        });
+        div()
+            .id("cheatsheet")
+            .occlude()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgb(BG))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.show_keys = false;
+                this.sync_embed();
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .w(px(980.))
+                    .max_w(relative(0.92))
+                    .p_8()
+                    .rounded_xl()
+                    .bg(rgb(PANEL))
+                    .border_1()
+                    .border_color(rgb(BORDER))
+                    .flex()
+                    .flex_col()
+                    .gap_6()
+                    .child(
+                        div()
+                            .flex()
+                            .items_end()
+                            .child(div().flex_1().text_2xl().text_color(rgb(TEXT)).child(if self.settings.vim {
+                                "Keyboard shortcuts · Vim mode"
+                            } else {
+                                "Keyboard shortcuts"
+                            }))
+                            .child(div().text_xs().text_color(rgb(MUTED)).child("? or Esc to close")),
+                    )
+                    .child(div().flex().gap_10().children(columns)),
+            )
+    }
+
     /// Prev / Next: play the neighbouring video of the queue; greyed out at its ends.
     fn step_button(
         &self,
@@ -1818,13 +2577,13 @@ impl Unbloated {
         step: isize,
         cx: &mut Context<Self>,
     ) -> Stateful<gpui::Div> {
-        let target = self.neighbor(step);
+        let target = if step > 0 { self.next_video() } else { self.neighbor(step) };
         let tip = match &target {
             Some(v) => format!("{tip}: {}", v.title),
             None => tip.to_string(),
         };
         icon_button(id, icon, tip, target.is_some()).when_some(target, |d, video| {
-            d.on_click(cx.listener(move |this, _, _, cx| this.play(video.clone(), None, cx)))
+            d.on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.play(video.clone(), None, cx))
         })
     }
 
@@ -1834,7 +2593,7 @@ impl Unbloated {
         }
         let current = self.current.as_ref().map(|c| c.id.clone());
         let v: Vec<Video> = self.recs.items().iter().filter(|r| Some(&r.id) != current.as_ref()).cloned().collect();
-        self.video_list("recs", &v, cx)
+        self.video_list("recs", &v, None, cx)
     }
 }
 
@@ -1867,6 +2626,80 @@ enum Thumb {
 enum Rows {
     Videos,
     Groups,
+}
+
+/// A click target for `f` hints: where it is on screen and what clicking it does.
+type HintTarget = (GBounds<GPixels>, Rc<dyn Fn(&mut Unbloated, &mut Window, &mut Context<Unbloated>)>);
+
+#[derive(Clone)]
+struct HintReg {
+    targets: Rc<RefCell<Vec<HintTarget>>>,
+    /// Vim mode is on (otherwise nothing is registered).
+    on: bool,
+}
+
+/// `on_click` that also registers the element for `f` hints, which run the same handler.
+trait OnClickHinted: StatefulInteractiveElement + ParentElement + Styled + Sized {
+    fn on_click_hinted(
+        self,
+        h: &HintReg,
+        cx: &mut Context<Unbloated>,
+        f: impl Fn(&mut Unbloated, &gpui::ClickEvent, &mut Window, &mut Context<Unbloated>) + 'static,
+    ) -> Self {
+        let f = Rc::new(f);
+        let click = f.clone();
+        let el = self.on_click(cx.listener(move |this, ev, window, cx| click(this, ev, window, cx)));
+        if !h.on {
+            return el;
+        }
+        let targets = h.targets.clone();
+        let action: Rc<dyn Fn(&mut Unbloated, &mut Window, &mut Context<Unbloated>)> =
+            Rc::new(move |this, window, cx| f(this, &gpui::ClickEvent::default(), window, cx));
+        el.relative().child(
+            canvas(move |bounds, _, _| targets.borrow_mut().push((bounds, action.clone())), |_, _, _, _| {})
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+        )
+    }
+}
+
+impl OnClickHinted for Stateful<gpui::Div> {}
+
+/// Letters used for hint labels (home row first).
+const HINT_CHARS: &str = "asdfghjklqwertyuiopzxcvbnm";
+
+/// Labels for `n` targets: single letters when they fit, else two letters for all (so no label
+/// is a prefix of another).
+fn hint_label_list(n: usize) -> Vec<String> {
+    let chars: Vec<char> = HINT_CHARS.chars().collect();
+    if n <= chars.len() {
+        chars.iter().take(n).map(|c| c.to_string()).collect()
+    } else {
+        chars.iter().flat_map(|a| chars.iter().map(move |b| format!("{a}{b}"))).take(n).collect()
+    }
+}
+
+/// Hint mode overlay: a yellow label on each target still matching what was typed.
+fn hint_labels(targets: &[HintTarget], typed: &str) -> gpui::Div {
+    let labels = hint_label_list(targets.len());
+    div().absolute().top_0().left_0().size_full().children(targets.iter().zip(labels).filter(|(_, l)| l.starts_with(typed)).map(
+        |((b, _), label)| {
+            div()
+                .absolute()
+                .left(b.origin.x)
+                .top(b.origin.y)
+                .px_1()
+                .rounded_sm()
+                .bg(rgb(0xffd54a))
+                .border_1()
+                .border_color(rgb(0x8a6d00))
+                .text_xs()
+                .text_color(rgb(0x1a1a1a))
+                .child(label.to_uppercase())
+        },
+    ))
 }
 
 /// Fade an element in and out, as a loading placeholder.
@@ -2005,9 +2838,12 @@ fn icon_button(
         .tooltip(tip(tooltip))
 }
 
-fn tab_button(label: &'static str, active: bool) -> Stateful<gpui::Div> {
+fn tab_button(label: impl Into<SharedString>, active: bool) -> Stateful<gpui::Div> {
+    let label: SharedString = label.into();
+    // Id from the label's first word, so "Up next (3)" keeps one id as its count changes.
+    let id = SharedString::from(label.split(' ').next().unwrap_or_default().to_string());
     div()
-        .id(label)
+        .id(ElementId::Name(id))
         .px_3()
         .py_2()
         .text_sm()
@@ -2057,10 +2893,10 @@ impl Render for Unbloated {
                 (_, true) => d.text_color(rgb(TEXT)).child(format!("{}▏", self.query)),
                 (false, false) => d.text_color(rgb(TEXT)).child(self.query.clone()),
             })
-            .on_click(cx.listener(|this, _, window, cx| {
+            .on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| {
                 window.focus(&this.search_focus);
                 cx.notify();
-            }))
+            })
             .on_key_down(cx.listener(Self::search_key));
         let header = div()
             .flex()
@@ -2069,7 +2905,7 @@ impl Render for Unbloated {
             .border_b_1()
             .border_color(rgb(BORDER))
             .children(tabs.into_iter().map(|(label, tab)| {
-                tab_button(label, self.tab == tab).on_click(cx.listener(move |this, _, _, cx| this.select_tab(tab, cx)))
+                tab_button(label, self.tab == tab).on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.select_tab(tab, cx))
             }))
             .child(search_box)
             .child({
@@ -2092,7 +2928,7 @@ impl Render for Unbloated {
                     .hover(|d| d.bg(rgb(HOVER)))
                     .child(icon)
                     .tooltip(tip("Refresh"))
-                    .on_click(cx.listener(|this, _, _, cx| this.load_tab(cx)))
+                    .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.load_tab(cx))
             })
             .child(
                 div()
@@ -2109,7 +2945,7 @@ impl Render for Unbloated {
                         rgb(MUTED)
                     }))
                     .tooltip(tip("Settings"))
-                    .on_click(cx.listener(|this, _, _, cx| this.select_tab(Tab::Settings, cx))),
+                    .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.select_tab(Tab::Settings, cx)),
             );
 
         let header_bar = if self.tab_loading() {
@@ -2125,7 +2961,8 @@ impl Render for Unbloated {
             .min_w_0()
             .child(header)
             .child(header_bar)
-            .child(div().flex().flex_col().flex_1().min_h_0().child(self.render_list(window, cx)));
+            .child(div().flex().flex_col().flex_1().min_h_0().child(self.render_list(window, cx)))
+;
 
         let player = div().flex().flex_col().min_h_0().child(self.render_player(cx));
         let right = div().relative().flex().flex_col().flex_1().min_w_0().bg(rgb(PANEL));
@@ -2155,25 +2992,78 @@ impl Render for Unbloated {
         } else {
             right
         };
-        let right = if self.settings.recommendations {
+        let show_recs = self.settings.recommendations;
+        let right = if show_recs || !self.up_next.is_empty() {
+            let lower = if show_recs { self.lower } else { Lower::UpNext };
+            let body = match lower {
+                Lower::Recommended => self.render_recs(cx),
+                Lower::UpNext if self.up_next.is_empty() => self.status("Nothing queued. Hover a video and press + to add it."),
+                Lower::UpNext => self.video_list("up-next", &self.up_next.clone(), None, cx),
+            };
             right
                 .child(player.h(relative(self.settings.player)).flex_none())
                 .child(divider("split-player", Split::Player, cx))
-                .child(div().px_4().py_2().text_xs().text_color(rgb(MUTED)).child("RECOMMENDED"))
-                .child(div().flex().flex_col().flex_1().min_h_0().child(self.render_recs(cx)))
+                .child(
+                    div()
+                        .flex()
+                        .px_2()
+                        .border_b_1()
+                        .border_color(rgb(BORDER))
+                        .when(show_recs, |d| {
+                            d.child(
+                                tab_button("Recommended", lower == Lower::Recommended).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                                    this.lower = Lower::Recommended;
+                                    cx.notify();
+                                }),
+                            )
+                        })
+                        .child(
+                            tab_button(
+                                if self.up_next.is_empty() { "Up next".to_string() } else { format!("Up next ({})", self.up_next.len()) },
+                                lower == Lower::UpNext,
+                            )
+                            .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                                this.lower = Lower::UpNext;
+                                cx.notify();
+                            }),
+                        ),
+                )
+                .child(div().flex().flex_col().flex_1().min_h_0().child(body))
         } else {
             right.child(player.flex_1())
         };
         let right = if self.saving { right.child(self.render_save_overlay(window, cx)) } else { right };
 
+        // Nothing focused (e.g. after leaving a text field): give focus back to the root so
+        // keyboard shortcuts keep working.
+        if window.focused(cx).is_none() {
+            window.focus(&self.root_focus);
+        }
+        let key = self.left_key();
+        if key != self.vim_list {
+            // Remember where we were in the old list; come back to the new list's last spot.
+            self.vim_positions.insert(std::mem::take(&mut self.vim_list), self.vim_cursor);
+            self.vim_cursor = self.vim_positions.get(&key).copied().unwrap_or(0);
+            self.vim_list = key;
+            self.vim_scroll.scroll_to_item(self.vim_cursor, ScrollStrategy::Center);
+        }
+        // Collected again during this frame's paint (see hint_target).
+        self.hint_targets.borrow_mut().clear();
+        let hint_overlay = self.hints.as_ref().map(|(targets, typed)| hint_labels(targets, typed));
+        let sheet = self.show_keys.then(|| self.render_cheatsheet(cx));
         div()
             .size_full()
+            .relative()
             .flex()
+            .track_focus(&self.root_focus)
+            .on_key_down(cx.listener(Self::shortcut))
             .bg(rgb(BG))
             .text_color(rgb(TEXT))
             .child(left)
             .child(divider("split-columns", Split::Columns, cx))
             .child(right)
+            .children(sheet)
+            .children(hint_overlay)
             // While dragging, X keeps sending us pointer events even over mpv's window.
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, window, cx| {
                 let Some(split) = this.dragging else { return };

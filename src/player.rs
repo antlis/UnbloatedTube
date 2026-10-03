@@ -19,6 +19,10 @@ pub struct State {
     pub playing: bool,
     /// Playback reached the end (mpv keeps the last frame, `--keep-open`).
     pub ended: bool,
+    /// YouTube chapters: start time and title.
+    pub chapters: Vec<(f64, String)>,
+    /// "?" was pressed over the video since the last query.
+    pub help: bool,
     pub position: f64,
     pub duration: f64,
     pub paused: bool,
@@ -31,6 +35,8 @@ pub struct Player {
     child: Option<Child>,
     /// Options the running mpv was started with.
     options: Vec<String>,
+    /// Our mouse bindings were sent to the running mpv.
+    bound: bool,
 }
 
 impl Player {
@@ -44,7 +50,7 @@ impl Player {
                 let _ = std::fs::remove_file(entry.path());
             }
         }
-        Self { socket: dir.join(format!("unbloated-youtube-mpv-{}.sock", std::process::id())), child: None, options: Vec::new() }
+        Self { socket: dir.join(format!("unbloated-youtube-mpv-{}.sock", std::process::id())), child: None, options: Vec::new(), bound: false }
     }
 
     pub fn alive(&mut self) -> bool {
@@ -99,6 +105,7 @@ impl Player {
             }
             self.child = Some(cmd.spawn().map_err(|e| format!("cannot start mpv: {e}"))?);
             self.options = options.to_vec();
+            self.bound = false;
             return Ok(());
         }
         self.command(json!(["set_property", "start", start.to_string()]))?;
@@ -109,6 +116,21 @@ impl Player {
     /// Options the running mpv was started with (empty if none).
     pub fn options(&mut self) -> &[String] {
         if self.alive() { &self.options } else { &[] }
+    }
+
+    /// Click on the video toggles pause (mpv's default double-click still toggles fullscreen).
+    /// Sent once mpv answers, since its IPC socket isn't up right after start.
+    pub fn bind_mouse(&mut self) {
+        if !self.bound && self.alive() {
+            // "?" over the video: flag it for us (read in `query`) instead of mpv's own help.
+            self.bound = self.command(json!(["keybind", "MBTN_LEFT", "cycle pause"])).is_ok()
+                && self.command(json!(["keybind", "?", "set user-data/unbloated/help yes"])).is_ok();
+        }
+    }
+
+    /// Reset the "?" flag after acting on it.
+    pub fn clear_help(&self) {
+        let _ = self.command(json!(["set", "user-data/unbloated/help", "no"]));
     }
 
     pub fn set_speed(&self, speed: f32) {
@@ -132,6 +154,10 @@ impl Player {
 
     pub fn seek_relative(&self, secs: f64) {
         let _ = self.command(json!(["seek", secs, "relative"]));
+    }
+
+    pub fn toggle_mute(&self) {
+        let _ = self.command(json!(["cycle", "mute"]));
     }
 
     pub fn set_fullscreen(&self, on: bool) {
@@ -201,7 +227,7 @@ pub fn sponsorblock_script() -> Option<String> {
 pub fn query(socket: &Path) -> Option<State> {
     let mut s = UnixStream::connect(socket).ok()?;
     s.set_read_timeout(Some(Duration::from_secs(2))).ok();
-    let props = ["time-pos", "duration", "pause", "fullscreen", "path", "idle-active", "eof-reached"];
+    let props = ["time-pos", "duration", "pause", "fullscreen", "path", "idle-active", "eof-reached", "chapter-list", "user-data/unbloated/help"];
     for (i, p) in props.iter().enumerate() {
         writeln!(s, "{}", json!({ "command": ["get_property", p], "request_id": i })).ok()?;
     }
@@ -226,6 +252,15 @@ pub fn query(socket: &Path) -> Option<State> {
         path: vals[4].as_str().unwrap_or_default().to_string(),
         idle: vals[5].as_bool().unwrap_or(false),
         ended: vals[6].as_bool().unwrap_or(false),
+        chapters: vals[7]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|c| Some((c["time"].as_f64()?, c["title"].as_str().unwrap_or_default().to_string())))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        help: vals[8].as_str() == Some("yes") || vals[8].as_bool() == Some(true),
     })
 }
 

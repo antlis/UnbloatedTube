@@ -35,6 +35,7 @@ const ICONS: &[(&str, &str)] = &[
     ("disliked", icon!(r#"<g transform="rotate(180 12 12)"><path d="M7 11v10H3V11zM7 11l4-8c1.5 0 2.5 1 2.5 2.5L13 9h6a2 2 0 0 1 2 2.3l-1.3 7.7a2 2 0 0 1-2 1.9H7z" fill="black"/></g>"#)),
     ("minimize", icon!(r#"<path d="M5 12h14"/>"#)),
     ("maximize", icon!(r#"<rect x="5" y="5" width="14" height="14" rx="1"/>"#)),
+    ("add", icon!(r#"<path d="M12 5v14M5 12h14"/>"#)),
     ("close", icon!(r#"<path d="M6 6l12 12M18 6L6 18"/>"#)),
     ("refresh", icon!(r#"<path d="M21 12a9 9 0 1 1-2.6-6.4L21 8M21 3v5h-5"/>"#)),
     ("settings", icon!(r#"<path d="M3 6h11M18 6h3M3 12h3M10 12h11M3 18h13M20 18h1"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>"#)),

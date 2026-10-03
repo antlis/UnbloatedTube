@@ -22,6 +22,8 @@ pub struct VideoStatus {
     pub subscribed: bool,
     pub liked: bool,
     pub disliked: bool,
+    /// The channel's avatar URL.
+    pub avatar: Option<String>,
 }
 
 impl Account {
@@ -73,9 +75,10 @@ impl Account {
     pub fn status(&self, video_id: &str) -> Result<VideoStatus, String> {
         let next = self.post("next", json!({ "videoId": video_id }))?;
         // The first subscribe button / like state is the watched video's; related videos come later.
-        let (mut sub, mut like) = (None, None);
+        let (mut sub, mut like, mut owner) = (None, None, None);
         walk(&next, &mut |key, v| match key {
             "subscribeButtonRenderer" if sub.is_none() => sub = Some(v.clone()),
+            "videoOwnerRenderer" if owner.is_none() => owner = Some(v.clone()),
             "likeStatus" if like.is_none() => like = v.as_str().map(String::from),
             _ => {}
         });
@@ -85,6 +88,7 @@ impl Account {
             subscribed: sub["subscribed"].as_bool().unwrap_or(false),
             liked: like.as_deref() == Some("LIKE"),
             disliked: like.as_deref() == Some("DISLIKE"),
+            avatar: owner.and_then(|o| o["thumbnail"]["thumbnails"][0]["url"].as_str().map(String::from)),
         })
     }
 

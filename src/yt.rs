@@ -16,6 +16,9 @@ pub struct Video {
     pub channel_url: Option<String>,
     #[serde(default)]
     pub duration: Option<f64>,
+    /// A YouTube Short (vertical, under a minute).
+    #[serde(default)]
+    pub short: bool,
 }
 
 impl Video {
@@ -117,6 +120,7 @@ fn to_video(e: Entry) -> Option<Video> {
         return None;
     }
     Some(Video {
+        short: e.url.as_deref().is_some_and(|u| u.contains("/shorts/")),
         title: e.title.unwrap_or_else(|| id.clone()),
         id,
         channel: e.channel.or(e.uploader),

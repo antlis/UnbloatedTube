@@ -62,6 +62,9 @@ pub struct Watched {
     pub video: Video,
     /// Seconds into the video where playback stopped.
     pub position: f64,
+    /// Watched to the end.
+    #[serde(default)]
+    pub finished: bool,
 }
 
 /// Most recent first.
@@ -101,14 +104,32 @@ impl History {
     pub fn touch(&mut self, video: &Video) {
         let position = self.position(&video.id);
         self.items.retain(|w| w.video.id != video.id);
-        self.items.insert(0, Watched { video: video.clone(), position });
+        let finished = self.is_finished(&video.id);
+        self.items.insert(0, Watched { video: video.clone(), position, finished });
         self.items.truncate(1000);
     }
 
-    pub fn set_position(&mut self, id: &str, position: f64) {
+    pub fn set_position(&mut self, id: &str, position: f64, finished: bool) {
         if let Some(w) = self.items.iter_mut().find(|w| w.video.id == id) {
             w.position = position;
+            w.finished = finished;
         }
+    }
+
+    pub fn is_finished(&self, id: &str) -> bool {
+        self.items.iter().any(|w| w.video.id == id && w.finished)
+    }
+}
+
+/// Small app state kept in the data dir (e.g. the Up next queue).
+pub fn load_data<T: DeserializeOwned>(name: &str) -> Option<T> {
+    serde_json::from_slice(&std::fs::read(data_dir().join(format!("{name}.json"))).ok()?).ok()
+}
+
+pub fn save_data<T: Serialize>(name: &str, value: &T) {
+    let _ = std::fs::create_dir_all(data_dir());
+    if let Ok(json) = serde_json::to_vec(value) {
+        let _ = std::fs::write(data_dir().join(format!("{name}.json")), json);
     }
 }
 
@@ -138,6 +159,9 @@ pub struct Settings {
     pub playlists: bool,
     pub history: bool,
     pub recommendations: bool,
+    pub shorts: bool,
+    /// Vim-style keys: j/k move a selection in lists, f shows click hints.
+    pub vim: bool,
     /// Draw minimize / maximize / close, for desktops (or tiling WMs) without a title bar.
     pub window_buttons: bool,
     pub subscribe_button: bool,
@@ -176,6 +200,8 @@ impl Default for Settings {
             playlists: true,
             history: true,
             recommendations: true,
+            shorts: true,
+            vim: false,
             window_buttons: true,
             subscribe_button: true,
             save_button: true,
