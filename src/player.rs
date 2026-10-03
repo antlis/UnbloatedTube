@@ -187,7 +187,8 @@ pub fn format(s: &Settings) -> String {
 }
 
 /// mpv command-line options for the user's settings (everything but per-video ones).
-pub fn options(cfg: &Config, s: &Settings) -> Vec<String> {
+/// `pip`: play in mpv's own small always-on-top window instead of embedded.
+pub fn options(cfg: &Config, s: &Settings, pip: bool) -> Vec<String> {
     let mut out = vec![
         format!("--ytdl-format={}", format(s)),
         // Fetch in 10 MB range requests: YouTube throttles one long request to ~150 KB/s.
@@ -212,6 +213,10 @@ pub fn options(cfg: &Config, s: &Settings) -> Vec<String> {
     if let (true, Some(script)) = (s.sponsorblock, sponsorblock_script()) {
         out.push(format!("--script={script}"));
         out.push(format!("--script-opts=sponsorblock_minimal-categories={}", s.skip_segments.join(";")));
+    }
+    if pip {
+        // Bottom-right corner; the title lets tiling WMs float it (e.g. i3 for_window rules).
+        out.extend(["--ontop", "--geometry=480x270-24-24", "--title=unbloated-youtube PiP"].map(String::from));
     }
     out.extend(s.mpv_args.split_whitespace().map(String::from));
     out

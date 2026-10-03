@@ -731,12 +731,24 @@ impl Unbloated {
         cx.notify();
     }
 
+    /// Move the video into / out of its own always-on-top window (restarts mpv in place).
+    fn toggle_pip(&mut self, cx: &mut Context<Self>) {
+        self.pip = !self.pip;
+        if let (true, Some(video)) = (self.player.alive(), self.current.clone()) {
+            let paused = self.state.as_ref().is_some_and(|s| s.paused);
+            self.start(video, paused);
+        }
+        self.sync_embed();
+        cx.notify();
+    }
+
     /// Show mpv's window only when it has something current to show and nothing covers it.
     fn sync_embed(&mut self) {
         let visible = self.player.alive()
             && !(self.loading && self.hide_while_loading)
             && !self.saving
             && !self.show_keys
+            && !self.pip
             // Audio only: keep showing the thumbnail.
             && !self.settings.audio_only;
         if let Some(e) = &self.embed {
@@ -1192,13 +1204,13 @@ impl Unbloated {
                 eprintln!("unbloated-youtube: can't embed video (not X11?), using a separate mpv window");
             }
         }
-        let wid = self.embed.as_ref().map(|e| {
+        let wid = self.embed.as_ref().filter(|_| !self.pip).map(|e| {
             // mpv keeps its window unmapped if ours is hidden when it starts.
             e.borrow_mut().set_visible(true);
             e.borrow().id()
         });
         let start = self.history.position(&video.id);
-        let options = player::options(&self.cfg, &self.settings);
+        let options = player::options(&self.cfg, &self.settings, self.pip);
         // Hide the old video's last frame only when mpv keeps running: a freshly started mpv
         // (first video, or changed options) never shows its picture if ours is hidden then.
         let restarts = self.player.options() != options.as_slice();
@@ -1738,6 +1750,11 @@ impl Unbloated {
         if state.is_some() {
             self.player.bind_mouse();
         }
+        if self.pip && !self.player.alive() {
+            // The PiP window was closed: next video plays in the app again.
+            self.pip = false;
+            cx.notify();
+        }
         if state.as_ref().is_some_and(|s| s.help) {
             self.player.clear_help();
             self.show_keys = !self.show_keys;
@@ -2049,7 +2066,7 @@ impl Unbloated {
     /// changes mpv's options reloads the current video at the same position.
     fn apply_player_settings(&mut self, cx: &mut Context<Self>) {
         self.player.set_speed(self.settings.speed);
-        let options = player::options(&self.cfg, &self.settings);
+        let options = player::options(&self.cfg, &self.settings, self.pip);
         let changed = !self.player.options().is_empty() && self.player.options() != options.as_slice();
         if let (true, Some(video)) = (changed, self.current.clone()) {
             let paused = self.state.as_ref().is_none_or(|s| s.paused);
@@ -2615,6 +2632,26 @@ impl Unbloated {
             Thumb::Pending => screen = screen.child(pulse("screen-skeleton", div().size_full().bg(rgb(HOVER)))),
             Thumb::Missing => {}
         }
+        if self.pip {
+            screen = screen.child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap_3()
+                    .bg(gpui::black().opacity(0.7))
+                    .child(div().text_sm().text_color(rgb(TEXT)).child("Playing in picture-in-picture"))
+                    .child(
+                        self.chip("pip-back", "Bring it back here", true)
+                            .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.toggle_pip(cx)),
+                    ),
+            );
+        }
         if let Some(embed) = self.embed.clone() {
             screen = screen.child(
                 canvas(|_, _, _| {}, move |b, _, window, _| {
@@ -2765,6 +2802,11 @@ impl Unbloated {
                     .child(
                         icon_button("fwd10", "forward", "Forward 10 seconds (L)", active)
                             .on_click_hinted(&self.hint_reg(), cx, |this, _, _, _| this.player.seek_relative(10.)),
+                    )
+                    .child(
+                        icon_button("pip", "pip", if self.pip { "Back into the app" } else { "Picture-in-picture" }, active || self.pip)
+                            .when(self.pip, |d| d.bg(rgb(ACCENT)))
+                            .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.toggle_pip(cx)),
                     )
                     .child(
                         icon_button("full", "fullscreen", "Fullscreen (F, Esc to leave)", active)
