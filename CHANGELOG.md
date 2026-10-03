@@ -14,6 +14,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 - **Tab keys**: `1`–`4` jump to Subscriptions, Playlists, History and Settings (as shown), in
   both regular and Vim mode.
+- **Collapse the left column** with `B` (`b` in Vim mode) or by dragging its divider to the window
+  edge; drag it back out to restore your width. Search, filter and tab keys bring it back.
 
 ### Changed
 - The divider between the player and the lower pane (Recommended, Chapters, Up next) can be

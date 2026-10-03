@@ -75,7 +75,8 @@ list, your playlists, your history, search and a player.
 - **Chapters tab** under the player for videos that have chapters: click one to jump there; the
   current chapter is highlighted and kept in view.
 - **Resizable player**: drag the divider between the video and the lower pane anywhere, up to
-  the top; `E` gives the lower pane the whole right column and back.
+  the top; `E` gives the lower pane the whole right column and back. The left column collapses too
+  (`B`, or drag its divider to the edge).
 - Click the video to pause, double-click for fullscreen.
 - **Recommendations** under the player (your YouTube home feed), or turn them off.
 
@@ -118,6 +119,7 @@ remembered.
 | ⇧C | Copy the link at the current time (`y t` in Vim mode) |
 | E | Lower pane (Recommended, Chapters, Up next) full height, and back (`e` in Vim mode) |
 | 1 – 4 | Switch tab: Subscriptions, Playlists, History, Settings |
+| B | Hide or show the left column (`b` in Vim mode) |
 | / | Search |
 | Ctrl+F | Filter the list |
 | Esc | Close / back |
