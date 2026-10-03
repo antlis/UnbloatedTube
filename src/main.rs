@@ -33,6 +33,8 @@ const TEXT: u32 = 0xe6e6e6;
 const MUTED: u32 = 0x8c8c8c;
 const ACCENT: u32 = 0xff4e45;
 const ROW_H: f32 = 64.;
+/// Height of the column headers (tabs on the left, window buttons on the right), border included.
+const HEADER_H: f32 = 41.;
 const SEEK_SEGMENTS: usize = 80;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -810,7 +812,7 @@ impl Unbloated {
         match (&self.notice, &self.notice_seen) {
             (None, _) => self.notice_seen = None,
             (Some(n), Some((seen, at))) if n == seen => {
-                if now.duration_since(*at) > Duration::from_secs(4) {
+                if now.duration_since(*at) > Duration::from_secs(6) {
                     self.notice = None;
                     self.notice_seen = None;
                     cx.notify();
@@ -1074,7 +1076,7 @@ impl Unbloated {
             .cursor_pointer()
             .hover(|d| d.opacity(0.85))
             .child(svg().path(icons::path(icon)).size(px(14.)).text_color(rgb(TEXT)))
-            .tooltip(tip(tooltip))
+            .tooltip(tip_left(tooltip))
     }
 
     /// A small rounded chip (filter bar, group editor).
@@ -1251,7 +1253,7 @@ impl Unbloated {
             self.fetch(cx, "subs.videos", |s| &mut s.subs.videos, cache, move |cfg, on| yt::group_videos(cfg, &url, on));
         } else {
             self.fetch(cx, "playlists.videos", |s| &mut s.playlists.videos, cache, move |cfg, on| {
-                yt::group_videos(cfg, &url, on)
+                yt::playlist_videos(cfg, &url, on)
             });
         }
     }
@@ -2808,7 +2810,7 @@ impl Unbloated {
                                         .text_color(rgb(TEXT))
                                         .child(new.to_string()),
                                 )
-                                .tooltip(tip(format!("{new} new video{}", if new == 1 { "" } else { "s" })))
+.tooltip(tip_left(format!("{new} new video{}", if new == 1 { "" } else { "s" })))
                             })
                             .on_click_hinted(&this.hint_reg(), cx, move |this, _, _, cx| this.open_group(tab, group.clone(), cx))
                     })
@@ -3063,10 +3065,39 @@ impl Unbloated {
                     })
                     .child(div().ml_auto().pl_2().flex_none().text_xs().text_color(rgb(MUTED)).child(time)),
             )
-            .when_some(self.notice.clone(), |d, n| d.child(div().text_xs().text_color(rgb(MUTED)).truncate().child(n)))
-            .when_some(self.downloads.get(&video.id).and_then(Download::visible_status), |d, n| {
-                d.child(div().text_xs().text_color(rgb(MUTED)).truncate().child(n))
-            })
+    }
+
+    /// Notices and the current video's download status, in the bottom-right corner (under the
+    /// controls they'd be covered by the lower pane when the player is short).
+    fn render_toasts(&self) -> Option<gpui::Div> {
+        let download = self.current.as_ref().and_then(|v| self.downloads.get(&v.id)).and_then(Download::visible_status);
+        let lines: Vec<String> = self.notice.iter().cloned().chain(download).collect();
+        (!lines.is_empty()).then(|| {
+            div()
+                .absolute()
+                .bottom(px(16.))
+                .right(px(16.))
+                .flex()
+                .flex_col()
+                .items_end()
+                .gap_2()
+                .children(lines.into_iter().map(|n| {
+                    div()
+                        .px_3()
+                        .py_2()
+                        .rounded_md()
+                        .bg(rgb(HOVER))
+                        .border_1()
+                        .border_l_4()
+                        .border_color(rgb(ACCENT))
+                        .shadow_lg()
+                        .text_sm()
+                        .text_color(rgb(TEXT))
+                        .max_w(px(480.))
+                        .line_clamp(2)
+                        .child(n)
+                }))
+        })
     }
 
     /// Subscribe / Save / Like icons, as enabled in settings. Greyed until the account's
@@ -3539,11 +3570,14 @@ fn edit_text(text: &mut String, ev: &KeyDownEvent, cx: &App) -> Edit {
 }
 
 /// Hover tooltip content.
-struct Tip(SharedString);
+/// `left`: opens to the left of the pointer, for things at the left column's right edge,
+/// where a tooltip would run under the (always on top) video.
+struct Tip(SharedString, bool);
 
 impl Render for Tip {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
+        let tip = div()
+            .whitespace_nowrap()
             .px_2()
             .py_1()
             .rounded_md()
@@ -3552,13 +3586,24 @@ impl Render for Tip {
             .border_color(rgb(BORDER))
             .text_xs()
             .text_color(rgb(TEXT))
-            .child(self.0.clone())
+            .child(self.0.clone());
+        if self.1 {
+            // A zero-width anchor at the pointer, with the tooltip hanging off to its left.
+            div().relative().w_0().child(tip.absolute().right(px(8.)).top_0())
+        } else {
+            tip
+        }
     }
 }
 
 fn tip(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView + 'static {
     let text = text.into();
-    move |_, cx| cx.new(|_| Tip(text.clone())).into()
+    move |_, cx| cx.new(|_| Tip(text.clone(), false)).into()
+}
+
+fn tip_left(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView + 'static {
+    let text = text.into();
+    move |_, cx| cx.new(|_| Tip(text.clone(), true)).into()
 }
 
 /// Square icon button with a hover tooltip; `enabled: false` greys it out (add clicks only when enabled).
@@ -3730,6 +3775,7 @@ impl Render for Unbloated {
             )
         };
 
+        let header = header.h(px(HEADER_H)).flex_none();
         let header_bar = if self.tab_loading() {
             loading_bar("list-loading").into_any_element()
         } else {
@@ -3763,8 +3809,10 @@ impl Render for Unbloated {
                 div()
                     .flex()
                     .justify_end()
+                    .items_center()
+                    .h(px(HEADER_H))
+                    .flex_none()
                     .px_2()
-                    .py_1()
                     .border_b_1()
                     .border_color(rgb(BORDER))
                     .child(control("win-min", "minimize", "Minimize", HOVER, MUTED).on_click(|_, window, _| window.minimize_window()))
@@ -3845,6 +3893,7 @@ impl Render for Unbloated {
             .child(left)
             .child(divider("split-columns", Split::Columns, cx))
             .child(right)
+            .children(self.render_toasts())
             .children(sheet)
             .children(hint_overlay)
             // While dragging, X keeps sending us pointer events even over mpv's window.

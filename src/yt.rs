@@ -174,6 +174,11 @@ pub fn group_videos(cfg: &Config, url: &str, on: &mut dyn FnMut(Video)) -> Resul
     videos(cfg, url, 150, on)
 }
 
+/// All of a playlist (up to YouTube's 5000): saved videos go to its end.
+pub fn playlist_videos(cfg: &Config, url: &str, on: &mut dyn FnMut(Video)) -> Result<(), String> {
+    videos(cfg, url, 5000, on)
+}
+
 pub fn playlists(cfg: &Config, on: &mut dyn FnMut(Group)) -> Result<(), String> {
     on(Group { id: "WL".into(), title: "Watch later".into(), url: ":ytwatchlater".into(), thumb: None });
     on(Group {
