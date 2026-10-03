@@ -82,6 +82,13 @@ list, your playlists, your history, search and a player.
   the top; `E` gives the lower pane the whole right column and back; `⇧E` does the same for the player. The left column collapses too
   (`B`, or drag its divider to the edge), and so does the right one (`⇧B`, or drag the divider
   to the right edge).
+- **Hover controls**: move the pointer over the video and a YouTube-style bar appears: a seek
+  line, then play/pause, previous/next, mute and volume and the time on the left, and ±10 s, speed,
+  picture-in-picture and fullscreen on the right. It hides itself after a moment. With it on, the
+  row of playback buttons under the video is gone and only the account/action buttons remain; with
+  it off (Settings, *Hover controls on the video*) you get the two button rows instead. The bar is
+  drawn by mpv from a small bundled script, since the video is a separate native window the app
+  can't draw over.
 - **No mpv chrome by default**: mpv's own on-screen controls and key bindings are switched off
   over the video, so the app's shortcuts work there too. Turn them back on in Settings (*mpv
   controls and hotkeys*) if you want mpv's `osc`, wheel volume, `s` for screenshots and so on.
@@ -102,7 +109,7 @@ Everything is a toggle or a field on the Settings page, which has its own search
 | --- | --- |
 | Tabs & lists | Subscriptions, Playlists, History, Recommendations, Chapters, **Shorts** (everywhere) |
 | Buttons | Subscribe, Save to playlist, Like, Dislike, Volume, Share, Share at current time, Open in browser, Download |
-| Player | Max quality (480p–4K), autoplay, **audio only**, prefer hardware-friendly codecs (skip AV1), hardware decoding, mpv's own controls and hotkeys, speed |
+| Player | Max quality (480p–4K), autoplay, **audio only**, prefer hardware-friendly codecs (skip AV1), hardware decoding, hover controls on the video, mpv's own controls and hotkeys, speed |
 | SponsorBlock | **Skip sponsored segments**, choosing which: sponsor, self-promotion, like/subscribe reminders, intro, credits, preview, filler, non-music |
 | Video info | **Views**, **upload date** (playing video), **subscriber counts** (channels) |
 | Other | Subtitles language, extra mpv options, download folder, upload notifications and their interval, Vim mode, window buttons, **light theme** |

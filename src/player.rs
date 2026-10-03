@@ -23,6 +23,8 @@ pub struct State {
     pub chapters: Vec<(f64, String)>,
     /// "?" was pressed over the video since the last query.
     pub help: bool,
+    /// Something the hover bar (controls.lua) wants the app to do: "prev", "next", "speed" or "pip".
+    pub action: String,
     pub position: f64,
     pub duration: f64,
     pub paused: bool,
@@ -140,6 +142,11 @@ impl Player {
         }
     }
 
+    /// Reset the hover bar's request after acting on it.
+    pub fn clear_action(&self) {
+        let _ = self.command(json!(["set", "user-data/unbloated/action", ""]));
+    }
+
     /// Reset the "?" flag after acting on it.
     pub fn clear_help(&self) {
         let _ = self.command(json!(["set", "user-data/unbloated/help", "no"]));
@@ -239,12 +246,30 @@ pub fn options(cfg: &Config, s: &Settings, pip: bool) -> Vec<String> {
         out.push(format!("--script={script}"));
         out.push(format!("--script-opts=sponsorblock_minimal-categories={}", s.skip_segments.join(";")));
     }
+    // The app's hover bar, independent of mpv's own controls above. After SponsorBlock's
+    // `--script-opts=`, which would replace this one; `--script=` adds to the scripts.
+    if let (false, true, Some(script)) = (pip, s.video_controls, controls_script()) {
+        out.push(format!("--script={script}"));
+        out.push("--script-opts-append=unbloated-controls-accent=454EFF".into());
+    }
     if pip {
         // Bottom-right corner; the title lets tiling WMs float it (e.g. i3 for_window rules).
         out.extend(["--ontop", "--geometry=480x270-24-24", "--title=unbloated-youtube PiP"].map(String::from));
     }
     out.extend(s.mpv_args.split_whitespace().map(String::from));
     out
+}
+
+/// The hover-controls script (controls.lua), written to the cache dir so mpv can load it.
+fn controls_script() -> Option<String> {
+    let src = include_str!("controls.lua");
+    let dir = crate::store::cache_dir();
+    let path = dir.join("controls.lua");
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(src) {
+        std::fs::create_dir_all(&dir).ok()?;
+        std::fs::write(&path, src).ok()?;
+    }
+    Some(path.display().to_string())
 }
 
 /// Path of the SponsorBlock mpv script, if the environment provides it (see shell.nix).
@@ -257,7 +282,7 @@ pub fn sponsorblock_script() -> Option<String> {
 pub fn query(socket: &Path) -> Option<State> {
     let mut s = UnixStream::connect(socket).ok()?;
     s.set_read_timeout(Some(Duration::from_secs(2))).ok();
-    let props = ["time-pos", "duration", "pause", "fullscreen", "path", "idle-active", "eof-reached", "chapter-list", "user-data/unbloated/help", "mute", "volume"];
+    let props = ["time-pos", "duration", "pause", "fullscreen", "path", "idle-active", "eof-reached", "chapter-list", "user-data/unbloated/help", "mute", "volume", "user-data/unbloated/action"];
     for (i, p) in props.iter().enumerate() {
         writeln!(s, "{}", json!({ "command": ["get_property", p], "request_id": i })).ok()?;
     }
@@ -293,6 +318,7 @@ pub fn query(socket: &Path) -> Option<State> {
         help: vals[8].as_str() == Some("yes") || vals[8].as_bool() == Some(true),
         muted: vals[9].as_bool().unwrap_or(false),
         volume: vals[10].as_f64(),
+        action: vals[11].as_str().unwrap_or_default().to_string(),
     })
 }
 

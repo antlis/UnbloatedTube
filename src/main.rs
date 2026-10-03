@@ -108,11 +108,12 @@ const TOGGLES: [Toggle; 9] = [
     ("Light theme", "Light colors instead of dark", |s| &mut s.light_theme),
 ];
 
-const PLAYER_TOGGLES: [Toggle; 6] = [
+const PLAYER_TOGGLES: [Toggle; 7] = [
     ("Autoplay next", "Play the next video of the list when one ends", |s| &mut s.autoplay),
     ("Audio only", "Don't fetch or show video, e.g. for music and podcasts", |s| &mut s.audio_only),
     ("Prefer hardware-friendly codecs", "Skip AV1, which many GPUs can't decode, for lower CPU use", |s| &mut s.prefer_hw_codecs),
     ("Hardware decoding", "Decode video on the GPU (mpv --hwdec=auto-safe)", |s| &mut s.hwdec),
+    ("Hover controls on the video", "A bar with play, seek, volume and fullscreen when the pointer is over the video", |s| &mut s.video_controls),
     ("mpv controls and hotkeys", "mpv's own on-screen controls and key bindings over the video; off: only this app's", |s| &mut s.native_controls),
     ("Block in-video ads (SponsorBlock)", "Skip sponsor reads and other segments marked by the community", |s| &mut s.sponsorblock),
 ];
@@ -1848,6 +1849,15 @@ impl Unbloated {
         }
     }
 
+    /// Next playback speed in SPEEDS, wrapping around.
+    fn cycle_speed(&mut self, cx: &mut Context<Self>) {
+        let i = SPEEDS.iter().position(|s| *s == self.settings.speed).map_or(1, |i| (i + 1) % SPEEDS.len());
+        self.settings.speed = SPEEDS[i];
+        self.settings.save();
+        self.player.set_speed(self.settings.speed);
+        cx.notify();
+    }
+
     /// Hide the lower pane so the player takes the whole right column, or bring it back.
     fn toggle_player_full(&mut self, cx: &mut Context<Self>) {
         self.player_full = !self.player_full;
@@ -2436,6 +2446,24 @@ impl Unbloated {
             // The PiP window was closed: next video plays in the app again.
             self.pip = false;
             cx.notify();
+        }
+        if let Some(action) = state.as_ref().map(|s| s.action.clone()).filter(|a| !a.is_empty()) {
+            self.player.clear_action();
+            match action.as_str() {
+                "next" => {
+                    if let Some(v) = self.next_video() {
+                        self.play(v, None, cx);
+                    }
+                }
+                "prev" => {
+                    if let Some(v) = self.neighbor(-1) {
+                        self.play(v, None, cx);
+                    }
+                }
+                "speed" => self.cycle_speed(cx),
+                "pip" => self.toggle_pip(cx),
+                _ => {}
+            }
         }
         if state.as_ref().is_some_and(|s| s.help) {
             self.player.clear_help();
@@ -3416,6 +3444,25 @@ impl Unbloated {
                     ),
             );
         }
+        // Nothing playing yet (e.g. after startup): clicking the picture starts it. The playback
+        // buttons under the video are replaced by the hover bar, which exists only in mpv's window.
+        if !full && !self.pip && !self.loading && self.state.is_none() && self.settings.video_controls {
+            let v = video.clone();
+            screen = screen.child(
+                div()
+                    .id("screen-play")
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .child(svg().path(icons::path("play")).size(px(56.)).text_color(gpui::white().opacity(0.85)))
+                    .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.play(v.clone(), None, cx)),
+            );
+        }
         if let Some(embed) = self.embed.clone() {
             screen = screen.child(
                 canvas(|_, _, _| {}, move |b, _, window, _| {
@@ -3566,7 +3613,8 @@ impl Unbloated {
                     }))
                     .into_any_element()
             })
-            .child(
+            // With the hover bar on the video, playback controls live there instead.
+            .when(!self.settings.video_controls, |d| d.child(
                 div()
                     .flex()
                     .items_center()
@@ -3612,16 +3660,10 @@ impl Unbloated {
                             .hover(|d| d.bg(themed(BORDER)))
                             .child(format!("{}×", self.settings.speed))
                             .tooltip(tip("Playback speed (click to change)"))
-                            .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
-                                let i = SPEEDS.iter().position(|s| *s == this.settings.speed).map_or(1, |i| (i + 1) % SPEEDS.len());
-                                this.settings.speed = SPEEDS[i];
-                                this.settings.save();
-                                this.player.set_speed(this.settings.speed);
-                                cx.notify();
-                            }),
+                            .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.cycle_speed(cx)),
                     )
                     .when(self.settings.volume_control, |d| d.child(self.volume_bar(cx)))
-            )
+            ))
             // Second row: what you can do with this video.
             .when(self.account_buttons() || self.settings.share_button || self.settings.share_time_button || self.settings.browser_button || self.settings.download_button, |d| {
                 d.child(

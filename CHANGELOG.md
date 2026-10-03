@@ -6,6 +6,15 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Added
+- **Hover controls on the video**: a YouTube-style bar appears when the pointer is over the video
+  and hides after a moment: a seek line, play/pause, previous/next, mute and volume, the time,
+  ±10 s, speed, picture-in-picture and fullscreen. While it is on, the playback row under the video
+  is gone (the account/action buttons stay); turn it off to get the two button rows back.
+  Settings > Player > *Hover controls on the video* (on by default), independent of mpv's own
+  controls. It is a small Lua script, `src/controls.lua`, run by mpv, because the video is a native
+  window that the app can't draw over.
+
 ### Changed
 - **mpv's own controls and key bindings are off over the video by default**: no on-screen
   controller on hover, no mpv hotkeys, and the app's shortcuts now also work while the pointer is
