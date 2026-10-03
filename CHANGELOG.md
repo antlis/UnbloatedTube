@@ -4,6 +4,13 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Changed
+- One tab scheme for both columns: numbers `1`–`4` pick the header tabs and `5`–`7` the lower
+  pane's (Recommended, Chapters, Up next), and `[` / `]` cycle through all seven in that order,
+  wrapping around, in regular and Vim mode. **`[` / `]` used to step only the lower pane's tabs.**
+
 ## 0.4.0 - 2026-10-03
 
 ### Added

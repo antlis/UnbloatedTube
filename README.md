@@ -124,9 +124,10 @@ remembered.
 | ⇧C | Copy the link at the current time (`y t` in Vim mode) |
 | E | Lower pane (Recommended, Chapters, Up next) full height, and back (`e` in Vim mode) |
 | ⇧E | Player full height (hide the lower pane), and back |
-| [ / ] | Previous / next tab of the lower pane (Recommended, Chapters, Up next) |
 | Tab / ⇧Tab | Move a focus ring through every clickable thing (tabs, rows, buttons, switches); Enter or Space presses it, Esc clears it |
 | 1 – 4 | Switch tab: Subscriptions, Playlists, History, Settings |
+| 5 – 7 | Switch lower pane tab: Recommended, Chapters, Up next (as shown) |
+| [ / ] | Previous / next tab: through 1–4, then 5–7, wrapping around |
 | B | Hide or show the left column (`b` in Vim mode) |
 | ⇧B | Hide or show the right column |
 | / | Search |
