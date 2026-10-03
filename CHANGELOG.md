@@ -4,6 +4,12 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## 0.8.1 - 2026-10-03
+
+### Added
+- **MIT license** (`LICENSE`), also included in the release archive.
+- **AUR package files** (`packaging/aur`, `unbloated-youtube-bin`), installing the prebuilt binary.
+
 ## 0.8.0 - 2026-10-03
 
 ### Added
