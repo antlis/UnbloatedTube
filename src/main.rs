@@ -281,6 +281,8 @@ struct Unbloated {
     /// Live filter for the left list (channels, a channel's videos, History), and its focus.
     list_filter: String,
     filter_focus: FocusHandle,
+    /// Cursor and selection of the text field being edited.
+    caret: Caret,
     /// Search mode: the header shows a full-width search field instead of the tabs.
     searching: bool,
     /// Tab to return to when leaving search.
@@ -417,6 +419,7 @@ impl Unbloated {
             searching: false,
             list_filter: String::new(),
             filter_focus: cx.focus_handle(),
+            caret: Caret::default(),
             prev_tab: Tab::Subscriptions,
             recent_searches: store::load_data("searches").unwrap_or_default(),
             groups: store::load_data("groups").unwrap_or_default(),
@@ -623,13 +626,14 @@ impl Unbloated {
     }
 
     fn search_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        match edit_text(&mut self.query, ev, cx) {
+        match edit_text(&mut self.caret, "search", &mut self.query, ev, cx) {
             Edit::Submit => {
                 self.run_search(cx);
                 window.blur();
             }
             Edit::Cancel => self.close_search(window, cx),
             Edit::Changed => {}
+            Edit::Moved => {}
             // Arrows etc. inside the field mustn't reach the shortcuts.
             Edit::Ignored => cx.stop_propagation(),
         }
@@ -738,7 +742,7 @@ impl Unbloated {
 
     /// Type to filter, Enter saves to the first match, Esc closes.
     fn save_key(&mut self, ev: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        match edit_text(&mut self.save_filter, ev, cx) {
+        match edit_text(&mut self.caret, "save", &mut self.save_filter, ev, cx) {
             Edit::Submit => {
                 if let Some(g) = self.save_targets().into_iter().next() {
                     self.save_to(g, cx);
@@ -746,6 +750,7 @@ impl Unbloated {
             }
             Edit::Cancel => self.close_save(cx),
             Edit::Changed => {}
+            Edit::Moved => {}
             Edit::Ignored => {
                 cx.stop_propagation();
                 return;
@@ -949,11 +954,10 @@ impl Unbloated {
                     .min_w_0()
                     .truncate()
                     .text_color(if empty { rgb(MUTED) } else { rgb(TEXT) })
-                    .child(match (empty, focused) {
-                        (true, true) => format!("▏{placeholder}"),
-                        (true, false) => format!("{placeholder} (Ctrl+F)"),
-                        (false, true) => format!("{}▏", self.list_filter),
-                        (false, false) => self.list_filter.clone(),
+                    .map(|d| match (empty, focused) {
+                        (_, true) => d.text_color(rgb(TEXT)).child(self.caret_text("filter", &self.list_filter, placeholder)),
+                        (true, false) => d.child(format!("{placeholder} (Ctrl+F)")),
+                        (false, false) => d.child(self.list_filter.clone()),
                     }),
             )
             .on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| {
@@ -961,7 +965,7 @@ impl Unbloated {
                 cx.notify();
             })
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
-                match edit_text(&mut this.list_filter, ev, cx) {
+                match edit_text(&mut this.caret, "filter", &mut this.list_filter, ev, cx) {
                     Edit::Submit => window.blur(),
                     Edit::Cancel => {
                         this.list_filter.clear();
@@ -971,11 +975,30 @@ impl Unbloated {
                         // The list changed under the selection.
                         this.vim_cursor = 0;
                     }
+                    Edit::Moved => {}
                     Edit::Ignored => {}
                 }
                 cx.stop_propagation();
                 cx.notify();
             }))
+    }
+
+    /// A focused text field's text with its cursor and selection; `placeholder` when empty.
+    fn caret_text(&self, id: &'static str, text: &str, placeholder: &str) -> gpui::Div {
+        let (pos, anchor) = self.caret.get(id, text);
+        let (start, end) = (pos.min(anchor), pos.max(anchor));
+        // Stretched to the line's height by the row.
+        let bar = || div().flex_none().w(px(1.)).bg(rgb(TEXT));
+        let part = |t: &str| (!t.is_empty()).then(|| div().flex_none().child(t.to_string()));
+        let row = div().flex().min_w_0().overflow_hidden().whitespace_nowrap();
+        if text.is_empty() {
+            return row.child(bar()).child(div().text_color(rgb(MUTED)).child(placeholder.to_string()));
+        }
+        row.children(part(&text[..start]))
+            .when(pos == start, |d| d.child(bar()))
+            .children(part(&text[start..end]).map(|d| d.bg(gpui::rgba((ACCENT << 8) | 0x66))))
+            .when(pos == end && start != end, |d| d.child(bar()))
+            .children(part(&text[end..]))
     }
 
     /// A full-width bar holding the filter field.
@@ -1036,7 +1059,7 @@ impl Unbloated {
     /// Typing a new group's name: Enter creates it (and, in a channel, adds that channel).
     fn new_group_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let Some(name) = &mut self.new_group else { return };
-        match edit_text(name, ev, cx) {
+        match edit_text(&mut self.caret, "group", name, ev, cx) {
             Edit::Submit => {
                 let name = name.trim().to_string();
                 self.new_group = None;
@@ -1055,6 +1078,7 @@ impl Unbloated {
                 window.blur();
             }
             Edit::Changed => {}
+            Edit::Moved => {}
             Edit::Ignored => {}
         }
         cx.stop_propagation();
@@ -1114,7 +1138,7 @@ impl Unbloated {
                     .border_color(rgb(MUTED))
                     .text_xs()
                     .text_color(if name.is_empty() && !focused { rgb(MUTED) } else { rgb(TEXT) })
-                    .child(if name.is_empty() && !focused { "Group name".to_string() } else { format!("{name}▏") })
+                    .map(|d| if focused { d.child(self.caret_text("group", name, "Group name")) } else { d.child(if name.is_empty() { "Group name".to_string() } else { name.clone() }) })
                     .on_key_down(cx.listener(Self::new_group_key))
             }
             None => self.chip("new-group", "+ Group", false).on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| {
@@ -2438,20 +2462,22 @@ impl Unbloated {
                     .cursor_text()
                     .map(|d| match (value.is_empty(), focused) {
                         (true, false) => d.text_color(rgb(MUTED)).child(hint),
-                        _ => d.text_color(rgb(TEXT)).child(format!("{value}{}", if focused { "▏" } else { "" })),
+                        (_, true) => d.text_color(rgb(TEXT)).child(self.caret_text(label, &value, hint)),
+                        _ => d.text_color(rgb(TEXT)).child(value.clone()),
                     })
                     .on_click_hinted(&self.hint_reg(), cx, move |_, _, window, cx| {
                         window.focus(&focus);
                         cx.notify();
                     })
                     .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, window, cx| {
-                        match edit_text(field(&mut this.settings), ev, cx) {
+                        match edit_text(&mut this.caret, label, field(&mut this.settings), ev, cx) {
                             Edit::Submit | Edit::Cancel => {
                                 window.blur();
                                 // Apply once editing is done, not on every keystroke.
                                 this.apply_player_settings(cx);
                             }
                             Edit::Changed => this.settings.save(),
+                            Edit::Moved => {}
                             Edit::Ignored => {
                 cx.stop_propagation();
                 return;
@@ -2582,20 +2608,22 @@ impl Unbloated {
             .cursor_text()
             .map(|d| match (self.settings_filter.is_empty(), focused) {
                 (true, false) => d.text_color(rgb(MUTED)).child("Search settings"),
-                _ => d.text_color(rgb(TEXT)).child(format!("{}{}", self.settings_filter, if focused { "▏" } else { "" })),
+                (_, true) => d.text_color(rgb(TEXT)).child(self.caret_text("settings", &self.settings_filter, "Search settings")),
+                _ => d.text_color(rgb(TEXT)).child(self.settings_filter.clone()),
             })
             .on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| {
                 window.focus(&this.settings_focus);
                 cx.notify();
             })
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
-                match edit_text(&mut this.settings_filter, ev, cx) {
+                match edit_text(&mut this.caret, "settings", &mut this.settings_filter, ev, cx) {
                     Edit::Submit => window.blur(),
                     Edit::Cancel => {
                         this.settings_filter.clear();
                         window.blur();
                     }
                     Edit::Changed => {}
+                    Edit::Moved => {}
                     Edit::Ignored => {
                 cx.stop_propagation();
                 return;
@@ -3303,9 +3331,9 @@ impl Unbloated {
                     .border_color(if focused { rgb(MUTED) } else { rgb(BORDER) })
                     .text_sm()
                     .map(|d| match (self.save_filter.is_empty(), focused) {
-                        (true, true) => d.text_color(rgb(MUTED)).child("Type to filter…"),
+                        (_, true) => d.text_color(rgb(TEXT)).child(self.caret_text("save", &self.save_filter, "Type to filter…")),
                         (true, false) => d.text_color(rgb(MUTED)).child("Click here, then type to filter"),
-                        _ => d.text_color(rgb(TEXT)).child(format!("{}{}", self.save_filter, if focused { "▏" } else { "" })),
+                        _ => d.text_color(rgb(TEXT)).child(self.save_filter.clone()),
                     }),
             )
             .child(div().flex().flex_col().flex_1().min_h_0().child(body))
@@ -3616,34 +3644,119 @@ fn divider(id: &'static str, split: Split, cx: &mut Context<Unbloated>) -> State
 
 enum Edit {
     Changed,
+    /// Only the cursor or selection moved.
+    Moved,
     Submit,
     Cancel,
     Ignored,
 }
 
 /// Minimal one-line text editing: type (any layout), Backspace, Ctrl+Backspace, Ctrl+V, Enter, Esc.
-fn edit_text(text: &mut String, ev: &KeyDownEvent, cx: &App) -> Edit {
+/// Where the text cursor is, in the one text field being edited (`id`), and where a
+/// selection started (`anchor`; equal to `pos` when nothing is selected). Byte offsets.
+#[derive(Default)]
+struct Caret {
+    id: &'static str,
+    pos: usize,
+    anchor: usize,
+}
+
+impl Caret {
+    /// (pos, anchor) in field `id`; a field the caret wasn't in starts with it at the end.
+    fn get(&self, id: &'static str, text: &str) -> (usize, usize) {
+        let fix = |p: usize| if p <= text.len() && text.is_char_boundary(p) { p } else { text.len() };
+        if self.id == id { (fix(self.pos), fix(self.anchor)) } else { (text.len(), text.len()) }
+    }
+}
+
+fn prev_char(t: &str, p: usize) -> usize {
+    t[..p].char_indices().next_back().map_or(0, |(i, _)| i)
+}
+
+fn next_char(t: &str, p: usize) -> usize {
+    t[p..].chars().next().map_or(p, |c| p + c.len_utf8())
+}
+
+fn prev_word(t: &str, p: usize) -> usize {
+    t[..p].trim_end_matches(' ').rfind(' ').map_or(0, |i| i + 1)
+}
+
+fn next_word(t: &str, p: usize) -> usize {
+    let rest = &t[p..];
+    let word = rest.trim_start_matches(' ');
+    p + (rest.len() - word.len()) + word.find(' ').unwrap_or(word.len())
+}
+
+/// Shared key handling for text fields: typing, Home/End, arrows (Ctrl: by word), Shift to
+/// select, Ctrl+A/C/X/V, Backspace/Delete.
+fn edit_text(caret: &mut Caret, id: &'static str, text: &mut String, ev: &KeyDownEvent, cx: &App) -> Edit {
     let k = &ev.keystroke;
     let m = &k.modifiers;
+    let (mut pos, mut anchor) = caret.get(id, text);
+    let (start, end) = (pos.min(anchor), pos.max(anchor));
+    let selected = start != end;
+    let mut edit = Edit::Changed;
+    // Move the cursor; with Shift, the selection's other end stays.
+    let mut move_to = |to: usize, pos: &mut usize, anchor: &mut usize| {
+        *pos = to;
+        if !m.shift {
+            *anchor = to;
+        }
+        edit = Edit::Moved;
+    };
     match k.key.as_str() {
         "enter" => return Edit::Submit,
         "escape" => return Edit::Cancel,
-        "backspace" if m.control => {
-            let kept = text.trim_end().rfind(' ').map_or(0, |i| i + 1);
-            text.truncate(kept);
+        "home" => move_to(0, &mut pos, &mut anchor),
+        "end" => move_to(text.len(), &mut pos, &mut anchor),
+        "left" if selected && !m.shift => move_to(start, &mut pos, &mut anchor),
+        "right" if selected && !m.shift => move_to(end, &mut pos, &mut anchor),
+        "left" => move_to(if m.control { prev_word(text, pos) } else { prev_char(text, pos) }, &mut pos, &mut anchor),
+        "right" => move_to(if m.control { next_word(text, pos) } else { next_char(text, pos) }, &mut pos, &mut anchor),
+        "a" if m.control => {
+            (anchor, pos) = (0, text.len());
+            edit = Edit::Moved;
+        }
+        "c" if m.control => {
+            if selected {
+                cx.write_to_clipboard(ClipboardItem::new_string(text[start..end].to_string()));
+            }
+            edit = Edit::Moved;
+        }
+        "x" if m.control && selected => {
+            cx.write_to_clipboard(ClipboardItem::new_string(text[start..end].to_string()));
+            text.replace_range(start..end, "");
+            (pos, anchor) = (start, start);
+        }
+        "backspace" | "delete" if selected => {
+            text.replace_range(start..end, "");
+            (pos, anchor) = (start, start);
         }
         "backspace" => {
-            text.pop();
+            let from = if m.control { prev_word(text, pos) } else { prev_char(text, pos) };
+            text.replace_range(from..pos, "");
+            (pos, anchor) = (from, from);
         }
-        "v" if m.control => {
-            if let Some(clip) = cx.read_from_clipboard().and_then(|c| c.text()) {
-                text.push_str(clip.lines().next().unwrap_or_default());
-            }
+        "delete" => {
+            let to = if m.control { next_word(text, pos) } else { next_char(text, pos) };
+            text.replace_range(pos..to, "");
         }
-        _ if !(m.control || m.alt || m.platform) && k.key_char.is_some() => text.push_str(k.key_char.as_deref().unwrap()),
-        _ => return Edit::Ignored,
+        key => {
+            let typed = if key == "v" && m.control {
+                cx.read_from_clipboard().and_then(|c| c.text()).map(|c| c.lines().next().unwrap_or_default().to_string())
+            } else if !(m.control || m.alt || m.platform) {
+                k.key_char.clone()
+            } else {
+                None
+            };
+            let Some(typed) = typed else { return Edit::Ignored };
+            text.replace_range(start..end, &typed);
+            pos = start + typed.len();
+            anchor = pos;
+        }
     }
-    Edit::Changed
+    *caret = Caret { id, pos, anchor };
+    edit
 }
 
 /// Hover tooltip content.
@@ -3762,8 +3875,8 @@ impl Render for Unbloated {
                 .truncate()
                 .cursor_text()
                 .map(|d| match (self.query.is_empty(), focused) {
-                    (true, _) => d.text_color(rgb(MUTED)).child(if focused { "▏Search YouTube" } else { "Search YouTube" }),
-                    (false, true) => d.text_color(rgb(TEXT)).child(format!("{}▏", self.query)),
+                    (_, true) => d.text_color(rgb(TEXT)).child(self.caret_text("search", &self.query, "Search YouTube")),
+                    (true, false) => d.text_color(rgb(MUTED)).child("Search YouTube"),
                     (false, false) => d.text_color(rgb(TEXT)).child(self.query.clone()),
                 })
                 .on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| {
