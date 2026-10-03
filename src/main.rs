@@ -156,7 +156,7 @@ enum Lower {
 
 /// Keyboard shortcuts (also listed in Settings). Keys reach mpv instead while the pointer is
 /// over the video; mpv's own defaults there are similar (Space, arrows, f).
-const SHORTCUTS: [(&str, &str); 13] = [
+const SHORTCUTS: [(&str, &str); 14] = [
     ("Space / K", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     ("J / L", "Back / forward 10 seconds"),
@@ -167,16 +167,17 @@ const SHORTCUTS: [(&str, &str); 13] = [
     ("N", "Next (Up next first)"),
     ("P", "Previous"),
     ("/", "Search"),
+    ("Ctrl-f", "Filter the list (channels, videos, history)"),
     ("?", "Show these shortcuts"),
     ("Esc", "Close the playlist picker, or go back from a channel"),
     ("Esc", "Close this sheet"),
 ];
 
 /// Cheatsheet columns: title and how many SHORTCUTS entries it takes, in order.
-const SHEET_GROUPS: [(&str, usize); 2] = [("Playback", 7), ("Navigation", 6)];
+const SHEET_GROUPS: [(&str, usize); 2] = [("Playback", 7), ("Navigation", 7)];
 
 /// Vim mode's keys (case matters: ⇧ means Shift).
-const VIM_SHORTCUTS: [(&str, &str); 19] = [
+const VIM_SHORTCUTS: [(&str, &str); 20] = [
     ("Space", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     (", / .", "Back / forward 10 seconds"),
@@ -193,11 +194,12 @@ const VIM_SHORTCUTS: [(&str, &str); 19] = [
     ("x", "Add the selected video to Up next"),
     ("f", "Click hints: type the label to click"),
     ("/", "Search"),
+    ("Ctrl-f", "Filter the list (channels, videos, history)"),
     ("?", "Show these shortcuts"),
     ("Esc", "Cancel / close / back"),
     ("Click / Double-click", "Pause / fullscreen (on the video)"),
 ];
-const VIM_SHEET_GROUPS: [(&str, usize); 2] = [("Playback", 7), ("Navigation", 12)];
+const VIM_SHEET_GROUPS: [(&str, usize); 2] = [("Playback", 7), ("Navigation", 13)];
 
 /// An entry of the left column's list, for Vim navigation.
 #[derive(Clone)]
@@ -269,6 +271,9 @@ struct Unbloated {
     hints: Option<(Vec<HintTarget>, String)>,
     /// Picture-in-picture: mpv plays in its own small always-on-top window.
     pip: bool,
+    /// Live filter for the left list (channels, a channel's videos, History), and its focus.
+    list_filter: String,
+    filter_focus: FocusHandle,
     /// Search mode: the header shows a full-width search field instead of the tabs.
     searching: bool,
     /// Tab to return to when leaving search.
@@ -401,6 +406,8 @@ impl Unbloated {
             confirm_unsub: None,
             pip: false,
             searching: false,
+            list_filter: String::new(),
+            filter_focus: cx.focus_handle(),
             prev_tab: Tab::Subscriptions,
             recent_searches: store::load_data("searches").unwrap_or_default(),
             groups: store::load_data("groups").unwrap_or_default(),
@@ -887,12 +894,99 @@ impl Unbloated {
     /// An open channel or playlist's videos; New uploads is limited to the active group.
     fn browser_videos(&self, tab: Tab) -> Vec<Video> {
         let b = self.browser_ref(tab);
-        let videos = b.videos.items();
-        if b.open.as_ref().is_some_and(|g| g.id == FEED_ID) {
-            videos.iter().filter(|v| self.in_active_group(v) && !self.is_muted(v)).cloned().collect()
-        } else {
-            videos.to_vec()
+        let feed = b.open.as_ref().is_some_and(|g| g.id == FEED_ID);
+        b.videos
+            .items()
+            .iter()
+            .filter(|v| !feed || (self.in_active_group(v) && !self.is_muted(v)))
+            .filter(|v| self.video_matches(v))
+            .cloned()
+            .collect()
+    }
+
+    /// Whether `text` matches the left list's filter (case-insensitive; empty matches all).
+    fn filter_match(&self, text: &str) -> bool {
+        let q = self.list_filter.trim().to_lowercase();
+        q.is_empty() || text.to_lowercase().contains(&q)
+    }
+
+    fn video_matches(&self, v: &Video) -> bool {
+        self.filter_match(&format!("{} {}", v.title, v.channel.as_deref().unwrap_or_default()))
+    }
+
+    /// The left list's filter field (Ctrl+F). Filters as you type; Esc clears.
+    fn filter_field(&self, placeholder: &'static str, window: &Window, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
+        let focused = self.filter_focus.is_focused(window);
+        let empty = self.list_filter.is_empty();
+        div()
+            .id("list-filter")
+            .track_focus(&self.filter_focus)
+            .flex()
+            .items_center()
+            .gap_2()
+            .min_w(px(160.))
+            .px_2()
+            .py(px(3.))
+            .rounded_md()
+            .bg(rgb(HOVER))
+            .border_1()
+            .border_color(if focused { rgb(MUTED) } else { rgb(BORDER) })
+            .text_xs()
+            .cursor_text()
+            .child(svg().path(icons::path("search")).size(px(12.)).flex_none().text_color(rgb(MUTED)))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(if empty { rgb(MUTED) } else { rgb(TEXT) })
+                    .child(match (empty, focused) {
+                        (true, true) => format!("▏{placeholder}"),
+                        (true, false) => format!("{placeholder} (Ctrl+F)"),
+                        (false, true) => format!("{}▏", self.list_filter),
+                        (false, false) => self.list_filter.clone(),
+                    }),
+            )
+            .on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| {
+                window.focus(&this.filter_focus);
+                cx.notify();
+            })
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                match edit_text(&mut this.list_filter, ev, cx) {
+                    Edit::Submit => window.blur(),
+                    Edit::Cancel => {
+                        this.list_filter.clear();
+                        window.blur();
+                    }
+                    Edit::Changed => {
+                        // The list changed under the selection.
+                        this.vim_cursor = 0;
+                    }
+                    Edit::Ignored => {}
+                }
+                cx.stop_propagation();
+                cx.notify();
+            }))
+    }
+
+    /// A full-width bar holding the filter field.
+    fn filter_bar(&self, placeholder: &'static str, window: &Window, cx: &mut Context<Self>) -> gpui::Div {
+        div()
+            .flex()
+            .px_3()
+            .py_2()
+            .border_b_1()
+            .border_color(rgb(BORDER))
+            .child(self.filter_field(placeholder, window, cx).flex_1())
+    }
+
+    /// Ctrl+F: focus the filter, where the current list has one.
+    fn focus_filter(&mut self, window: &mut Window) -> bool {
+        let has = matches!(self.tab, Tab::Subscriptions | Tab::Playlists | Tab::History);
+        if has {
+            window.focus(&self.filter_focus);
         }
+        has
     }
 
     fn save_groups(&self) {
@@ -1045,11 +1139,11 @@ impl Unbloated {
             );
         }
         bar = bar.child(self.new_group_chip(window, cx));
+        bar = bar.child(div().flex_1()).child(self.filter_field("Filter channels", window, cx).w(px(200.)));
         if let Some(name) = active {
             let confirming = self.confirm_delete_group.as_deref() == Some(name.as_str());
             bar = bar.child(
                 self.chip("delete-group", if confirming { "Delete group?" } else { "Delete" }, confirming)
-                    .ml_auto()
                     .when(!confirming, |d| d.text_color(rgb(MUTED)))
                     .tooltip(tip("Click twice to delete this group (channels stay subscribed)"))
                     .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.delete_group(name.clone(), cx)),
@@ -1476,6 +1570,11 @@ impl Unbloated {
             cx.notify();
             return;
         }
+        if k.modifiers.control && k.key == "f" && self.focus_filter(window) {
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         if k.modifiers.control || k.modifiers.alt || k.modifiers.platform {
             return;
         }
@@ -1551,6 +1650,9 @@ impl Unbloated {
             "k" | "up" => self.vim_move(-1, len, window),
             "C-d" => self.vim_move(page, len, window),
             "C-u" => self.vim_move(-page, len, window),
+            "C-f" => {
+                self.focus_filter(window);
+            }
             "g" if pending_g => self.vim_move(isize::MIN, len, window),
             "y" if pending_y => self.copy_link(cx),
             "y" => self.vim_y = true,
@@ -1737,11 +1839,12 @@ impl Unbloated {
         let mut all: Vec<Video> = self.history.items.iter().map(|w| w.video.clone()).collect();
         let seen: HashSet<String> = all.iter().map(|v| v.id.clone()).collect();
         all.extend(self.yt_history.items().iter().filter(|v| !seen.contains(&v.id)).cloned());
+        all.retain(|v| self.video_matches(v));
         let partial = self
             .history
             .items
             .iter()
-            .filter(|w| w.position > 30. && !w.finished)
+            .filter(|w| w.position > 30. && !w.finished && self.video_matches(&w.video))
             .take(4)
             .map(|w| w.video.clone())
             .collect();
@@ -1752,12 +1855,16 @@ impl Unbloated {
     /// with new videos, then the rest (each part A–Z).
     fn group_items(&self, tab: Tab, counts: &HashMap<String, usize>) -> Vec<Group> {
         let mut g: Vec<Group> = self.browser_ref(tab).groups.items().to_vec();
+        let filtering = !self.list_filter.trim().is_empty();
+        g.retain(|c| self.filter_match(&c.title));
         if tab == Tab::Subscriptions {
             if let Some(group) = self.active_group() {
                 g.retain(|c| group.channels.contains(&c.id));
             }
             g.sort_by_key(|g| !counts.contains_key(&g.id));
-            g.insert(0, Group { id: FEED_ID.into(), title: "New uploads".into(), url: ":ytsubs".into(), thumb: None });
+            if !filtering {
+                g.insert(0, Group { id: FEED_ID.into(), title: "New uploads".into(), url: ":ytsubs".into(), thumb: None });
+            }
         }
         g
     }
@@ -2053,7 +2160,17 @@ impl Unbloated {
 
     fn render_list(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.tab {
-            Tab::History => {}
+            Tab::History => {
+                let body = self.render_history(cx);
+                return div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .child(self.filter_bar("Filter history", window, cx))
+                    .child(div().flex().flex_col().flex_1().min_h_0().child(body))
+                    .into_any_element();
+            }
             Tab::Settings => return self.render_settings(window, cx),
             Tab::Search if self.query.trim().is_empty() || matches!(self.search, Load::Idle) => {
                 return self.render_recent_searches(cx);
@@ -2064,10 +2181,16 @@ impl Unbloated {
                     None => self.video_list("search", &self.search.items().to_vec(), Some(0), cx),
                 };
             }
-            tab => return self.render_browser(tab, window, cx),
+            tab => self.render_browser(tab, window, cx),
         }
+    }
+
+    fn render_history(&mut self, cx: &mut Context<Self>) -> AnyElement {
         // Videos played in unbloated-youtube first, then the rest of YouTube's history.
         let (partial, videos) = self.history_items();
+        if videos.is_empty() && !self.list_filter.trim().is_empty() {
+            return self.status("No matches.");
+        }
         if videos.is_empty() {
             if let Some(p) = self.placeholder(&self.yt_history, "Nothing here.", Rows::Videos) {
                 return p;
@@ -2527,9 +2650,11 @@ impl Unbloated {
             let channel_tabs = tab == Tab::Subscriptions && open.id != FEED_ID && self.settings.shorts;
             let videos = &self.browser_ref(tab).videos;
             let empty = if view == ChannelView::Shorts { "No Shorts." } else { "No videos." };
+            let shown = self.browser_videos(tab);
             let body = match self.placeholder(videos, empty, Rows::Videos) {
                 Some(p) => p,
-                None => self.video_list("group", &self.browser_videos(tab), Some(0), cx),
+                None if shown.is_empty() && !self.list_filter.trim().is_empty() => self.status("No matches."),
+                None => self.video_list("group", &shown, Some(0), cx),
             };
             return div()
                 .flex()
@@ -2577,6 +2702,7 @@ impl Unbloated {
                             ),
                     )
                 })
+                .child(self.filter_bar("Filter videos", window, cx))
                 .child(body)
                 .into_any_element();
         }
@@ -2586,7 +2712,11 @@ impl Unbloated {
         }
         let counts = Arc::new(if tab == Tab::Subscriptions { self.unseen_counts() } else { HashMap::new() });
         let g: Arc<[Group]> = self.group_items(tab, &counts).into();
-        let bar = (tab == Tab::Subscriptions).then(|| self.render_group_bar(window, cx));
+        let bar = if tab == Tab::Subscriptions {
+            self.render_group_bar(window, cx)
+        } else {
+            self.filter_bar("Filter playlists", window, cx)
+        };
         let list = uniform_list(
             list_id,
             g.len(),
@@ -2662,7 +2792,7 @@ impl Unbloated {
         )
         .track_scroll(self.vim_scroll.clone())
         .flex_1();
-        div().flex().flex_col().flex_1().min_h_0().children(bar).child(list).into_any_element()
+        div().flex().flex_col().flex_1().min_h_0().child(bar).child(list).into_any_element()
     }
 
     /// The video area: thumbnail underneath, mpv's embedded window placed on top of it.
@@ -3666,6 +3796,7 @@ impl Render for Unbloated {
             self.vim_positions.insert(std::mem::take(&mut self.vim_list), self.vim_cursor);
             self.vim_cursor = self.vim_positions.get(&key).copied().unwrap_or(0);
             self.vim_list = key;
+            self.list_filter.clear();
             self.vim_scroll.scroll_to_item(self.vim_cursor, ScrollStrategy::Center);
         }
         // Collected again during this frame's paint (see hint_target).
