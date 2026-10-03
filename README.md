@@ -135,6 +135,7 @@ remembered.
 | N / P | Next / previous |
 | C | Copy the video's link |
 | ⇧C | Copy the link at the current time (`y t` in Vim mode) |
+| O | Open the video in your browser (`o` in Vim mode) |
 | E | Lower pane (Recommended, Chapters, Comments, Up next) full height, and back (`e` in Vim mode) |
 | ⇧E | Player full height (hide the lower pane), and back |
 | Tab / ⇧Tab | Move a focus ring through every clickable thing (tabs, rows, buttons, switches); Enter or Space presses it, Esc clears it |

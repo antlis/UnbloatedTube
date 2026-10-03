@@ -4,6 +4,11 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Added
+- **`O` opens the video in your browser** (`o` in Vim mode), like the Open in browser button.
+
 ## 0.7.0 - 2026-10-03
 
 ### Added

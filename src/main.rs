@@ -198,7 +198,7 @@ enum Lower {
 
 /// Keyboard shortcuts (also listed in Settings). Keys reach mpv instead while the pointer is
 /// over the video; mpv's own defaults there are similar (Space, arrows, f).
-const SHORTCUTS: [(&str, &str); 24] = [
+const SHORTCUTS: [(&str, &str); 25] = [
     ("Space / K", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     ("J / L", "Back / forward 10 seconds"),
@@ -207,6 +207,7 @@ const SHORTCUTS: [(&str, &str); 24] = [
     ("↑ / ↓", "Volume up / down 5%"),
     ("C", "Copy the video's link"),
     ("⇧C", "Copy the link at the current time"),
+    ("O", "Open the video in your browser"),
     ("Click / Double-click", "Pause / fullscreen (on the video)"),
     ("N", "Next (Up next first)"),
     ("P", "Previous"),
@@ -229,7 +230,7 @@ const SHORTCUTS: [(&str, &str); 24] = [
 const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 15, 1)];
 
 /// Vim mode's keys (case matters: ⇧ means Shift).
-const VIM_SHORTCUTS: [(&str, &str); 30] = [
+const VIM_SHORTCUTS: [(&str, &str); 31] = [
     ("Space", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     (", / .", "Back / forward 10 seconds"),
@@ -239,6 +240,7 @@ const VIM_SHORTCUTS: [(&str, &str); 30] = [
     ("n / p", "Next / previous video"),
     ("y y", "Copy the video's link"),
     ("y t", "Copy the link at the current time"),
+    ("o", "Open the video in your browser"),
     ("Click / Double-click", "Pause / fullscreen (on the video)"),
     ("j / k", "Move down / up the list"),
     ("g g / ⇧G", "First / last item"),
@@ -1997,6 +1999,7 @@ impl Unbloated {
             "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" if !k.modifiers.shift => self.tab_number(k.key.parse().unwrap_or(0), cx),
             "c" if k.modifiers.shift => self.copy_link_at_time(cx),
             "c" => self.copy_link(cx),
+            "o" => self.open_in_browser(cx),
             "n" => {
                 if let Some(v) = self.next_video() {
                     self.play(v, None, cx);
@@ -2057,6 +2060,7 @@ impl Unbloated {
             "g" if pending_g => self.vim_move(isize::MIN, len, window),
             "y" if pending_y => self.copy_link(cx),
             "t" if pending_y => self.copy_link_at_time(cx),
+            "o" => self.open_in_browser(cx),
             "E" => self.toggle_player_full(cx),
             "e" => self.toggle_lower_full(window, cx),
             "B" => self.toggle_right_collapsed(cx),
