@@ -1156,10 +1156,6 @@ impl Unbloated {
             .flex()
             .flex_wrap()
             .gap_1()
-            .px_3()
-            .py_2()
-            .border_b_1()
-            .border_color(rgb(BORDER))
             .child(
                 self.chip("group-all", "All", active.is_none())
                     .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.select_group(None, cx)),
@@ -1167,12 +1163,13 @@ impl Unbloated {
         for (i, g) in self.groups.iter().enumerate() {
             let name = g.name.clone();
             bar = bar.child(
-                self.chip(("group", i), format!("{} {}", g.name, g.channels.len()), active.as_deref() == Some(g.name.as_str()))
+                self.chip(("group", i), g.name.clone(), active.as_deref() == Some(g.name.as_str()))
+                    // Channel count, dimmer than the name.
+                    .child(div().ml(px(6.)).opacity(0.6).child(g.channels.len().to_string()))
                     .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.select_group(Some(name.clone()), cx)),
             );
         }
         bar = bar.child(self.new_group_chip(window, cx));
-        bar = bar.child(div().flex_1()).child(self.filter_field("Filter channels", window, cx).w(px(200.)));
         if let Some(name) = active {
             let confirming = self.confirm_delete_group.as_deref() == Some(name.as_str());
             bar = bar.child(
@@ -1182,7 +1179,17 @@ impl Unbloated {
                     .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.delete_group(name.clone(), cx)),
             );
         }
-        bar
+        // The filter on top, where the other tabs have it; the group chips under it.
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .px_3()
+            .py_2()
+            .border_b_1()
+            .border_color(rgb(BORDER))
+            .child(self.filter_field("Filter channels", window, cx))
+            .child(bar)
     }
 
     /// In a channel's header: which groups the channel belongs to (click to toggle).
