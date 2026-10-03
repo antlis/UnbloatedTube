@@ -176,6 +176,7 @@ pub struct Settings {
     pub like_button: bool,
     pub dislike_button: bool,
     pub share_button: bool,
+    pub share_time_button: bool,
     pub browser_button: bool,
     pub download_button: bool,
     /// Video info: view counts, upload date, channel subscriber counts.
@@ -230,6 +231,7 @@ impl Default for Settings {
             like_button: false,
             dislike_button: false,
             share_button: true,
+            share_time_button: true,
             browser_button: true,
             download_button: true,
             show_views: true,

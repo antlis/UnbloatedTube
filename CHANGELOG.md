@@ -7,6 +7,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 ## Unreleased
 
 ### Added
+- **Copy link at the current time**: a clock button after Share, `⇧C` (`y t` in Vim mode); the
+  link opens the video at the current position (`?t=`). Switch in Settings > Player buttons.
 - Right-click a channel in Subscriptions for a menu with **Unsubscribe** (asks for a second click
   to confirm). The menu closes by itself 2 seconds after the pointer leaves it, or on Esc or a click elsewhere.
 

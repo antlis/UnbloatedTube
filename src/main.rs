@@ -147,13 +147,14 @@ const TEXT_FIELDS: [(&str, &str, fn(&mut Settings) -> &mut String); 3] = [
     ("Download folder", "Empty for your Downloads folder; ~/ works", |s| &mut s.download_dir),
 ];
 
-const BUTTON_TOGGLES: [Toggle; 8] = [
+const BUTTON_TOGGLES: [Toggle; 9] = [
     ("Subscribe", "Subscribe / unsubscribe to the video's channel", |s| &mut s.subscribe_button),
     ("Save to playlist", "Add the video to Watch later or one of your playlists", |s| &mut s.save_button),
     ("Like", "Like the video, or remove your like", |s| &mut s.like_button),
     ("Dislike", "Dislike the video, or remove your dislike", |s| &mut s.dislike_button),
     ("Volume", "Mute button and volume bar next to the speed button", |s| &mut s.volume_control),
     ("Share", "Copy the video's link", |s| &mut s.share_button),
+    ("Share at current time", "Copy the video's link so it opens at the current time", |s| &mut s.share_time_button),
     ("Open in browser", "Open the video's page in your default browser", |s| &mut s.browser_button),
     ("Download", "Save the video to your Downloads folder", |s| &mut s.download_button),
 ];
@@ -192,7 +193,7 @@ enum Lower {
 
 /// Keyboard shortcuts (also listed in Settings). Keys reach mpv instead while the pointer is
 /// over the video; mpv's own defaults there are similar (Space, arrows, f).
-const SHORTCUTS: [(&str, &str); 15] = [
+const SHORTCUTS: [(&str, &str); 16] = [
     ("Space / K", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     ("J / L", "Back / forward 10 seconds"),
@@ -200,6 +201,7 @@ const SHORTCUTS: [(&str, &str); 15] = [
     ("M", "Mute"),
     ("↑ / ↓", "Volume up / down 5%"),
     ("C", "Copy the video's link"),
+    ("⇧C", "Copy the link at the current time"),
     ("Click / Double-click", "Pause / fullscreen (on the video)"),
     ("N", "Next (Up next first)"),
     ("P", "Previous"),
@@ -211,10 +213,10 @@ const SHORTCUTS: [(&str, &str); 15] = [
 ];
 
 /// Cheatsheet groups: title, how many SHORTCUTS entries it takes (in order), and its column.
-const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 8, 0), ("Navigation", 7, 1)];
+const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 7, 1)];
 
 /// Vim mode's keys (case matters: ⇧ means Shift).
-const VIM_SHORTCUTS: [(&str, &str); 21] = [
+const VIM_SHORTCUTS: [(&str, &str); 22] = [
     ("Space", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     (", / .", "Back / forward 10 seconds"),
@@ -223,6 +225,7 @@ const VIM_SHORTCUTS: [(&str, &str); 21] = [
     ("+ / -", "Volume up / down 5%"),
     ("n / p", "Next / previous video"),
     ("y y", "Copy the video's link"),
+    ("y t", "Copy the link at the current time"),
     ("Click / Double-click", "Pause / fullscreen (on the video)"),
     ("j / k", "Move down / up the list"),
     ("g g / ⇧G", "First / last item"),
@@ -237,7 +240,7 @@ const VIM_SHORTCUTS: [(&str, &str); 21] = [
     ("?", "Show these shortcuts"),
     ("Esc", "Cancel / close / back"),
 ];
-const VIM_SHEET_GROUPS: [(&str, usize, usize); 3] = [("Playback", 9, 0), ("Navigation", 8, 1), ("General", 4, 0)];
+const VIM_SHEET_GROUPS: [(&str, usize, usize); 3] = [("Playback", 10, 0), ("Navigation", 8, 1), ("General", 4, 0)];
 
 /// An entry of the left column's list, for Vim navigation.
 #[derive(Clone)]
@@ -1781,6 +1784,16 @@ impl Unbloated {
         cx.notify();
     }
 
+    /// Copy a link that opens at the current playback position (the resume position when not playing).
+    fn copy_link_at_time(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.current.as_ref().map(|v| v.id.clone()) else { return };
+        let secs = self.state.as_ref().map_or_else(|| self.history.position(&id), |s| s.position) as u64;
+        let link = if secs > 0 { format!("https://youtu.be/{id}?t={secs}") } else { format!("https://youtu.be/{id}") };
+        cx.write_to_clipboard(ClipboardItem::new_string(link.clone()));
+        self.notice = Some(format!("Link copied at {}: {link}", fmt_duration(secs as f64)));
+        cx.notify();
+    }
+
     /// Change the volume by `delta` percent (unmuting when raising it).
     fn change_volume(&mut self, delta: f32, cx: &mut Context<Self>) {
         if delta > 0. && self.state.as_ref().is_some_and(|s| s.muted) {
@@ -1851,6 +1864,7 @@ impl Unbloated {
             "m" => self.player.toggle_mute(),
             "up" | "=" => self.change_volume(5., cx),
             "down" | "-" => self.change_volume(-5., cx),
+            "c" if k.modifiers.shift => self.copy_link_at_time(cx),
             "c" => self.copy_link(cx),
             "n" => {
                 if let Some(v) = self.next_video() {
@@ -1911,6 +1925,7 @@ impl Unbloated {
             }
             "g" if pending_g => self.vim_move(isize::MIN, len, window),
             "y" if pending_y => self.copy_link(cx),
+            "t" if pending_y => self.copy_link_at_time(cx),
             "y" => self.vim_y = true,
             "g" => self.vim_g = true,
             "G" => self.vim_move(isize::MAX, len, window),
@@ -3368,7 +3383,7 @@ impl Unbloated {
                             }),
                     )
                     .when(self.settings.volume_control, |d| d.child(self.volume_bar(cx)))
-                    .when(self.account_buttons() || self.settings.share_button || self.settings.browser_button || self.settings.download_button, |d| {
+                    .when(self.account_buttons() || self.settings.share_button || self.settings.share_time_button || self.settings.browser_button || self.settings.download_button, |d| {
                         d.child(div().w(px(8.)))
                     })
                     .when(self.account_buttons(), |d| d.children(self.account_buttons_els(cx)))
@@ -3389,6 +3404,13 @@ impl Unbloated {
                         d.child(
                             icon_button("share", "share", format!("Copy link ({key})"), true)
                                 .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.copy_link(cx)),
+                        )
+                    })
+                    .when(self.settings.share_time_button, |d| {
+                        let key = if self.settings.vim { "yt" } else { "⇧C" };
+                        d.child(
+                            icon_button("share-time", "recent", format!("Copy link at the current time ({key})"), true)
+                                .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.copy_link_at_time(cx)),
                         )
                     })
                     .when(self.settings.browser_button, |d| {

@@ -79,7 +79,7 @@ list, your playlists, your history, search and a player.
 
 ### Account actions
 
-Subscribe/unsubscribe, save to playlist, like, dislike, copy link, open in browser and download, all as
+Subscribe/unsubscribe, save to playlist, like, dislike, copy link (also at the current time), open in browser and download, all as
 icon buttons with tooltips. Each one can be hidden in Settings (like and dislike are hidden by
 default).
 
@@ -90,7 +90,7 @@ Everything is a toggle or a field on the Settings page, which has its own search
 | Group | Options |
 | --- | --- |
 | Tabs & lists | Subscriptions, Playlists, History, Recommendations, Chapters, **Shorts** (everywhere) |
-| Buttons | Subscribe, Save to playlist, Like, Dislike, Volume, Share, Open in browser, Download |
+| Buttons | Subscribe, Save to playlist, Like, Dislike, Volume, Share, Share at current time, Open in browser, Download |
 | Player | Max quality (480p–4K), autoplay, **audio only**, prefer hardware-friendly codecs (skip AV1), hardware decoding, speed |
 | SponsorBlock | **Skip sponsored segments**, choosing which: sponsor, self-promotion, like/subscribe reminders, intro, credits, preview, filler, non-music |
 | Video info | **Views**, **upload date** (playing video), **subscriber counts** (channels) |
@@ -113,6 +113,7 @@ remembered.
 | ↑ / ↓ | Volume up / down 5% (`+` / `-` in Vim mode) |
 | N / P | Next / previous |
 | C | Copy the video's link |
+| ⇧C | Copy the link at the current time (`y t` in Vim mode) |
 | / | Search |
 | Ctrl+F | Filter the list |
 | Esc | Close / back |
