@@ -1909,7 +1909,16 @@ impl Unbloated {
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child(div().text_sm().text_color(rgb(TEXT)).truncate().child(video.title.clone()))
+                    // Titles are truncated; hovering shows the whole one.
+                    .child(
+                        div()
+                            .id("title")
+                            .text_sm()
+                            .text_color(rgb(TEXT))
+                            .truncate()
+                            .child(video.title.clone())
+                            .tooltip(tip(video.title.clone())),
+                    )
                     .child(div().text_xs().text_color(rgb(MUTED)).truncate().child(meta)),
             )
             .child(action)
@@ -2555,11 +2564,13 @@ impl Unbloated {
                             .child(avatar)
                             .child(
                                 div()
+                                    .id("name")
                                     .flex_1()
                                     .min_w_0()
                                     .truncate()
                                     .when(muted, |d| d.text_color(rgb(MUTED)))
-                                    .child(group.title.clone()),
+                                    .child(group.title.clone())
+                                    .tooltip(tip(group.title.clone())),
                             )
                             .when(bell, |d| d.child(svg().path(icons::path("bell")).size(px(12.)).flex_none().text_color(rgb(MUTED))))
                             .when(muted, |d| d.child(svg().path(icons::path("muted")).size(px(13.)).flex_none().text_color(rgb(MUTED))))
