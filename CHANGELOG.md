@@ -13,6 +13,11 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
   to confirm). The menu closes by itself 2 seconds after the pointer leaves it, or on Esc or a click elsewhere.
 
 
+### Changed
+- Player buttons are in two rows again: playback and volume on top, account and other actions
+  (subscribe, save, like, download, share, share at time, open in browser) below. The time stays
+  beside the views and date.
+
 ## 0.2.0 - 2026-10-03
 
 ### Added

@@ -52,7 +52,7 @@ fn themed(c: u32) -> gpui::Rgba {
 /// Text and icons on the accent color: light in both themes.
 const ON_ACCENT: u32 = 0xf5f5f5;
 /// Least height of the player pane: below this the controls wouldn't fit under the video.
-const PLAYER_MIN_H: f32 = 400.;
+const PLAYER_MIN_H: f32 = 430.;
 const ROW_H: f32 = 64.;
 /// Height of the column headers (tabs on the left, window buttons on the right), border included.
 const HEADER_H: f32 = 41.;
@@ -3383,43 +3383,48 @@ impl Unbloated {
                             }),
                     )
                     .when(self.settings.volume_control, |d| d.child(self.volume_bar(cx)))
-                    .when(self.account_buttons() || self.settings.share_button || self.settings.share_time_button || self.settings.browser_button || self.settings.download_button, |d| {
-                        d.child(div().w(px(8.)))
-                    })
-                    .when(self.account_buttons(), |d| d.children(self.account_buttons_els(cx)))
-                    .when(self.settings.download_button, |d| {
-                        let (tip_text, enabled) = match self.downloads.get(&video.id) {
-                            Some(Download { result: None, progress, .. }) => (format!("Downloading {progress:.0}%"), false),
-                            Some(Download { result: Some(Ok(f)), .. }) => (format!("Downloaded to {f}"), false),
-                            _ => ("Download".to_string(), true),
-                        };
-                        let v = video.clone();
-                        d.child(
-                            icon_button("download", "download", tip_text, enabled)
-                                .when(enabled, |d| d.on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.download(v.clone(), cx))),
-                        )
-                    })
-                    .when(self.settings.share_button, |d| {
-                        let key = if self.settings.vim { "yy" } else { "C" };
-                        d.child(
-                            icon_button("share", "share", format!("Copy link ({key})"), true)
-                                .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.copy_link(cx)),
-                        )
-                    })
-                    .when(self.settings.share_time_button, |d| {
-                        let key = if self.settings.vim { "yt" } else { "⇧C" };
-                        d.child(
-                            icon_button("share-time", "recent", format!("Copy link at the current time ({key})"), true)
-                                .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.copy_link_at_time(cx)),
-                        )
-                    })
-                    .when(self.settings.browser_button, |d| {
-                        d.child(
-                            icon_button("browser", "browser", "Open in browser", true)
-                                .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.open_in_browser(cx)),
-                        )
-                    })
             )
+            // Second row: what you can do with this video.
+            .when(self.account_buttons() || self.settings.share_button || self.settings.share_time_button || self.settings.browser_button || self.settings.download_button, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .items_center()
+                            .when(self.account_buttons(), |d| d.children(self.account_buttons_els(cx)))
+                            .when(self.settings.download_button, |d| {
+                                let (tip_text, enabled) = match self.downloads.get(&video.id) {
+                                    Some(Download { result: None, progress, .. }) => (format!("Downloading {progress:.0}%"), false),
+                                    Some(Download { result: Some(Ok(f)), .. }) => (format!("Downloaded to {f}"), false),
+                                    _ => ("Download".to_string(), true),
+                                };
+                                let v = video.clone();
+                                d.child(
+                                    icon_button("download", "download", tip_text, enabled)
+                                        .when(enabled, |d| d.on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.download(v.clone(), cx))),
+                                )
+                            })
+                            .when(self.settings.share_button, |d| {
+                                let key = if self.settings.vim { "yy" } else { "C" };
+                                d.child(
+                                    icon_button("share", "share", format!("Copy link ({key})"), true)
+                                        .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.copy_link(cx)),
+                                )
+                            })
+                            .when(self.settings.share_time_button, |d| {
+                                let key = if self.settings.vim { "yt" } else { "⇧C" };
+                                d.child(
+                                    icon_button("share-time", "recent", format!("Copy link at the current time ({key})"), true)
+                                        .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.copy_link_at_time(cx)),
+                                )
+                            })
+                            .when(self.settings.browser_button, |d| {
+                                d.child(
+                                    icon_button("browser", "browser", "Open in browser", true)
+                                        .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.open_in_browser(cx)),
+                                )
+                            })
+                )
+            })
     }
 
     /// Mute button and a ten-step volume bar (click a step to set the volume).
