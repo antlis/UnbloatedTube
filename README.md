@@ -4,8 +4,9 @@ A lightweight, configurable YouTube desktop client, written in Rust with
 [GPUI](https://crates.io/crates/gpui) (the UI framework behind the Zed editor), with
 [mpv](https://mpv.io) for playback and [yt-dlp](https://github.com/yt-dlp/yt-dlp) for data.
 
-It is **keyboard-driven**: playback, lists, tabs, panes and column layout all have shortcuts, and
-an optional Vim mode adds Vimium-style [hint mode](#vim-mode) to click anything without the mouse.
+It is **keyboard-driven**: playback, lists, tabs, panes and column layout all have shortcuts;
+`Tab` moves a visible focus ring through every button, row and switch (`Enter` presses it); and an
+optional Vim mode adds Vimium-style [hint mode](#vim-mode) to click anything without the mouse.
 
 ## Why
 
