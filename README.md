@@ -301,17 +301,15 @@ Without it, search and playback still work.
   (`nix/unstable.nix`) for yt-dlp, deno and mpv, which is fine for `nix-env` but not what a
   nixpkgs package would do.
 - **AUR package** (Arch). `packaging/aur/PKGBUILD` (with `.SRCINFO`) for `unbloated-youtube-bin`
-  is written: it downloads the v0.8.0 release archive, pins its sha256, depends on `mpv`,
+  is written: it downloads the v0.8.1 release archive, pins its sha256, depends on `mpv`,
   `yt-dlp`, `deno`, xkbcommon, xcb, Wayland and a Vulkan loader and driver, and installs the
-  binary, desktop entry, icon and README. Tested with `makepkg --nodeps` on NixOS (source
-  checksum passes, `package()` stages the right files); not tested on Arch, so the dependency
-  names are from memory, and the archive's file modes in that test looked wrong (likely the Nix
-  `fakeroot`, but unchecked). Not published yet: that needs an AUR account and SSH key, then
-  `git push` of the PKGBUILD and `.SRCINFO` to `ssh://aur@aur.archlinux.org/unbloated-youtube-bin.git`.
+  binary, desktop entry, icon, README and LICENSE. Tested with `makepkg --nodeps` on NixOS
+  (checksum passes, `package()` stages the right files); not tested on Arch, so the dependency
+  names are from memory. Publishing is a `git push` of the PKGBUILD and `.SRCINFO` to
+  `ssh://aur@aur.archlinux.org/unbloated-youtube-bin.git`, which needs the AUR account's SSH key.
   Each release means bumping `pkgver` and `sha256sums` and regenerating `.SRCINFO`
-  (`makepkg --printsrcinfo`), which a release step could do. The license is MIT, but the v0.8.0
-  archive has no LICENSE file: from the next release the archive carries it, and `package()`
-  should then install it to `/usr/share/licenses/$pkgname/`. A source or `-git` package (compiles all ~730 crates) comes second.
+  (`makepkg --printsrcinfo`), which a release step could do. A source or `-git` package
+  (compiles all ~730 crates) comes second.
 - **crates.io.** `cargo install unbloated-youtube`. All dependencies are already on crates.io
   (no git or path dependencies), and `Cargo.toml` now has `description`, `license` and
   `repository`, so it is ready to publish (`cargo publish --dry-run` not tried yet). It
