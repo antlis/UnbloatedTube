@@ -191,7 +191,7 @@ enum Lower {
 
 /// Keyboard shortcuts (also listed in Settings). Keys reach mpv instead while the pointer is
 /// over the video; mpv's own defaults there are similar (Space, arrows, f).
-const SHORTCUTS: [(&str, &str); 20] = [
+const SHORTCUTS: [(&str, &str); 21] = [
     ("Space / K", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     ("J / L", "Back / forward 10 seconds"),
@@ -207,6 +207,7 @@ const SHORTCUTS: [(&str, &str); 20] = [
     ("[ / ]", "Previous / next lower tab (Recommended, Chapters, Up next)"),
     ("1 - 4", "Switch tab: Subscriptions, Playlists, History, Settings"),
     ("B", "Hide or show the left column"),
+    ("⇧B", "Hide or show the right column"),
     ("/", "Search"),
     ("Ctrl-f", "Filter the list (channels, videos, history)"),
     ("?", "Show these shortcuts"),
@@ -215,10 +216,10 @@ const SHORTCUTS: [(&str, &str); 20] = [
 ];
 
 /// Cheatsheet groups: title, how many SHORTCUTS entries it takes (in order), and its column.
-const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 11, 1)];
+const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 12, 1)];
 
 /// Vim mode's keys (case matters: ⇧ means Shift).
-const VIM_SHORTCUTS: [(&str, &str); 26] = [
+const VIM_SHORTCUTS: [(&str, &str); 27] = [
     ("Space", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     (", / .", "Back / forward 10 seconds"),
@@ -241,12 +242,13 @@ const VIM_SHORTCUTS: [(&str, &str); 26] = [
     ("[ / ]", "Previous / next lower tab (Recommended, Chapters, Up next)"),
     ("1 - 4", "Switch tab: Subscriptions, Playlists, History, Settings"),
     ("b", "Hide or show the left column"),
+    ("⇧B", "Hide or show the right column"),
     ("/", "Search"),
     ("Ctrl-f", "Filter the list (channels, videos, history)"),
     ("?", "Show these shortcuts"),
     ("Esc", "Cancel / close / back"),
 ];
-const VIM_SHEET_GROUPS: [(&str, usize, usize); 3] = [("Playback", 10, 0), ("Navigation", 12, 1), ("General", 4, 0)];
+const VIM_SHEET_GROUPS: [(&str, usize, usize); 3] = [("Playback", 10, 0), ("Navigation", 13, 1), ("General", 4, 0)];
 
 /// An entry of the left column's list, for Vim navigation.
 #[derive(Clone)]
@@ -355,6 +357,8 @@ struct Unbloated {
     lower_full: bool,
     /// The left column is hidden (its width setting is kept for when it comes back).
     left_collapsed: bool,
+    /// The right column (player and lower pane) is hidden; the left one takes the window.
+    right_collapsed: bool,
     /// Right-click menu on a subscription: the channel, where it was opened and when (it closes by itself).
     channel_menu: Option<(Group, gpui::Point<Pixels>, Instant)>,
     /// The pointer is over the menu (it closes 2 seconds after the pointer is away).
@@ -475,6 +479,7 @@ impl Unbloated {
             confirm_unsub: None,
             lower_full: false,
             left_collapsed: false,
+            right_collapsed: false,
             channel_menu: None,
             menu_hovered: false,
             pip: false,
@@ -845,6 +850,7 @@ impl Unbloated {
             && !self.show_keys
             && !self.pip
             && !self.lower_full
+            && !self.right_collapsed
             // Audio only: keep showing the thumbnail.
             && !self.settings.audio_only;
         if let Some(e) = &self.embed {
@@ -1799,8 +1805,18 @@ impl Unbloated {
         cx.notify();
     }
 
+    /// At most one column is hidden: hiding one brings the other back.
     fn toggle_left_collapsed(&mut self, cx: &mut Context<Self>) {
         self.left_collapsed = !self.left_collapsed;
+        self.right_collapsed = false;
+        self.sync_embed();
+        cx.notify();
+    }
+
+    fn toggle_right_collapsed(&mut self, cx: &mut Context<Self>) {
+        self.right_collapsed = !self.right_collapsed;
+        self.left_collapsed = false;
+        self.sync_embed();
         cx.notify();
     }
 
@@ -1896,6 +1912,7 @@ impl Unbloated {
             "up" | "=" => self.change_volume(5., cx),
             "down" | "-" => self.change_volume(-5., cx),
             "e" => self.toggle_lower_full(window, cx),
+            "b" if k.modifiers.shift => self.toggle_right_collapsed(cx),
             "b" => self.toggle_left_collapsed(cx),
             "[" => self.step_lower(-1, cx),
             "]" => self.step_lower(1, cx),
@@ -1963,6 +1980,7 @@ impl Unbloated {
             "y" if pending_y => self.copy_link(cx),
             "t" if pending_y => self.copy_link_at_time(cx),
             "e" => self.toggle_lower_full(window, cx),
+            "B" => self.toggle_right_collapsed(cx),
             "b" => self.toggle_left_collapsed(cx),
             "[" => self.step_lower(-1, cx),
             "]" => self.step_lower(1, cx),
@@ -4401,8 +4419,8 @@ impl Render for Unbloated {
         let left = div()
             .flex()
             .flex_col()
-            .w(relative(self.settings.split))
-            .flex_none()
+            .when(self.right_collapsed, |d| d.flex_1())
+            .when(!self.right_collapsed, |d| d.w(relative(self.settings.split)).flex_none())
             .min_w_0()
             .child(header)
             .child(header_bar)
@@ -4527,7 +4545,7 @@ impl Render for Unbloated {
             .text_color(themed(TEXT))
             .children((!self.left_collapsed).then_some(left))
             .child(divider("split-columns", Split::Columns, cx))
-            .child(right)
+            .children((!self.right_collapsed).then_some(right))
             .children(self.render_channel_menu(cx))
             .children(self.render_toasts())
             .children(sheet)
@@ -4538,12 +4556,14 @@ impl Render for Unbloated {
                 let size = window.viewport_size();
                 match split {
                     Split::Columns => {
-                        // Dragged to the edge: hide the column, keeping its width for later.
+                        // Dragged to an edge: hide that column, keeping the width for later.
                         let at = e.position.x / size.width;
                         this.left_collapsed = at < 0.08;
-                        if !this.left_collapsed {
+                        this.right_collapsed = at > 0.92;
+                        if !this.left_collapsed && !this.right_collapsed {
                             this.settings.split = at.clamp(0.2, 0.8);
                         }
+                        this.sync_embed();
                     }
                     Split::Player => {
                         this.settings.player = (e.position.y / size.height).clamp(0.02, 0.9);
