@@ -4,6 +4,13 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Added
+- Right-click a channel in Subscriptions for a menu with **Unsubscribe** (asks for a second click
+  to confirm). The menu closes by itself 2 seconds after the pointer leaves it, or on Esc or a click elsewhere.
+
+
 ## 0.2.0 - 2026-10-03
 
 ### Added

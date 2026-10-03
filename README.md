@@ -30,6 +30,7 @@ list, your playlists, your history, search and a player.
 
 - **Subscriptions as a channel list**: avatars, A–Z, with channels that have new uploads on
   top with an unseen count. Click a channel for its videos (**Videos | Shorts** tabs).
+- **Unsubscribe from the list**: right-click a channel, then confirm with a second click.
 - **New uploads**: one feed of the latest videos from all your subscriptions.
 - **Channel groups**: put channels into groups (e.g. *Music*, *Tech*) and filter the channel
   list and the New uploads feed by group.

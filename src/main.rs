@@ -342,6 +342,10 @@ struct Unbloated {
     confirm_delete_group: Option<String>,
     /// Channel waiting for the second click on "Unsubscribe?".
     confirm_unsub: Option<String>,
+    /// Right-click menu on a subscription: the channel, where it was opened and when (it closes by itself).
+    channel_menu: Option<(Group, gpui::Point<Pixels>, Instant)>,
+    /// The pointer is over the menu (it closes 2 seconds after the pointer is away).
+    menu_hovered: bool,
     /// The keyboard shortcuts card (opened with ?).
     show_keys: bool,
     settings_filter: String,
@@ -456,6 +460,8 @@ impl Unbloated {
             lower: Lower::Recommended,
             show_keys: false,
             confirm_unsub: None,
+            channel_menu: None,
+            menu_hovered: false,
             pip: false,
             searching: false,
             list_filter: String::new(),
@@ -869,6 +875,11 @@ impl Unbloated {
             }
             (Some(n), _) => self.notice_seen = Some((n.clone(), now)),
         }
+        if !self.menu_hovered && self.channel_menu.as_ref().is_some_and(|(_, _, at)| at.elapsed() > Duration::from_secs(2)) {
+            self.channel_menu = None;
+            self.confirm_unsub = None;
+            cx.notify();
+        }
         // Re-render once when a finished download's line should disappear.
         if self.downloads.values().any(|d| d.done_at.is_some_and(|t| (6.0..6.3).contains(&t.elapsed().as_secs_f32()))) {
             cx.notify();
@@ -1251,6 +1262,76 @@ impl Unbloated {
             );
         }
         row.child(self.new_group_chip(window, cx))
+    }
+
+    /// The right-click menu of a subscription: a backdrop that closes it and the menu at the click.
+    fn render_channel_menu(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        let (g, pos, _) = self.channel_menu.clone()?;
+        let confirming = self.confirm_unsub.as_deref() == Some(g.id.as_str());
+        fn close(this: &mut Unbloated, cx: &mut Context<Unbloated>) {
+            this.channel_menu = None;
+            this.confirm_unsub = None;
+            cx.notify();
+        }
+        Some(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .child(
+                    div()
+                        .id("channel-menu-backdrop")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .occlude()
+                        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| close(this, cx)))
+                        .on_mouse_down(MouseButton::Right, cx.listener(|this, _, _, cx| close(this, cx))),
+                )
+                .child(
+                    div()
+                        .id("channel-menu")
+                        .absolute()
+                        .left(pos.x)
+                        .top(pos.y)
+                        .occlude()
+                        .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                            this.menu_hovered = *hovered;
+                            if let (false, Some((_, _, at))) = (*hovered, &mut this.channel_menu) {
+                                *at = Instant::now();
+                            }
+                        }))
+                        .w(px(220.))
+                        .py_1()
+                        .rounded_md()
+                        .bg(themed(HOVER))
+                        .border_1()
+                        .border_color(themed(BORDER))
+                        .shadow_lg()
+                        .child(div().px_3().py_1().text_xs().text_color(themed(MUTED)).truncate().child(g.title.clone()))
+                        .child(
+                            div()
+                                .id("channel-menu-unsub")
+                                .px_3()
+                                .py_2()
+                                .text_sm()
+                                .cursor_pointer()
+                                .text_color(if confirming { themed(ACCENT) } else { themed(TEXT) })
+                                .hover(|d| d.bg(themed(BORDER)))
+                                .child(if confirming { "Click again to unsubscribe" } else { "Unsubscribe" })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.toggle_channel_sub(g.clone(), true, cx);
+                                    // The second click did it; the first only asked for confirmation.
+                                    if this.confirm_unsub.is_none() {
+                                        this.channel_menu = None;
+                                    }
+                                    cx.notify();
+                                })),
+                        ),
+                ),
+        )
     }
 
     /// Subscribe to `channel`, or unsubscribe after a confirming second click.
@@ -1731,6 +1812,13 @@ impl Unbloated {
     /// Keyboard shortcuts; see SHORTCUTS. Text fields stop the keys they use from reaching here.
     fn shortcut(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &ev.keystroke;
+        if self.channel_menu.is_some() && k.key == "escape" {
+            self.channel_menu = None;
+            self.confirm_unsub = None;
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         if self.settings.vim && self.vim_key(ev, window, cx) {
             cx.stop_propagation();
             cx.notify();
@@ -2972,8 +3060,21 @@ impl Unbloated {
                         let selected = this.vim_selected(i);
                         let muted = this.flags.muted.contains(&group.id);
                         let bell = this.flags.notify.contains(&group.id);
+                        // Right-click a subscribed channel (not "New uploads") for its menu.
+                        let menu_group = (tab == Tab::Subscriptions && group.id.starts_with("UC") && this.cfg.has_auth()).then(|| group.clone());
                         div()
                             .id(i)
+                            .when_some(menu_group, |d, g| {
+                                d.on_mouse_down(
+                                    MouseButton::Right,
+                                    cx.listener(move |this, ev: &gpui::MouseDownEvent, _, cx| {
+                                        this.confirm_unsub = None;
+                                        this.channel_menu = Some((g.clone(), ev.position, Instant::now()));
+                                        this.menu_hovered = false;
+                                        cx.notify();
+                                    }),
+                                )
+                            })
                             .when(selected, |d| d.bg(themed(BORDER)))
                             .w_full()
                             .h(px(44.))
@@ -4322,6 +4423,7 @@ impl Render for Unbloated {
             .child(left)
             .child(divider("split-columns", Split::Columns, cx))
             .child(right)
+            .children(self.render_channel_menu(cx))
             .children(self.render_toasts())
             .children(sheet)
             .children(hint_overlay)
