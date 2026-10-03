@@ -37,7 +37,9 @@ list, your playlists, your history, search and a player.
 - **Unsubscribe from the list**: right-click a channel, then confirm with a second click.
 - **New uploads**: one feed of the latest videos from all your subscriptions.
 - **Channel groups**: put channels into groups (e.g. *Music*, *Tech*) and filter the channel
-  list and the New uploads feed by group.
+  list and the New uploads feed by group. Right-click a channel to tick the groups it belongs to;
+  a folder icon in the list marks channels that are in a group (hover for the names). Groups are
+  kept only in this app (`groups.json` in the data folder), not on YouTube.
 - **Mute a channel**: hide its uploads from New uploads without unsubscribing.
 - **Upload notifications**: turn the bell on in a channel's header to get a desktop
   notification when it uploads (checked every 5–60 minutes, configurable).
@@ -97,10 +99,12 @@ list, your playlists, your history, search and a player.
 - Click the video to pause, double-click for fullscreen. The app's own shortcuts work with the
   pointer over the video too, since mpv's key bindings are off by default.
 - **Recommendations** under the player (your YouTube home feed), or turn them off.
+- **Watch later tab** under the player (off by default, Settings → Watch later tab): your Watch
+  later list, loaded when you open the tab, with a remove button on each row.
 
 ### Account actions
 
-Subscribe/unsubscribe, save to playlist, like, dislike, copy link (also at the current time), open in browser and download, all as
+Subscribe/unsubscribe, save to playlist, Watch later (one click, `W`; also on every video row), like, dislike, copy link (also at the current time), open in browser and download, all as
 icon buttons with tooltips. Each one can be hidden in Settings (like and dislike are hidden by
 default).
 
@@ -110,8 +114,8 @@ Everything is a toggle or a field on the Settings page, which has its own search
 
 | Group | Options |
 | --- | --- |
-| Tabs & lists | Subscriptions, Playlists, History, Recommendations, Chapters, Comments (off by default), **Shorts** (everywhere) |
-| Buttons | Subscribe, Save to playlist, Like, Dislike, Volume, Share, Share at current time, Open in browser, Download |
+| Tabs & lists | Subscriptions, Playlists, History, Recommendations, Chapters, Comments and Watch later tabs (both off by default), **Shorts** (everywhere) |
+| Buttons | Subscribe, Save to playlist, Watch later, Like, Dislike, Volume, Share, Share at current time, Open in browser, Download |
 | Player | Max quality (480p–4K), autoplay, **audio only**, prefer hardware-friendly codecs (skip AV1), hardware decoding, hover controls on the video, mpv's own controls and hotkeys, speed |
 | SponsorBlock | **Skip sponsored segments**, choosing which: sponsor, self-promotion, like/subscribe reminders, intro, credits, preview, filler, non-music |
 | Video info | **Views**, **upload date** (playing video), **subscriber counts** (channels) |
@@ -136,12 +140,13 @@ remembered.
 | C | Copy the video's link |
 | ⇧C | Copy the link at the current time (`y t` in Vim mode) |
 | O | Open the video in your browser (`o` in Vim mode) |
-| E | Lower pane (Recommended, Chapters, Comments, Up next) full height, and back (`e` in Vim mode) |
+| W | Add the video to Watch later (`w` in Vim mode) |
+| E | Lower pane (Recommended, Chapters, Watch later, Comments, Up next) full height, and back (`e` in Vim mode) |
 | ⇧E | Player full height (hide the lower pane), and back |
 | Tab / ⇧Tab | Move a focus ring through every clickable thing (tabs, rows, buttons, switches); Enter or Space presses it, Esc clears it |
 | 1 – 4 | Switch tab: Subscriptions, Playlists, History, Settings |
-| 5 – 8 | Switch lower pane tab: Recommended, Chapters, Comments, Up next (as shown) |
-| [ / ] | Previous / next tab: through 1–4, then 5–8, wrapping around |
+| 5 – 9 | Switch lower pane tab: Recommended, Chapters, Watch later, Comments, Up next (as shown) |
+| [ / ] | Previous / next tab: through 1–4, then 5–9, wrapping around |
 | B | Hide or show the left column (`b` in Vim mode) |
 | ⇧B | Hide or show the right column |
 | / | Search |
@@ -398,9 +403,35 @@ Without it, search and playback still work.
     local history by hand, and the queue (Up next, a playlist) needs a rule: replace or append.
   - Plan: option 1 first (generic, small, useful at once); option 2 if the missing bot features
     start to matter; built-in Chromecast only if `catt` through option 1 isn't enough.
+- **Bundling mpv, yt-dlp and deno** (ideas, none started). They are separate programs the app
+  starts by name through `PATH`, so bundling means looking in a folder of the app's own first.
+  - yt-dlp and deno publish standalone Linux binaries (deno is large, probably ~100 MB; unchecked).
+    yt-dlp breaks every few weeks, so a bundled copy needs a self-update step.
+  - mpv has no official Linux binary; a self-contained build means FFmpeg and the graphics and
+    audio libraries, hardware decoding from a bundle is fragile, and mpv is GPL, so shipping it
+    in an MIT archive means providing its source and license.
+  - Options, easiest first: download yt-dlp and deno on first run into the data folder (keeps the
+    archive small; mpv stays a system dependency); a "full" archive with yt-dlp and deno inside;
+    an AppImage with all three; a Flatpak (solves mpv properly, but see the X11 and cookie notes
+    above). Nix and the AUR already solve it through dependencies.
+  - Conflicts with a copy the user already has: a private folder (e.g. the data folder or
+    `/usr/lib/unbloated-youtube/`, never `/usr/bin`) doesn't clash with the system install, and
+    the app only changes `PATH` for the programs it starts. Rule: use the user's own yt-dlp, deno
+    and mpv when found, and the bundled or downloaded ones only as a fallback. The app starts mpv
+    with its own IPC socket, so it doesn't talk to another running mpv. It doesn't pass
+    `--no-config` or `--config-dir`, so the user's `~/.config/mpv` applies to any mpv it starts;
+    isolating that is a choice to make on purpose.
 - **Tool checks.** On startup, check that `mpv`, `yt-dlp` and `deno` are found and say which one
   is missing; downloading `yt-dlp` and `deno` into the app's data directory on first run is
   another option.
+- **Overlays over the video.** The video is a separate native window drawn above everything the app
+  draws, so menus and tooltips that reach into it are hidden. Handled so far: the channel menu is
+  kept inside the left column, and the save-to-playlist overlay and the shortcuts sheet hide the
+  video while open. Tooltips that open over the video are not handled; hiding the video while
+  one is showing, or drawing overlays in their own window, would be the options.
+- **Remove from YouTube's history.** The History list's remove button only forgets the entry
+  here; an entry that came from YouTube's own history comes back on the next refresh, because the
+  app can't change that history yet (it would need InnerTube's feedback tokens).
 - **Comments, next steps** (the Comments tab shows only top-level comments for now):
   - replies to a comment (yt-dlp can fetch them)
   - sort by top or newest
@@ -440,7 +471,10 @@ Without it, search and playback still work.
   - *Browsing*: a Watch later button on every row (today via the save picker); hide watched
     videos in the New uploads feed; a description tab under the player, next to Comments and
     Chapters; search filters for duration, upload date and type
-  - *Maintenance*: export and import settings, groups and channel flags
+  - *Maintenance*: export and import settings, groups and channel flags. Groups live in one file
+    on one machine (`groups.json`, with no sync and no backup), so this is also how they would
+    move between computers; a setting for the data folder (point it at a synced folder) would do
+    the same
 
 ## Files
 
