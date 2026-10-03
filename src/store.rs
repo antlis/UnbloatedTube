@@ -174,6 +174,10 @@ pub struct Settings {
     pub dislike_button: bool,
     pub share_button: bool,
     pub download_button: bool,
+    /// Video info: view counts, upload date, channel subscriber counts.
+    pub show_views: bool,
+    pub show_date: bool,
+    pub show_subs: bool,
     /// Player
     pub autoplay: bool,
     pub max_quality: u32,
@@ -217,6 +221,9 @@ impl Default for Settings {
             dislike_button: false,
             share_button: true,
             download_button: true,
+            show_views: true,
+            show_date: true,
+            show_subs: true,
             autoplay: true,
             max_quality: 1080,
             // On by default: software-decoding 1080p AV1/VP9 stutters on many laptops, and

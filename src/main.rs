@@ -23,7 +23,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use store::{ChannelFlags, ChannelGroup, Config, History, Seen, Settings};
-use yt::{Group, Video, fmt_duration};
+use yt::{Group, Video, fmt_count, fmt_duration};
 
 const BG: u32 = 0x0f0f0f;
 const PANEL: u32 = 0x161616;
@@ -66,7 +66,7 @@ fn channel_group(v: &Video) -> Option<Group> {
         .map(String::from)
         .unwrap_or_else(|| url.trim_end_matches('/').rsplit('/').next().unwrap_or_default().to_string());
     let title = v.channel.clone().unwrap_or_else(|| id.clone());
-    Some(Group { id, title, url: format!("{}/videos", url.trim_end_matches('/')), thumb: None })
+    Some(Group { id, title, url: format!("{}/videos", url.trim_end_matches('/')), thumb: None, subscribers: None })
 }
 
 /// Channel id (UC…) of a video, from its channel URL.
@@ -131,6 +131,12 @@ const BUTTON_TOGGLES: [Toggle; 6] = [
     ("Dislike", "Dislike the video, or remove your dislike", |s| &mut s.dislike_button),
     ("Share", "Copy the video's link", |s| &mut s.share_button),
     ("Download", "Save the video to your Downloads folder", |s| &mut s.download_button),
+];
+
+const INFO_TOGGLES: [Toggle; 3] = [
+    ("Views", "View counts on videos (the playing video needs your login)", |s| &mut s.show_views),
+    ("Upload date", "When the playing video was posted (needs your login)", |s| &mut s.show_date),
+    ("Subscribers", "Subscriber counts of channels", |s| &mut s.show_subs),
 ];
 
 /// A list being fetched. `Loading` already holds whatever has arrived (or the previous list
@@ -1437,6 +1443,12 @@ impl Unbloated {
         self.cfg.has_auth() && (st.subscribe_button || st.save_button || st.like_button || st.dislike_button)
     }
 
+    /// Some of the playing video's info (views, date, subscribers) is switched on and available.
+    fn info_wanted(&self) -> bool {
+        let st = &self.settings;
+        self.cfg.has_auth() && (st.show_views || st.show_date || st.show_subs)
+    }
+
     /// Run `f` with the account on a background thread (loading it first if needed),
     /// then `done` on the UI thread.
     fn with_account<R: Send + 'static>(
@@ -1475,7 +1487,7 @@ impl Unbloated {
     /// Fetch whether the current video is liked and its channel subscribed.
     fn load_status(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.current.as_ref().map(|v| v.id.clone()) else { return };
-        if !self.account_buttons() || self.status_requested.as_ref() == Some(&id) {
+        if !(self.account_buttons() || self.info_wanted()) || self.status_requested.as_ref() == Some(&id) {
             return;
         }
         self.status_requested = Some(id.clone());
@@ -1959,7 +1971,7 @@ impl Unbloated {
             }
             g.sort_by_key(|g| !counts.contains_key(&g.id));
             if !filtering {
-                g.insert(0, Group { id: FEED_ID.into(), title: "New uploads".into(), url: ":ytsubs".into(), thumb: None });
+                g.insert(0, Group { id: FEED_ID.into(), title: "New uploads".into(), url: ":ytsubs".into(), thumb: None, subscribers: None });
             }
         }
         g
@@ -2161,7 +2173,8 @@ impl Unbloated {
                     this.remove_from_playlist(g.clone(), v.clone(), cx);
                 }))
         });
-        let meta = [video.channel.clone(), video.duration.map(fmt_duration)]
+        let views = video.views.filter(|_| self.settings.show_views).map(|v| format!("{} views", fmt_count(v)));
+        let meta = [video.channel.clone(), views, video.duration.map(fmt_duration)]
             .into_iter()
             .flatten()
             .collect::<Vec<_>>()
@@ -2544,6 +2557,7 @@ impl Unbloated {
             ("PLAYER BUTTONS", &BUTTON_TOGGLES[..]),
             ("PLAYER", &PLAYER_TOGGLES[..]),
             ("NOTIFICATIONS", &NOTIFY_TOGGLES[..]),
+            ("VIDEO INFO", &INFO_TOGGLES[..]),
         ] {
             let rows = toggles
                 .iter()
@@ -2902,6 +2916,9 @@ impl Unbloated {
                                     .child(group.title.clone())
                                     .tooltip(tip(group.title.clone())),
                             )
+                            .when_some(group.subscribers.filter(|_| this.settings.show_subs), |d, n| {
+                                d.child(div().flex_none().text_xs().text_color(rgb(MUTED)).child(fmt_count(n)))
+                            })
                             .when(bell, |d| d.child(svg().path(icons::path("bell")).size(px(12.)).flex_none().text_color(rgb(MUTED))))
                             .when(muted, |d| d.child(svg().path(icons::path("muted")).size(px(13.)).flex_none().text_color(rgb(MUTED))))
                             .when(new > 0, |d| {
@@ -3011,6 +3028,17 @@ impl Unbloated {
             format!("{} / {}", fmt_duration(pos), fmt_duration(dur))
         };
         let replay = video.clone();
+        let info = {
+            let st = self.current_status();
+            let parts: Vec<String> = [
+                st.and_then(|s| s.views.clone()).filter(|_| self.settings.show_views),
+                st.and_then(|s| s.date.clone()).filter(|_| self.settings.show_date),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            (!parts.is_empty()).then(|| div().text_xs().text_color(rgb(MUTED)).child(parts.join("  ·  ")))
+        };
 
         div()
             .size_full()
@@ -3020,8 +3048,10 @@ impl Unbloated {
             .p_4()
             .child(screen)
             .child(div().text_color(rgb(TEXT)).line_clamp(2).child(video.title.clone()))
+            .children(info)
             .child({
                 let name = video.channel.clone().unwrap_or_default();
+                let subs = self.current_status().and_then(|s| s.subscribers.clone()).filter(|_| self.settings.show_subs);
                 match channel_group(&video) {
                     // Styled as a chip (avatar, name, chevron) so it reads as clickable.
                     Some(g) => {
@@ -3052,6 +3082,7 @@ impl Unbloated {
                                 .hover(|d| d.bg(rgb(BORDER)))
                                 .child(avatar)
                                 .child(name)
+                                .children(subs.map(|s| div().text_color(rgb(MUTED)).child(s)))
                                 .child(div().text_color(rgb(MUTED)).child("›"))
                                 .tooltip(tip("Show this channel's videos"))
                                 .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.show_channel(g.clone(), cx)),

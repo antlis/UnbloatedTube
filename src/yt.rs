@@ -19,6 +19,9 @@ pub struct Video {
     /// A YouTube Short (vertical, under a minute).
     #[serde(default)]
     pub short: bool,
+    /// View count, when the listing has it (search and playlists do; channel tabs and feeds don't).
+    #[serde(default)]
+    pub views: Option<u64>,
 }
 
 impl Video {
@@ -39,6 +42,9 @@ pub struct Group {
     /// Channel avatar / playlist cover.
     #[serde(default)]
     pub thumb: Option<String>,
+    /// Channel subscriber count, when the listing has it.
+    #[serde(default)]
+    pub subscribers: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -64,6 +70,10 @@ struct Entry {
     uploader_url: Option<String>,
     #[serde(default)]
     duration: Option<f64>,
+    #[serde(default)]
+    view_count: Option<u64>,
+    #[serde(default)]
+    channel_follower_count: Option<u64>,
     // Channel tabs list uploads without per-entry channel info; yt-dlp adds the listing's.
     #[serde(default)]
     playlist_channel: Option<String>,
@@ -126,6 +136,7 @@ fn to_video(e: Entry) -> Option<Video> {
         channel: e.channel.or(e.uploader),
         channel_url: e.channel_url.or(e.uploader_url),
         duration: e.duration,
+        views: e.view_count,
     })
 }
 
@@ -144,7 +155,7 @@ pub fn subscriptions(cfg: &Config, on: &mut dyn FnMut(Group)) -> Result<(), Stri
         let thumb = thumb(&e);
         let (Some(id), Some(url)) = (e.id, e.channel_url.or(e.url)) else { return };
         let title = e.title.map(|t| t.trim().to_string()).unwrap_or_else(|| url.clone());
-        on(Group { id, title, url: format!("{url}/videos"), thumb });
+        on(Group { id, title, url: format!("{url}/videos"), thumb, subscribers: e.channel_follower_count });
     })
 }
 
@@ -180,18 +191,31 @@ pub fn playlist_videos(cfg: &Config, url: &str, on: &mut dyn FnMut(Video)) -> Re
 }
 
 pub fn playlists(cfg: &Config, on: &mut dyn FnMut(Group)) -> Result<(), String> {
-    on(Group { id: "WL".into(), title: "Watch later".into(), url: ":ytwatchlater".into(), thumb: None });
+    on(Group { id: "WL".into(), title: "Watch later".into(), url: ":ytwatchlater".into(), thumb: None, subscribers: None });
     on(Group {
         id: "LL".into(),
         title: "Liked videos".into(),
         url: "https://www.youtube.com/playlist?list=LL".into(),
         thumb: None,
+        subscribers: None,
     });
     stream(cfg, "https://www.youtube.com/feed/playlists", 200, |e| {
         let thumb = thumb(&e);
         let (Some(id), Some(url)) = (e.id, e.url) else { return };
-        on(Group { id, title: e.title.unwrap_or_else(|| "(untitled)".into()), url, thumb });
+        on(Group { id, title: e.title.unwrap_or_else(|| "(untitled)".into()), url, thumb, subscribers: None });
     })
+}
+
+/// 1234 → "1.2K", 265000 → "265K", 1500000 → "1.5M" (as YouTube abbreviates counts).
+pub fn fmt_count(n: u64) -> String {
+    let (div, unit) = match n {
+        0..1_000 => return n.to_string(),
+        1_000..1_000_000 => (1e3, "K"),
+        1_000_000..1_000_000_000 => (1e6, "M"),
+        _ => (1e9, "B"),
+    };
+    let v = n as f64 / div;
+    if v >= 100. { format!("{v:.0}{unit}") } else { format!("{:.1}{unit}", (v * 10.).floor() / 10.).replace(".0", "") }
 }
 
 pub fn fmt_duration(secs: f64) -> String {

@@ -24,6 +24,10 @@ pub struct VideoStatus {
     pub disliked: bool,
     /// The channel's avatar URL.
     pub avatar: Option<String>,
+    /// As YouTube words them: "8.5K views", "1 year ago", "814 subscribers".
+    pub views: Option<String>,
+    pub date: Option<String>,
+    pub subscribers: Option<String>,
 }
 
 impl Account {
@@ -75,10 +79,11 @@ impl Account {
     pub fn status(&self, video_id: &str) -> Result<VideoStatus, String> {
         let next = self.post("next", json!({ "videoId": video_id }))?;
         // The first subscribe button / like state is the watched video's; related videos come later.
-        let (mut sub, mut like, mut owner) = (None, None, None);
+        let (mut sub, mut like, mut owner, mut primary) = (None, None, None, None);
         walk(&next, &mut |key, v| match key {
             "subscribeButtonRenderer" if sub.is_none() => sub = Some(v.clone()),
             "videoOwnerRenderer" if owner.is_none() => owner = Some(v.clone()),
+            "videoPrimaryInfoRenderer" if primary.is_none() => primary = Some(v.clone()),
             "likeStatus" if like.is_none() => like = v.as_str().map(String::from),
             _ => {}
         });
@@ -88,6 +93,15 @@ impl Account {
             subscribed: sub["subscribed"].as_bool().unwrap_or(false),
             liked: like.as_deref() == Some("LIKE"),
             disliked: like.as_deref() == Some("DISLIKE"),
+            views: {
+                let count = |key: &str| text(&primary, &["viewCount", "videoViewCountRenderer", key, "simpleText"]);
+                // Newer videos lack the short form, or give it without the word "views".
+                count("shortViewCount")
+                    .or_else(|| count("extraShortViewCount").map(|n| format!("{n} views")))
+                    .or_else(|| count("viewCount"))
+            },
+            date: text(&primary, &["relativeDateText", "simpleText"]),
+            subscribers: text(&owner, &["subscriberCountText", "simpleText"]),
             avatar: owner.and_then(|o| o["thumbnail"]["thumbnails"][0]["url"].as_str().map(String::from)),
         })
     }
@@ -132,6 +146,11 @@ impl Account {
             _ => Err("YouTube didn't remove it (you can only edit your own playlists)".into()),
         }
     }
+}
+
+/// A string at `path` inside the JSON, if there.
+fn text(v: &Option<Value>, path: &[&str]) -> Option<String> {
+    path.iter().try_fold(v.as_ref()?, |v, k| v.get(k))?.as_str().map(String::from)
 }
 
 /// Call `f` for every key/value pair in a JSON tree.

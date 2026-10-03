@@ -43,6 +43,8 @@ list, your playlists, your history, search and a player.
   Enter.
 - **Filter any list as you type** (Ctrl+F): channels, playlists, a channel's or playlist's
   videos, history. This is local and instant, with no request to YouTube.
+- **Video info**: views, upload date and subscriber count for the playing video (needs your login),
+  view counts in lists that provide them, subscriber counts in the channel list. Each is a Settings toggle.
 - Watched videos are dimmed, and partly watched ones show a progress bar on the thumbnail.
 - Lists appear instantly from a local cache and refresh in the background; long lists stream
   in as yt-dlp produces them.
@@ -86,6 +88,7 @@ Everything is a toggle or a field on the Settings page, which has its own search
 | Buttons | Subscribe, Save to playlist, Like, Dislike, Share, Download |
 | Player | Max quality (480p–4K), autoplay, **audio only**, prefer hardware-friendly codecs (skip AV1), hardware decoding, speed |
 | SponsorBlock | **Skip sponsored segments**, choosing which: sponsor, self-promotion, like/subscribe reminders, intro, credits, preview, filler, non-music |
+| Video info | **Views**, **upload date** (playing video), **subscriber counts** (channels) |
 | Other | Subtitles language, extra mpv options, download folder, upload notifications and their interval, Vim mode, window buttons |
 
 Window layout (column width, player height, Continue watching height) is set by dragging and
