@@ -47,7 +47,9 @@ list, your playlists, your history, search and a player.
   notification when it uploads (checked every 5–60 minutes, configurable).
 - **Playlists**: Watch later, Liked videos and your own playlists, loaded in full.
 - **History**: *Continue watching* (started but not finished, resizable with a drag bar), then
-  everything you watched, here and on YouTube.
+  your YouTube history in YouTube's own order, each entry with the day you watched it
+  ("Today", "Saturday", …), then what only this app has seen. With Shorts on, Videos and
+  Shorts have their own tabs.
 - **Search**: a search mode with recent searches. Nothing is sent to YouTube until you press
   Enter.
 - **Filter any list as you type** (Ctrl+F): channels, playlists, a channel's or playlist's
@@ -116,6 +118,7 @@ Everything is a toggle or a field on the Settings page, which has its own search
 
 | Group | Options |
 | --- | --- |
+| Account | **Connect YouTube**: pick a browser and test its session, or import a `cookies.txt` (see [Login](#login)) |
 | Tabs & lists | Subscriptions, Playlists, History, Recommendations, Chapters, Comments and Watch later tabs (both off by default), **Shorts** (everywhere) |
 | Buttons | Subscribe, Save to playlist, Watch later, Like, Dislike, Volume, Share, Share at current time, Open in browser, Download |
 | Player | Max quality (480p–4K), autoplay, **audio only**, prefer hardware-friendly codecs (skip AV1), hardware decoding, hover controls on the video, mpv's own controls and hotkeys, speed |
@@ -218,14 +221,31 @@ entry.
 ### Login
 
 Subscriptions, playlists, history, recommendations and the account buttons need your YouTube
-login, taken from your browser's cookies. Create `~/.config/unbloated-youtube/config.toml`:
+login, taken from your browser's cookies. On first run the app offers **Connect YouTube**, and
+later under Settings → Connect YouTube: pick a browser, the app reads that browser's own
+YouTube session (you stay signed in in your browser; no password is ever asked or stored),
+checks it in three quick steps and shows your account. An exported `cookies.txt` can be
+imported under Advanced instead. **Log out** forgets the app's copy; for a `config.toml`
+login it comments those lines out instead (uncomment them to return).
+
+While logged out, the app starts on that same **Connect YouTube** screen (or shows it after
+logging out), the header's account tabs are replaced by **Home** and **Sign in** (which opens
+Settings, with Account at the top), and the left column and Recommendations pane show an
+**anonymous feed** — YouTube's own home and trending
+need a login, so the app shuffles random topic searches into a mixed video list instead (a
+new mix per refresh, cached); a random video of it waits in the player, not playing. Search
+and channels work without an account; groups, searches and resume positions are kept locally.
+Right after the first Connect, the latest video of your YouTube history waits there instead.
+
+A `~/.config/unbloated-youtube/config.toml` login still works and wins over the app's choice:
 
 ```toml
 cookies_from_browser = "brave+gnomekeyring"   # yt-dlp syntax: "firefox", "chromium", …
 # cookies_file = "/path/to/cookies.txt"       # or an exported Netscape cookies file
 ```
 
-Without it, search and playback still work.
+Without a login, search and playback still work; the account lists (subscriptions,
+playlists, history, Watch later) stay hidden until you connect.
 
 ## Architecture
 
@@ -247,8 +267,9 @@ Without it, search and playback still work.
 | Module | Role |
 | --- | --- |
 | `main.rs` | The GPUI app: all views (tabs, lists, player panel, settings, overlays), state, shortcuts, Vim mode and hints, notices. |
-| `yt.rs` | Runs `yt-dlp --flat-playlist -j` for subscriptions, feeds, channels, playlists, history, recommendations and search, streaming entries line by line; also downloads. |
-| `account.rs` | Account actions through YouTube's internal InnerTube API, authenticated like the web app: browser cookies plus a `SAPISIDHASH` header. Cookies stay in memory. |
+| `yt.rs` | Runs `yt-dlp --flat-playlist -j` for subscriptions, feeds, channels, playlists, recommendations and search, streaming entries line by line; also downloads. History comes from `account.rs`, with `:ythistory` as the fallback. |
+| `account.rs` | Account actions and the watch history (with Shorts and each entry's day, which yt-dlp's `:ythistory` lacks) through YouTube's internal InnerTube API, authenticated like the web app: browser cookies plus a `SAPISIDHASH` header. Cookies stay in memory. |
+| `auth.rs` | The login source (`auth.json`): browser or cookies file. Browser login exports the cookies with yt-dlp and remembers the keyring suffix that worked (e.g. `brave+gnomekeyring`). |
 | `player.rs` | One long-lived mpv process, controlled over its JSON IPC socket; builds mpv options from settings; restarts mpv only when options change. |
 | `embed.rs` | Creates an X11 child window inside the app's window for `mpv --wid`, and keeps it positioned over the player area. |
 | `store.rs` | `config.toml`, `settings.json`, watch history with resume positions, seen videos, groups, cached lists. |
@@ -272,8 +293,15 @@ Without it, search and playback still work.
   leaves audio playing.
 - **SponsorBlock** runs inside mpv as the `sponsorblock_minimal` script, with the categories
   you chose.
+- **Playing marks it watched.** mpv's yt-dlp gets `mark-watched`, so what you play here lands in
+  your YouTube history. Loading a video into mpv (the paused preload of the last watched one)
+  counts as playing, so a video that is only shown in the player is never preloaded.
 
 ## TODO
+- **History: channel links on Shorts.** History's Shorts entries carry no channel, so they have
+  no channel button; the Videos entries do.
+- **Test the Connect flow on more setups.** Verified with Brave (keyring) and a failing
+  Firefox profile; Chrome, Chromium, Edge and Flatpak/Snap profiles are untested.
 
 - **Cross-platform (Windows, macOS).** Today it is Linux/X11 only. What's in the way:
   - the embedded player (`embed.rs`): an X11 child window for `mpv --wid`; needs a per-platform
@@ -447,13 +475,12 @@ Without it, search and playback still work.
   - links and @mentions in comment text are plain text for now
   - keyboard scrolling in the list (j/k and the arrow keys in Vim mode)
   - the total comment count on the tab
-- **A proper login instead of editing `config.toml`.** Today you point the app at a browser's
-  cookies (`cookies_from_browser`) or an exported cookies file. Options, none of them tried yet:
-  - *Guided cookie capture* (the likely first step): a Login section in Settings that detects
-    installed browsers and profiles, lets you pick one, tests it and shows the account name.
-    You sign in to YouTube in your own browser, so Google's embedded-browser blocking doesn't
-    apply. Reading another browser's cookies stays fragile (keyring on Linux, app-bound
-    encryption in newer Chrome on Windows), the same as for yt-dlp.
+- **Login beyond the browser-cookie picker.** Settings → Connect YouTube (and the first-run
+  screen) already covers the guided cookie capture, one default profile per browser. Ideas for
+  going further, none of them tried yet:
+  - *Per-profile pickers*: list each installed browser's profiles and let you choose one, instead
+    of only its default. Reading another browser's cookies stays fragile (keyring on Linux,
+    app-bound encryption in newer Chrome on Windows), the same as for yt-dlp.
   - *In-app login window*: a webview (wry) on `accounts.google.com`; the app reads the cookies
     from its cookie store. Works the same on every platform, but Google sometimes refuses
     sign-in in embedded webviews, and it adds a dependency and a window to maintain.
@@ -480,7 +507,7 @@ Without it, search and playback still work.
 
 ## Files
 
-- `~/.config/unbloated-youtube/`: `config.toml` (login), `settings.json` (everything from the Settings page)
+- `~/.config/unbloated-youtube/`: `config.toml` (optional login override), `auth.json` (the app's own login choice, set from Settings), `settings.json` (everything from the Settings page)
 - `~/.local/share/unbloated-youtube/`: watch history with resume positions, seen videos, groups, channel flags, Up next, recent searches
 - `~/.cache/unbloated-youtube/`: thumbnails, cached lists, `mpv.log`
 

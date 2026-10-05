@@ -1,4 +1,5 @@
 mod account;
+mod auth;
 mod embed;
 mod icons;
 mod player;
@@ -6,7 +7,8 @@ mod store;
 mod thumbs;
 mod yt;
 
-use account::{Account, VideoStatus};
+use account::{Account, Me, VideoStatus};
+use auth::{Auth, BROWSERS};
 use embed::Embed;
 use gpui::{
     Animation, AnimationExt, Pixels, AnyElement, App, Application, ClipboardItem, Bounds, Context, CursorStyle, ElementId, FocusHandle, Hsla, KeyDownEvent, MouseButton,
@@ -18,6 +20,7 @@ use player::Player;
 use serde::{Serialize, de::DeserializeOwned};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -121,6 +124,19 @@ const PLAYER_TOGGLES: [Toggle; 7] = [
     ("Hover controls on the video", "A bar with play, seek, volume and fullscreen when the pointer is over the video", |s| &mut s.video_controls),
     ("mpv controls and hotkeys", "mpv's own on-screen controls and key bindings over the video; off: only this app's", |s| &mut s.native_controls),
     ("Block in-video ads (SponsorBlock)", "Skip sponsor reads and other segments marked by the community", |s| &mut s.sponsorblock),
+];
+
+/// Toggles that do nothing without a login; hidden in Settings until one is connected.
+const ACCOUNT_ONLY: [&str; 9] = [
+    "Subscriptions",
+    "Playlists",
+    "History",
+    "Watch later tab",
+    "Subscribe",
+    "Save to playlist",
+    "Watch later",
+    "Like",
+    "Dislike",
 ];
 
 const QUALITIES: [u32; 5] = [480, 720, 1080, 1440, 2160];
@@ -322,6 +338,8 @@ struct Unbloated {
     comments_limit: usize,
     /// Latest uploads across subscriptions, for the "New uploads" row and per-channel counts.
     feed: Load<Video>,
+    /// The logged-out home: a random anonymous mix (see `yt::anonymous`).
+    anon: Load<Video>,
     seen: Seen,
     query: String,
     search: Load<Video>,
@@ -413,6 +431,8 @@ struct Unbloated {
     embed: Option<Rc<RefCell<Embed>>>,
     /// The last-watched video has been loaded (paused) into mpv at startup.
     preloaded: bool,
+    /// Videos or Shorts list of the History tab.
+    history_view: ChannelView,
     fullscreen: bool,
     /// A video was requested and mpv hasn't started playing it yet.
     loading: bool,
@@ -427,6 +447,15 @@ struct Unbloated {
     thumbs_failed: HashSet<String>,
     /// Logged-in account for subscribe / like / save; loaded on first use.
     account: Option<Arc<Account>>,
+    /// The Connect YouTube flow (Settings, and offered on first run).
+    connect: Connect,
+    /// The browser the Connect panel has selected (yt-dlp spec, e.g. "firefox").
+    connect_browser: String,
+    /// Pending cookies.txt path in Settings → Advanced.
+    import_path: String,
+    import_focus: FocusHandle,
+    /// Result of the last cookies.txt import, shown under the field.
+    import_msg: Option<(bool, String)>,
     /// Like/subscription state of the video with this id.
     status: Option<(String, VideoStatus)>,
     /// Video whose state was last requested, so a failure isn't retried every tick.
@@ -445,18 +474,75 @@ struct Unbloated {
     _poll: Task<()>,
 }
 
+/// Progress of the Connect YouTube / Test connection flow in Settings.
+#[derive(Clone, Default)]
+enum Connect {
+    #[default]
+    Idle,
+    /// Steps run 1..=3 in the background: profile, session, feed.
+    Running(u8),
+    /// The step that failed, and why.
+    Failed { step: u8, error: String },
+    /// Everything passed; `me` is what YouTube showed for the account.
+    Done { me: Me },
+}
+
+/// The Connect panel's three checks, in order.
+const PROBE_STEPS: [&str; 3] = ["Browser profile found", "YouTube session valid", "Subscription feed reachable"];
+
+impl Connect {
+    /// The three checks with their marks, shown while they run and after they finished.
+    fn steps(&self) -> Vec<AnyElement> {
+        (0..PROBE_STEPS.len())
+            .map(|i| {
+                let n = i as u8 + 1;
+                let (mark, mark_color) = match self {
+                    Connect::Running(s) if *s > n => ("✓", themed(TEXT)),
+                    Connect::Running(s) if *s == n => ("…", themed(ACCENT)),
+                    Connect::Failed { step, .. } if *step > n => ("✓", themed(TEXT)),
+                    Connect::Failed { step, .. } if *step == n => ("✕", themed(ACCENT)),
+                    Connect::Done { .. } => ("✓", themed(TEXT)),
+                    _ => ("·", themed(MUTED)),
+                };
+                let reached = match self {
+                    Connect::Running(s) => *s >= n,
+                    Connect::Failed { step, .. } => *step >= n,
+                    Connect::Done { .. } => true,
+                    Connect::Idle => false,
+                };
+                div()
+                    .px_4()
+                    .py(px(1.))
+                    .flex()
+                    .gap_2()
+                    .text_sm()
+                    .child(div().w(px(14.)).flex_none().text_color(mark_color).child(mark))
+                    .child(div().text_color(if reached { themed(TEXT) } else { themed(MUTED) }).child(PROBE_STEPS[i]))
+                    .into_any_element()
+            })
+            .collect()
+    }
+}
+
 impl Unbloated {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let history = History::load();
         let settings = Settings::load();
+        let cfg = Arc::new(Config::load());
         let volume = settings.volume;
         LIGHT.store(settings.light_theme, std::sync::atomic::Ordering::Relaxed);
         let root_focus = cx.focus_handle();
         window.focus(&root_focus);
-        let tab = [(settings.subscriptions, Tab::Subscriptions), (settings.playlists, Tab::Playlists), (settings.history, Tab::History)]
-            .into_iter()
-            .find_map(|(on, tab)| on.then_some(tab))
-            .unwrap_or(Tab::Settings);
+        // Logged out: no account tabs, no restored video — the anonymous home takes over.
+        let restore = cfg.has_auth().then(|| history.last()).flatten().map(|w| w.video.clone());
+        let tab = if cfg.has_auth() {
+            [(settings.subscriptions, Tab::Subscriptions), (settings.playlists, Tab::Playlists), (settings.history, Tab::History)]
+                .into_iter()
+                .find_map(|(on, tab)| on.then_some(tab))
+                .unwrap_or(Tab::Settings)
+        } else {
+            Tab::Subscriptions
+        };
         // Refresh the feed every few minutes while some channel has notifications on.
         let notify_poll = cx.spawn(async move |this, cx| {
             loop {
@@ -487,8 +573,14 @@ impl Unbloated {
                 }
             }
         });
+        // Preselect the system default browser if it's one of ours, else the first found in PATH.
+        let connect_browser = Auth::default_browser()
+            .filter(|s| Auth::on_path(s))
+            .or_else(|| BROWSERS.iter().map(|(_, spec, _)| *spec).find(|spec| Auth::on_path(spec)))
+            .unwrap_or(BROWSERS[0].1)
+            .to_string();
         let mut app = Self {
-            cfg: Arc::new(Config::load()),
+            cfg,
             settings,
             dragging: None,
             drag_from: (0., 0.),
@@ -503,6 +595,7 @@ impl Unbloated {
             comments_for: None,
             comments_limit: COMMENTS_PAGE,
             feed: Load::Idle,
+            anon: Load::Idle,
             seen: Seen::load(),
             query: String::new(),
             search: Load::Idle,
@@ -551,12 +644,13 @@ impl Unbloated {
             settings_focus: cx.focus_handle(),
             field_focus: [cx.focus_handle(), cx.focus_handle(), cx.focus_handle()],
             generations: HashMap::new(),
-            current: history.last().map(|w| w.video.clone()),
+            current: restore,
             history,
             player: Player::new(volume),
             volume_set: Instant::now(),
             embed: None,
             preloaded: false,
+            history_view: ChannelView::Videos,
             fullscreen: false,
             loading: false,
             hide_while_loading: false,
@@ -565,6 +659,11 @@ impl Unbloated {
             thumbs_requested: HashSet::new(),
             thumbs_failed: HashSet::new(),
             account: None,
+            connect: Connect::Idle,
+            connect_browser,
+            import_path: String::new(),
+            import_focus: cx.focus_handle(),
+            import_msg: None,
             status: None,
             status_requested: None,
             ended: None,
@@ -583,15 +682,15 @@ impl Unbloated {
             app.load_recs(cx);
         }
         // Cached YouTube history (no network) so watched videos are dimmed from the start;
-        // the History tab refreshes it.
-        if app.settings.history {
+        // the History tab refreshes it. Account-derived, so not while logged out.
+        if app.settings.history && app.cfg.has_auth() {
             if let Some(items) = store::load_list("history") {
                 app.yt_history = Load::Ready(items);
             }
         }
-        if app.current.is_none() && app.settings.history {
+        if app.current.is_none() && app.settings.history && app.cfg.has_auth() {
             // No local history yet: fall back to YouTube's own history for "last watched".
-            app.fetch(cx, "history", |s| &mut s.yt_history, Some("history".into()), |cfg, on| yt::history(cfg, on));
+            app.load_yt_history(cx);
         }
         app
     }
@@ -611,9 +710,14 @@ impl Unbloated {
         let generation = self.generations.get(key).map_or(0, |g| g + 1);
         self.generations.insert(key, generation);
         if let (Some(name), Load::Idle) = (&cache, slot(self)) {
-            if let Some(items) = store::load_list(name) {
-                *slot(self) = Load::Ready(items);
-                self.after_load(key);
+            // The list caches belong to the account; a logged-out session shows the
+            // connect hint instead of last time's lists. The anonymous home ("anon")
+            // has no account behind it and is kept across sessions.
+            if self.cfg.has_auth() || name == "anon" {
+                if let Some(items) = store::load_list(name) {
+                    *slot(self) = Load::Ready(items);
+                    self.after_load(key);
+                }
             }
         }
         let keep_old = !slot(self).items().is_empty();
@@ -688,7 +792,17 @@ impl Unbloated {
                     g.sort_by_key(|g| g.title.to_lowercase());
                 }
             }
-            "history" if self.current.is_none() => self.current = self.yt_history.items().first().cloned(),
+            "history" if self.current.is_none() => self.current = self.yt_history.items().iter().find(|v| !v.short).cloned(),
+            // Logged out: a random video waits in the player (not playing), like the last
+            // watched one does with a login.
+            "anon" if self.current.is_none() && !self.cfg.has_auth() => {
+                let pool: Vec<&Video> = self.anon.items().iter().filter(|v| !v.short).collect();
+                let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos() as usize);
+                self.current = (!pool.is_empty()).then(|| pool[nanos % pool.len()].clone());
+                // Only shown: loading it into mpv would be harmless logged out, but a login
+                // later makes yt-dlp mark it watched on YouTube.
+                self.preloaded = true;
+            }
             "feed" => {
                 if !self.seen.baseline && matches!(self.feed, Load::Ready(_)) {
                     // First run: what's in the feed now is old news; count only what comes after.
@@ -706,18 +820,37 @@ impl Unbloated {
         match self.tab {
             Tab::Settings => {}
             Tab::Search => self.run_search(cx),
-            Tab::History => self.fetch(cx, "history", |s| &mut s.yt_history, Some("history".into()), |cfg, on| yt::history(cfg, on)),
+            Tab::History if !self.cfg.has_auth() => self.load_anon(cx),
+            Tab::History => {
+                if self.cfg.has_auth() {
+                    self.load_yt_history(cx);
+                }
+            }
             tab => match self.browser(tab).open.clone() {
                 Some(_) => self.load_group_videos(tab, cx),
+                None if !self.cfg.has_auth() => self.load_anon(cx),
                 None if tab == Tab::Subscriptions => {
                     self.fetch(cx, "subs", |s| &mut s.subs.groups, Some("subs".into()), |cfg, on| yt::subscriptions(cfg, on));
-                    if self.cfg.has_auth() && !matches!(self.feed, Load::Loading(_)) {
+                    if !matches!(self.feed, Load::Loading(_)) {
                         self.fetch(cx, "feed", |s| &mut s.feed, Some("feed".into()), |cfg, on| yt::feed(cfg, on));
                     }
                 }
-                None => self.fetch(cx, "playlists", |s| &mut s.playlists.groups, Some("playlists".into()), |cfg, on| yt::playlists(cfg, on)),
+                None => {
+                    self.fetch(cx, "playlists", |s| &mut s.playlists.groups, Some("playlists".into()), |cfg, on| yt::playlists(cfg, on));
+                }
             },
         }
+    }
+
+    /// YouTube's watch history (cached; the cache shows until the fresh one is complete).
+    fn load_yt_history(&mut self, cx: &mut Context<Self>) {
+        let account = self.account.clone();
+        self.fetch(cx, "history", |s| &mut s.yt_history, Some("history".into()), move |cfg, on| yt::history(cfg, account, on));
+    }
+
+    /// The logged-out home: a fresh random mix; the cached one shows until it arrives.
+    fn load_anon(&mut self, cx: &mut Context<Self>) {
+        self.fetch(cx, "anon", |s| &mut s.anon, Some("anon".into()), |cfg, on| yt::anonymous(cfg, on));
     }
 
     fn run_search(&mut self, cx: &mut Context<Self>) {
@@ -891,6 +1024,8 @@ impl Unbloated {
             && !self.pip
             && !self.lower_full
             && !self.right_collapsed
+            // The connect screen is a GPUI overlay; the X11 child window would float above it.
+            && !self.welcome_visible()
             // Audio only: keep showing the thumbnail.
             && !self.settings.audio_only;
         if let Some(e) = &self.embed {
@@ -1538,6 +1673,8 @@ impl Unbloated {
         self.searching = false;
         let idle = match tab {
             Tab::Search | Tab::Settings => false,
+            // Logged out: only fetch the anonymous home the first time (or after a failure).
+            _ if !self.cfg.has_auth() => matches!(self.anon, Load::Idle | Load::Failed(_)),
             Tab::History => matches!(self.yt_history, Load::Idle),
             _ => matches!(self.browser(tab).groups, Load::Idle),
         };
@@ -1551,11 +1688,13 @@ impl Unbloated {
         match self.tab {
             Tab::Settings => false,
             Tab::Search => matches!(self.search, Load::Loading(_)),
-            Tab::History => matches!(self.yt_history, Load::Loading(_)),
+            Tab::History if self.cfg.has_auth() => matches!(self.yt_history, Load::Loading(_)),
             tab => {
                 let b = self.browser_ref(tab);
                 if b.open.is_some() {
                     matches!(b.videos, Load::Loading(_))
+                } else if !self.cfg.has_auth() {
+                    matches!(self.anon, Load::Loading(_))
                 } else {
                     matches!(b.groups, Load::Loading(_))
                 }
@@ -1568,7 +1707,8 @@ impl Unbloated {
         let channel = self.current.as_ref().and_then(|v| v.channel_url.clone());
         let auth = self.cfg.has_auth();
         if !auth && channel.is_none() {
-            self.recs = Load::Failed("Nothing to recommend yet — play something.".into());
+            // Logged out with nothing playing: `render_recs` falls back to the anonymous home.
+            self.recs = Load::Idle;
             return;
         }
         // Only the home feed is the same every time, so only it is cached.
@@ -1720,6 +1860,285 @@ impl Unbloated {
             .ok();
         })
         .detach();
+    }
+
+    /// The first-run screen is up: not dismissed yet, and no login configured.
+    fn welcome_visible(&self) -> bool {
+        !self.settings.welcome_seen && !self.cfg.has_auth()
+    }
+
+    /// Dismiss the first-run screen (Esc, or "Continue without account").
+    fn finish_welcome(&mut self, cx: &mut Context<Self>) {
+        self.settings.welcome_seen = true;
+        self.settings.save();
+        self.sync_embed();
+        cx.notify();
+    }
+
+    /// "Connect YouTube" on the first-run screen: go to Settings, where the Connect panel lives.
+    fn welcome_connect(&mut self, cx: &mut Context<Self>) {
+        self.finish_welcome(cx);
+        self.select_tab(Tab::Settings, cx);
+    }
+
+    /// Pick up the login from disk again (config.toml + auth.json) after it changed, and let
+    /// lists that failed without one reload. mpv gets the new cookie options; a playing video
+    /// restarts at its position, like after any player-setting change.
+    fn reload_auth(&mut self, cx: &mut Context<Self>) {
+        self.cfg = Arc::new(Config::load());
+        self.account = None;
+        clear_failed(&mut self.subs.groups);
+        clear_failed(&mut self.feed);
+        clear_failed(&mut self.yt_history);
+        clear_failed(&mut self.playlists.groups);
+        clear_failed(&mut self.recs);
+        clear_failed(&mut self.watch_later);
+        if !matches!(self.tab, Tab::Settings | Tab::Search) {
+            self.load_tab(cx);
+        }
+        if self.welcome_visible() {
+            // The login vanished from disk: the connect screen takes over. Stopped first
+            // so apply_player_settings doesn't restart the video with the new options.
+            self.player.stop();
+            self.current = None;
+            self.state = None;
+        }
+        self.apply_player_settings(cx);
+        self.sync_embed();
+    }
+
+    /// Save the selected browser as the login and run the three-step check.
+    fn start_connect(&mut self, cx: &mut Context<Self>) {
+        if self.cfg.cookies_file.is_some() || self.cfg.cookies_from_browser.is_some() {
+            self.import_msg = Some((false, "config.toml sets a login, which wins over this one: remove it there first.".into()));
+            cx.notify();
+            return;
+        }
+        Auth::Browser(self.connect_browser.clone()).save();
+        self.reload_auth(cx);
+        self.connect = Connect::Running(1);
+        self.run_probe(true, cx);
+    }
+
+    /// The check failed. A login that never worked (`rollback`: the first attempt) is dropped
+    /// again, so the account tabs don't show up empty. Ignored after a log out meanwhile.
+    fn fail_probe(&mut self, step: u8, error: String, rollback: bool, cx: &mut Context<Self>) {
+        if !self.cfg.has_auth() {
+            return;
+        }
+        self.connect = Connect::Failed { step, error: session_hint(error) };
+        if rollback && self.cfg.cookies_file.is_none() && self.cfg.cookies_from_browser.is_none() {
+            Auth::clear();
+            self.reload_auth(cx);
+        }
+        cx.notify();
+    }
+
+    /// The check, step by step, off the UI thread: profile readable → session valid →
+    /// feed reachable. Each step reports back with `cx.notify()`.
+    fn run_probe(&mut self, rollback: bool, cx: &mut Context<Self>) {
+        self.import_msg = None;
+        let cfg = self.cfg.clone();
+        cx.spawn(async move |this, cx| {
+            let loaded = cx.background_executor().spawn({ let cfg = cfg.clone(); async move { Account::load(&cfg) } }).await;
+            let account = match loaded {
+                Ok(account) => account,
+                Err(error) => {
+                    this.update(cx, |this, cx| this.fail_probe(1, error, rollback, cx)).ok();
+                    return;
+                }
+            };
+            this.update(cx, |this, cx| {
+                if !this.cfg.has_auth() {
+                    return;
+                }
+                // The export may have persisted a keyring-qualified spec ("brave+gnomekeyring");
+                // pick it up so lists and player restart with the credentials that work.
+                if this.cfg.cookies_file.is_none() && this.cfg.cookies_from_browser.is_none()
+                    && Auth::load() != this.cfg.auth
+                {
+                    this.reload_auth(cx);
+                }
+                this.connect = Connect::Running(2);
+                cx.notify();
+            })
+            .ok();
+            let loaded = { let account = account.clone(); cx.background_executor().spawn(async move { account.me() }).await };
+            let me = match loaded {
+                Ok(me) => me,
+                Err(error) => {
+                    this.update(cx, |this, cx| this.fail_probe(2, error, rollback, cx)).ok();
+                    return;
+                }
+            };
+            this.update(cx, |this, cx| {
+                if !this.cfg.has_auth() {
+                    return;
+                }
+                this.connect = Connect::Running(3);
+                cx.notify();
+            })
+            .ok();
+            // Read the config again — the export may have learned the keyring spec.
+            let cfg = Arc::new(Config::load());
+            let probe = { let cfg = cfg.clone(); cx.background_executor().spawn(async move { yt::auth_probe(&cfg) }).await };
+            this.update(cx, |this, cx| {
+                if !this.cfg.has_auth() {
+                    return;
+                }
+                match probe {
+                    Ok(()) => {
+                        this.account = Some(Arc::new(account));
+                        this.connect = Connect::Done { me };
+                        // Re-fetch the playing video's like/subscribe state under the new login.
+                        this.status = None;
+                        this.status_requested = None;
+                        if rollback {
+                            // First connect: like after a launch with a login, the latest
+                            // YouTube history video waits in the player (not playing; set by
+                            // after_load once the list is there), and the home feed loads.
+                            // A video that isn't playing is only the logged-out placeholder: replace it.
+                            // Neither is preloaded: mpv's `mark-watched` would add it to YouTube's
+                            // history, though it was only shown.
+                            if this.state.is_none() {
+                                this.current = None;
+                            }
+                            this.preloaded = true;
+                            this.load_yt_history(cx);
+                            if this.settings.recommendations {
+                                this.load_recs(cx);
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        this.fail_probe(3, error, rollback, cx);
+                        return;
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Log out: forget the app-managed login; for a config.toml login, comment its two
+    /// lines out instead (the rest of the file is untouched, uncomment to return).
+    fn logout(&mut self, cx: &mut Context<Self>) {
+        let from_toml = self.cfg.cookies_file.is_some() || self.cfg.cookies_from_browser.is_some();
+        let word = if from_toml {
+            match store::disable_login_in_config() {
+                Ok(true) => "Logged out — the login in config.toml was commented out, uncomment it to return.",
+                Ok(false) => "Logged out.",
+                Err(e) => {
+                    self.import_msg = Some((false, e));
+                    cx.notify();
+                    return;
+                }
+            }
+        } else {
+            "Logged out."
+        };
+        // The session's video goes with the account: stop it and clear the pane before
+        // reload_auth, so it can't restart the video with the new (empty) cookie options.
+        // The local history on disk stays for the next login.
+        self.player.stop();
+        self.current = None;
+        self.state = None;
+        self.ended = None;
+        self.lower = Lower::Recommended;
+        self.comments = Load::Idle;
+        self.comments_for = None;
+        Auth::clear();
+        self.reload_auth(cx);
+        // Account fetches still running must not land in the slots cleared below.
+        for key in ["subs", "feed", "history", "playlists", "recs"] {
+            *self.generations.entry(key).or_insert(0) += 1;
+        }
+        // Account lists are dropped from memory (the disk caches return with the next
+        // login), and the connect screen comes back, now and on the next launch.
+        self.subs.groups = Load::Idle;
+        self.subs.videos = Load::Idle;
+        self.playlists.groups = Load::Idle;
+        self.playlists.videos = Load::Idle;
+        self.yt_history = Load::Idle;
+        self.recs = Load::Idle;
+        self.feed = Load::Idle;
+        self.watch_later = Load::Idle;
+        // No open channels behind the tabs that just disappeared.
+        self.subs.open = None;
+        self.playlists.open = None;
+        self.tab = match self.tab {
+            Tab::Playlists | Tab::History => Tab::Subscriptions,
+            t => t,
+        };
+        // The logged-out home, so the left list is ready behind the connect screen.
+        self.load_anon(cx);
+        self.settings.welcome_seen = false;
+        self.settings.save();
+        self.connect = Connect::Idle;
+        self.import_msg = Some((true, word.to_string()));
+        self.sync_embed();
+        cx.notify();
+    }
+
+    /// Back to browser selection after a failed attempt (app-managed login only).
+    fn choose_another_browser(&mut self, cx: &mut Context<Self>) {
+        Auth::clear();
+        self.reload_auth(cx);
+        self.connect = Connect::Idle;
+        cx.notify();
+    }
+
+    /// Validate a cookies.txt and keep a private 0600 copy of it as the login.
+    fn import_cookies(&mut self, cx: &mut Context<Self>) {
+        let given = self.import_path.trim();
+        if given.is_empty() {
+            return;
+        }
+        if self.cfg.cookies_file.is_some() || self.cfg.cookies_from_browser.is_some() {
+            self.import_msg = Some((false, "config.toml sets a login, which wins over this one: remove it there first.".into()));
+            cx.notify();
+            return;
+        }
+        let path = match given.strip_prefix("~/") {
+            Some(rest) => dirs::home_dir().unwrap_or_default().join(rest),
+            None => PathBuf::from(given),
+        };
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) => {
+                self.import_msg = Some((false, format!("{}: {e}", path.display())));
+                cx.notify();
+                return;
+            }
+        };
+        if let Err(e) = Account::from_cookies(&text) {
+            self.import_msg = Some((false, format!("{e} — expected a Netscape cookies.txt from a browser logged in to YouTube")));
+            cx.notify();
+            return;
+        }
+        let dest = Auth::imported_cookies_path();
+        let _ = std::fs::create_dir_all(store::config_dir());
+        // Created 0600 from the start, so the session is never readable by others.
+        let copy = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&dest)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, text.as_bytes()));
+        if let Err(e) = copy {
+            self.import_msg = Some((false, format!("{}: {e}", dest.display())));
+            cx.notify();
+            return;
+        }
+        Auth::CookiesFile(dest.clone()).save();
+        self.reload_auth(cx);
+        self.connect = Connect::Idle;
+        self.import_path.clear();
+        self.import_msg = Some((true, format!("YouTube cookies imported to {}", dest.display())));
+        cx.notify();
     }
 
     /// Fetch whether the current video is liked and its channel subscribed.
@@ -2063,6 +2482,11 @@ impl Unbloated {
     /// Keyboard shortcuts; see SHORTCUTS. Text fields stop the keys they use from reaching here.
     fn shortcut(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &ev.keystroke;
+        if k.key == "escape" && self.welcome_visible() {
+            self.finish_welcome(cx);
+            cx.stop_propagation();
+            return;
+        }
         if self.fullscreen && k.key == "escape" {
             self.player.set_fullscreen(false);
             cx.stop_propagation();
@@ -2489,6 +2913,10 @@ impl Unbloated {
     /// Header tabs in order, as shown.
     fn tab_list(&self) -> Vec<Tab> {
         let st = &self.settings;
+        if !self.cfg.has_auth() {
+            // No account tabs: the anonymous home (Subscriptions) and Settings.
+            return vec![Tab::Subscriptions, Tab::Settings];
+        }
         let mut tabs: Vec<Tab> = [(st.subscriptions, Tab::Subscriptions), (st.playlists, Tab::Playlists), (st.history, Tab::History)]
             .into_iter()
             .filter_map(|(on, t)| on.then_some(t))
@@ -2504,6 +2932,7 @@ impl Unbloated {
                 let b = self.browser_ref(self.tab);
                 format!("{:?}-{:?}-{:?}", self.tab, b.open.as_ref().map(|g| &g.id), b.view)
             }
+            Tab::History => format!("History-{}", self.history_shorts()),
             tab => format!("{tab:?}"),
         }
     }
@@ -2517,7 +2946,7 @@ impl Unbloated {
         match self.tab {
             Tab::Settings => Vec::new(),
             Tab::Search => videos(self.search.items().to_vec()),
-            Tab::History => {
+            Tab::History if self.cfg.has_auth() => {
                 let (partial, all) = self.history_items();
                 let mut items = videos(partial);
                 items.extend(videos(all));
@@ -2525,6 +2954,8 @@ impl Unbloated {
             }
             tab => match &self.browser_ref(tab).open {
                 Some(_) => videos(self.browser_videos(tab)),
+                // Logged out: the anonymous home list.
+                None if !self.cfg.has_auth() => videos(self.anon.items().to_vec()),
                 None => self.group_items(tab, &self.unseen_counts()).into_iter().map(Item::Group).collect(),
             },
         }
@@ -2535,17 +2966,25 @@ impl Unbloated {
         videos.iter().filter(|v| self.settings.shorts || !v.short).cloned().collect()
     }
 
+    /// The History tab shows its Shorts list (only while Shorts are on in Settings).
+    fn history_shorts(&self) -> bool {
+        self.settings.shorts && self.history_view == ChannelView::Shorts
+    }
+
     /// History tab: Continue watching (started, not finished), then local + YouTube history.
     fn history_items(&self) -> (Vec<Video>, Vec<Video>) {
-        let mut all: Vec<Video> = self.history.items.iter().map(|w| w.video.clone()).collect();
+        // YouTube's own order first (what was played here is in it, via mark-watched), then
+        // what only this app knows; without YouTube's list, just the local one.
+        let mut all: Vec<Video> = self.yt_history.items().to_vec();
         let seen: HashSet<String> = all.iter().map(|v| v.id.clone()).collect();
-        all.extend(self.yt_history.items().iter().filter(|v| !seen.contains(&v.id)).cloned());
-        all.retain(|v| self.video_matches(v));
+        all.extend(self.history.items.iter().filter(|w| !seen.contains(&w.video.id)).map(|w| w.video.clone()));
+        let shorts = self.history_shorts();
+        all.retain(|v| self.video_matches(v) && v.short == shorts);
         let partial = self
             .history
             .items
             .iter()
-            .filter(|w| w.position > 30. && !w.finished && self.video_matches(&w.video))
+            .filter(|w| w.position > 30. && !w.finished && self.video_matches(&w.video) && w.video.short == shorts)
             .take(50)
             .map(|w| w.video.clone())
             .collect();
@@ -2829,7 +3268,7 @@ impl Unbloated {
                 }))
         });
         let views = video.views.filter(|_| self.settings.show_views).map(|v| format!("{} views", fmt_count(v)));
-        let meta = [video.channel.clone(), views, video.duration.map(fmt_duration)]
+        let meta = [video.channel.clone(), views, video.duration.map(fmt_duration), video.watched.clone()]
             .into_iter()
             .flatten()
             .collect::<Vec<_>>()
@@ -2929,22 +3368,26 @@ impl Unbloated {
         div().p_4().text_sm().text_color(themed(MUTED)).child(msg.into()).into_any_element()
     }
 
+    /// The hint appended to any error while logged out, also shown on its own for a list
+    /// that never loaded.
+    fn needs_login(&self) -> &'static str {
+        "This list needs your YouTube account.\nConnect it in Settings → Connect YouTube."
+    }
+
     fn failed(&self, e: &str) -> AnyElement {
-        let hint = if self.cfg.has_auth() {
-            String::new()
+        if self.cfg.has_auth() {
+            self.status(e.to_string())
         } else {
-            format!(
-                "\n\nNot logged in. Add to {}:\ncookies_from_browser = \"firefox\"   # or cookies_file = \"/path/cookies.txt\"",
-                store::config_dir().join("config.toml").display()
-            )
-        };
-        self.status(format!("{e}{hint}"))
+            self.status(format!("{e}\n\n{}", self.needs_login()))
+        }
     }
 
     /// What to show instead of a list that has no items (yet), or None if it has some.
     fn placeholder<T>(&self, load: &Load<T>, empty: &str, rows: Rows) -> Option<AnyElement> {
         match load {
             Load::Failed(e) => Some(self.failed(e)),
+            // Never fetched (logged out): the connect hint instead of a skeleton.
+            Load::Idle if !self.cfg.has_auth() => Some(self.status(self.needs_login().to_string())),
             Load::Ready(v) if v.is_empty() => Some(self.status(empty.to_string())),
             Load::Ready(_) => None,
             Load::Loading(v) if !v.is_empty() => None,
@@ -2952,15 +3395,47 @@ impl Unbloated {
         }
     }
 
+    /// The anonymous video list: the left column's home and the Recommendations pane
+    /// while logged out.
+    fn render_anon(&mut self, id: &'static str, cx: &mut Context<Self>) -> AnyElement {
+        match &self.anon {
+            Load::Failed(e) => return self.status(e.clone()),
+            Load::Ready(v) if v.is_empty() => return self.status("No videos.".to_string()),
+            // A refresh keeps the previous mix on screen until the new one arrives.
+            Load::Ready(v) | Load::Loading(v) if !v.is_empty() => {}
+            _ => return skeleton(Rows::Videos),
+        }
+        let videos = self.anon.items().to_vec();
+        self.video_list(id, &videos, Some(0), cx)
+    }
+
     fn render_list(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.tab {
-            Tab::History => {
+            Tab::History if self.cfg.has_auth() => {
                 let body = self.render_history(cx);
                 return div()
                     .flex()
                     .flex_col()
                     .flex_1()
                     .min_h_0()
+                    .when(self.settings.shorts, |d| {
+                        let shorts = self.history_shorts();
+                        d.child(
+                            div()
+                                .flex()
+                                .px_2()
+                                .border_b_1()
+                                .border_color(themed(BORDER))
+                                .child(tab_button("Videos", !shorts).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                                    this.history_view = ChannelView::Videos;
+                                    cx.notify();
+                                }))
+                                .child(tab_button("Shorts", shorts).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                                    this.history_view = ChannelView::Shorts;
+                                    cx.notify();
+                                })),
+                        )
+                    })
                     .child(self.filter_bar("Filter history", window, cx))
                     .child(div().flex().flex_col().flex_1().min_h_0().child(body))
                     .into_any_element();
@@ -2975,12 +3450,20 @@ impl Unbloated {
                     None => self.video_list("search", &self.search.items().to_vec(), Some(0), cx),
                 };
             }
+            // Logged out: an open channel still shows through render_browser; anything
+            // else shares the anonymous home.
+            tab if !self.cfg.has_auth() => match tab {
+                Tab::Subscriptions | Tab::Playlists if self.browser_ref(tab).open.is_some() => {
+                    self.render_browser(tab, window, cx)
+                }
+                _ => self.render_anon("home", cx),
+            },
             tab => self.render_browser(tab, window, cx),
         }
     }
 
     fn render_history(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        // Videos played in unbloated-youtube first, then the rest of YouTube's history.
+        // YouTube's history first, then what only this app has seen.
         let (partial, videos) = self.history_items();
         if videos.is_empty() && !self.list_filter.trim().is_empty() {
             return self.status("No matches.");
@@ -2988,6 +3471,9 @@ impl Unbloated {
         if videos.is_empty() {
             if let Some(p) = self.placeholder(&self.yt_history, "Nothing here.", Rows::Videos) {
                 return p;
+            }
+            if self.history_shorts() {
+                return self.status("No Shorts.");
             }
         }
         if partial.is_empty() {
@@ -3174,6 +3660,251 @@ impl Unbloated {
             )
     }
 
+    /// A button in the Connect panel: accent when `primary`, neutral otherwise.
+    fn cta(&self, id: impl Into<ElementId>, label: impl Into<SharedString>, primary: bool) -> Stateful<gpui::Div> {
+        div()
+            .id(id)
+            .flex_none()
+            .px_3()
+            .py_1()
+            .rounded_md()
+            .border_1()
+            .border_color(if primary { themed(ACCENT) } else { themed(BORDER) })
+            .bg(if primary { themed(ACCENT) } else { themed(HOVER) })
+            .text_sm()
+            .text_color(if primary { themed(ON_ACCENT) } else { themed(TEXT) })
+            .cursor_pointer()
+            .hover(|d| d.opacity(0.85))
+            .child(label.into())
+    }
+
+    /// The ACCOUNT section: the Connect YouTube panel (browser, cookies.txt, config.toml),
+    /// the three-step check, and cookies.txt import under Advanced.
+    fn connect_section(&mut self, window: &Window, cx: &mut Context<Self>) -> gpui::Div {
+        let from_toml = self.cfg.cookies_file.is_some() || self.cfg.cookies_from_browser.is_some();
+        let source = self.cfg.auth.source_label().unwrap_or_default();
+        let config_toml = store::config_dir().join("config.toml");
+        let connect = self.connect.clone();
+        let detected: Vec<&str> = BROWSERS.iter().filter(|(_, spec, _)| Auth::on_path(spec)).map(|(name, ..)| *name).collect();
+        let dot_line = |glyph: &'static str, text: String, color: u32| {
+            div()
+                .px_4()
+                .pb_2()
+                .flex()
+                .items_center()
+                .gap_2()
+                .text_sm()
+                .child(div().text_color(themed(ACCENT)).child(glyph))
+                .child(div().text_color(themed(color)).child(text))
+        };
+        let mut d = div().flex().flex_col().child(div().px_4().pt_4().pb_2().text_xs().text_color(themed(MUTED)).child("ACCOUNT"));
+        match &connect {
+            Connect::Idle if !self.cfg.has_auth() => {
+                d = d
+                    .child(div().px_4().text_sm().text_color(themed(TEXT)).child("Connect YouTube"))
+                    .child(div().px_4().pt_1().text_xs().text_color(themed(MUTED)).child(
+                        "See your subscriptions, playlists and history. No password is ever asked: the app uses your browser's own YouTube session.",
+                    ))
+                    .child(
+                        div().px_4().py_3().flex().flex_wrap().gap_1().children(BROWSERS.iter().enumerate().map(|(i, (name, spec, _))| {
+                            self.chip(("browser", i), *name, self.connect_browser == *spec)
+                                .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
+                                    this.connect_browser = (*spec).to_string();
+                                    cx.notify();
+                                })
+                        })),
+                    )
+                    .child(div().px_4().text_xs().text_color(themed(MUTED)).child(if detected.is_empty() {
+                        "No supported browser found in PATH — importing a cookies.txt below still works.".to_string()
+                    } else {
+                        format!("Detected: {}", detected.join(", "))
+                    }))
+                    .child(div().px_4().pt_3().child(self.cta("connect-go", "Connect", true).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                        this.start_connect(cx);
+                    })))
+                    .child(div().px_4().pt_4().pb_1().text_xs().text_color(themed(MUTED)).child("ADVANCED"));
+                // Path field for a Netscape cookies.txt (own field, not a Settings value).
+                let focused = self.import_focus.is_focused(window);
+                d = d.child(
+                    div()
+                        .px_4()
+                        .py_2()
+                        .flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .id("import-field")
+                                .track_focus(&self.import_focus)
+                                .flex_1()
+                                .min_w_0()
+                                .px_2()
+                                .py_1()
+                                .rounded_md()
+                                .bg(themed(HOVER))
+                                .border_1()
+                                .border_color(if focused { themed(MUTED) } else { themed(BORDER) })
+                                .text_sm()
+                                .cursor_text()
+                                .map(|d| match (self.import_path.is_empty(), focused) {
+                                    (true, false) => d.text_color(themed(MUTED)).child("~/cookies.txt"),
+                                    (_, true) => d.text_color(themed(TEXT)).child(self.caret_text("import", &self.import_path, "~/cookies.txt")),
+                                    _ => d.text_color(themed(TEXT)).child(self.import_path.clone()),
+                                })
+                                .on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| {
+                                    window.focus(&this.import_focus);
+                                    cx.notify();
+                                })
+                                .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                                    match edit_text(&mut this.caret, "import", &mut this.import_path, ev, cx) {
+                                        Edit::Submit => {
+                                            this.import_cookies(cx);
+                                            window.blur();
+                                        }
+                                        Edit::Cancel => window.blur(),
+                                        Edit::Changed | Edit::Moved => {}
+                                        Edit::Ignored => {
+                                            cx.stop_propagation();
+                                            return;
+                                        }
+                                    }
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                })),
+                        )
+                        .child(self.cta("import-go", "Import", false).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                            this.import_cookies(cx);
+                        })),
+                );
+                d = d.child(div().px_4().pt_1().text_xs().text_color(themed(MUTED)).child(
+                    "A Netscape cookies.txt exported from a browser. It contains your YouTube session, so keep it private.",
+                ));
+            }
+            Connect::Idle => {
+                d = d.child(dot_line("●", format!("Connected via {source}"), TEXT));
+                d = d.child(
+                    div().px_4().py_2().flex().gap_2()
+                        .child(self.cta("connect-test", "Test connection", false).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                            this.connect = Connect::Running(1);
+                            this.run_probe(false, cx);
+                        }))
+                        .child(self.cta("connect-drop", "Log out", false).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                            this.logout(cx);
+                        })),
+                );
+            }
+            Connect::Running(_) => {
+                d = d
+                    .child(dot_line("●", "Checking your connection…".into(), TEXT))
+                    .children(connect.steps())
+                    .child(div().px_4().pt_2().text_xs().text_color(themed(MUTED)).child("This can take up to half a minute."));
+            }
+            Connect::Failed { error, .. } => {
+                d = d
+                    .child(dot_line("✕", "Connection problem".into(), ACCENT))
+                    .children(connect.steps())
+                    .child(div().px_4().pt_2().text_sm().text_color(themed(MUTED)).child(error.clone()))
+                    .child(
+                        div().px_4().py_2().flex().gap_2()
+                            .child(self.cta("connect-retry", "Try again", false).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                                // A failed first connect dropped its login again: save it anew.
+                                if this.cfg.has_auth() {
+                                    this.connect = Connect::Running(1);
+                                    this.run_probe(false, cx);
+                                } else {
+                                    this.start_connect(cx);
+                                }
+                            }))
+                            .when(!from_toml, |d| {
+                                d.child(self.cta("connect-other", "Choose another browser", false).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                                    this.choose_another_browser(cx);
+                                }))
+                            })
+                            .when(from_toml, |d| {
+                                d.child(self.cta("connect-drop", "Log out", false).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                                    this.logout(cx);
+                                }))
+                            }),
+                    );
+            }
+            Connect::Done { me } => {
+                d = d.child(dot_line("●", format!("Connected via {source}"), TEXT));
+                let avatar = me.avatar.clone().map(|url| self.thumb_el("connect-avatar", Some(url), 20., 20., px(10.), cx));
+                let word = match &me.handle {
+                    Some(handle) => format!("Signed in as {handle}"),
+                    None => "Everything checks out.".to_string(),
+                };
+                d = d.child(div().px_4().pb_1().flex().items_center().gap_2().text_sm().text_color(themed(MUTED)).children(avatar).child(word));
+                d = d.children(connect.steps());
+                d = d.child(
+                    div().px_4().py_2().flex().gap_2()
+                        .child(self.cta("connect-test", "Test connection", false).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                            this.connect = Connect::Running(1);
+                            this.run_probe(false, cx);
+                        }))
+                        .child(self.cta("connect-drop", "Log out", false).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                            this.logout(cx);
+                        })),
+                );
+            }
+        }
+        if from_toml {
+            d = d.child(div().px_4().pb_2().text_xs().text_color(themed(MUTED)).child(format!("Edit {} to change", config_toml.display())));
+        }
+        if let Some((ok, msg)) = &self.import_msg {
+            d = d.child(
+                div()
+                    .px_4()
+                    .pb_2()
+                    .text_xs()
+                    .text_color(if *ok { themed(MUTED) } else { themed(ACCENT) })
+                    .child(format!("{} {msg}", if *ok { "✓" } else { "✕" })),
+            );
+        }
+        d
+    }
+
+    /// The first-run screen: offer to connect, or continue without an account (Esc does the same).
+    fn render_welcome(&self, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
+        div()
+            .id("welcome")
+            .occlude()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(themed(BG))
+            .child(
+                div()
+                    .w(px(560.))
+                    .max_w(relative(0.9))
+                    .p_8()
+                    .rounded_xl()
+                    .bg(themed(PANEL))
+                    .border_1()
+                    .border_color(themed(BORDER))
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(div().text_2xl().text_color(themed(TEXT)).child("unbloated-youtube"))
+                    .child(div().text_sm().text_color(themed(MUTED)).child(
+                        "Connect your YouTube account to see your subscriptions, playlists and history. The app never asks for a password: it uses your browser's own YouTube session.",
+                    ))
+                    .child(
+                        div().pt_2().flex().gap_2().child(self.cta("welcome-connect", "Connect YouTube", true).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                            this.welcome_connect(cx);
+                        })).child(
+                            self.cta("welcome-skip", "Continue without account", false).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                                this.finish_welcome(cx);
+                            }),
+                        ),
+                    )
+                    .child(div().pt_1().text_xs().text_color(themed(MUTED)).child("Esc continues without an account.")),
+            )
+    }
+
     fn render_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let query = self.settings_filter.to_lowercase();
         let matches = |label: &str, hint: &str| {
@@ -3227,7 +3958,7 @@ impl Unbloated {
             let rows = toggles
                 .iter()
                 .enumerate()
-                .filter(|(_, t)| matches(t.0, t.1))
+                .filter(|(_, t)| matches(t.0, t.1) && (self.cfg.has_auth() || !ACCOUNT_ONLY.contains(&t.0)))
                 .map(|(i, t)| toggle_row(offset + i, t, cx))
                 .collect();
             offset += toggles.len();
@@ -3273,7 +4004,7 @@ impl Unbloated {
             );
             sections[3].1.push(row.into_any_element());
         }
-        let show_account = matches("Account", "login logged in cookies");
+        let show_account = matches("Connect YouTube", "account login logged in sign in browser connect cookies import");
         let nothing = sections.iter().all(|(_, rows)| rows.is_empty())
             && !show_account
             && !self.shortcuts().iter().any(|(k, what)| matches(k, what))
@@ -3318,11 +4049,6 @@ impl Unbloated {
                 cx.stop_propagation();
                 cx.notify();
             }));
-        let login = match (&self.cfg.cookies_file, &self.cfg.cookies_from_browser) {
-            (Some(f), _) => format!("Logged in with cookies from {f}"),
-            (None, Some(b)) => format!("Logged in with cookies from {b}"),
-            _ => "Not logged in".to_string(),
-        };
         div()
             .id("settings-page")
             .size_full()
@@ -3331,6 +4057,7 @@ impl Unbloated {
             .flex_col()
             .py_2()
             .child(search)
+            .when(show_account, |d| d.child(self.connect_section(window, cx)))
             .when(nothing, |d| d.child(self.status("No settings match.")))
             .children(sections.into_iter().filter(|(_, rows)| !rows.is_empty()).map(|(title, rows)| {
                 div()
@@ -3366,18 +4093,6 @@ impl Unbloated {
                             .child(div().text_color(themed(MUTED)).child(*what))
                     }),
                 )
-            })
-            .when(show_account, |d| {
-                d.child(div().px_4().pt_4().pb_2().text_xs().text_color(themed(MUTED)).child("ACCOUNT"))
-                    .child(div().px_4().text_sm().text_color(themed(TEXT)).child(login))
-                    .child(
-                div()
-                    .px_4()
-                    .pt_1()
-                    .text_xs()
-                    .text_color(themed(MUTED))
-                    .child(format!("Edit {} to change", store::config_dir().join("config.toml").display())),
-                    )
             })
             .into_any_element()
     }
@@ -4430,6 +5145,9 @@ impl Unbloated {
     }
 
     fn render_recs(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        if !self.cfg.has_auth() && self.recs.items().is_empty() {
+            return self.render_anon("recs", cx);
+        }
         if let Some(p) = self.placeholder(&self.recs, "No recommendations.", Rows::Videos) {
             return p;
         }
@@ -4602,6 +5320,24 @@ fn loading_bar(id: &'static str) -> impl IntoElement {
 }
 
 /// A draggable 5px bar between two panes.
+/// A list that failed (most often without a login) may load again after the login changed.
+fn clear_failed<T>(load: &mut Load<T>) {
+    if matches!(load, Load::Failed(_)) {
+        *load = Load::Idle;
+    }
+}
+
+/// Friendlier wording for a session YouTube rejected: the browser cookies expired.
+fn session_hint(error: String) -> String {
+    if error.contains("no YouTube login cookies") {
+        "That browser isn't signed in to YouTube. Sign in there, then try again (Chromium-based browsers also need an unlocked keyring).".into()
+    } else if error.contains("refused") || error.to_lowercase().contains("sign in") {
+        format!("{error} — your YouTube session may have expired; sign in to YouTube in your browser, then try again")
+    } else {
+        error
+    }
+}
+
 fn divider(id: &'static str, split: Split, cx: &mut Context<Unbloated>) -> Stateful<gpui::Div> {
     let bar = div().id(id).flex_none().bg(themed(BORDER)).hover(|d| d.bg(themed(MUTED)));
     let bar = match split {
@@ -4832,10 +5568,11 @@ impl Render for Unbloated {
                 .child(self.screen(&video, true, cx));
         }
         let st = &self.settings;
+        let auth = self.cfg.has_auth();
         let tabs: Vec<_> = [
-            (st.subscriptions, "Subscriptions", Tab::Subscriptions),
-            (st.playlists, "Playlists", Tab::Playlists),
-            (st.history, "History", Tab::History),
+            (auth && st.subscriptions, "Subscriptions", Tab::Subscriptions),
+            (auth && st.playlists, "Playlists", Tab::Playlists),
+            (auth && st.history, "History", Tab::History),
         ]
         .into_iter()
         .filter_map(|(on, label, tab)| on.then_some((label, tab)))
@@ -4912,6 +5649,18 @@ impl Render for Unbloated {
             .children(tabs.into_iter().map(|(label, tab)| {
                 tab_button(label, self.tab == tab).on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.select_tab(tab, cx))
             }))
+            // Logged out: the account tabs are replaced by the home list and one way in.
+            .when(!auth, |d| {
+                d.child(
+                    tab_button("Home", self.tab != Tab::Settings)
+                        .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.select_tab(Tab::Subscriptions, cx)),
+                )
+                .child(
+                    tab_button("Sign in", self.tab == Tab::Settings)
+                        .tooltip(tip_left("Connect your YouTube account (Settings)"))
+                        .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.select_tab(Tab::Settings, cx)),
+                )
+            })
             .child(div().flex_1())
             .child(
                 header_icon("search-open", "search")
@@ -5117,6 +5866,7 @@ impl Render for Unbloated {
         self.hint_targets.borrow_mut().clear();
         let hint_overlay = self.hints.as_ref().map(|(targets, typed)| hint_labels(targets, typed));
         let sheet = self.show_keys.then(|| self.render_cheatsheet(cx));
+        let welcome = self.welcome_visible().then(|| self.render_welcome(cx));
         div()
             .size_full()
             .relative()
@@ -5141,6 +5891,7 @@ impl Render for Unbloated {
             .children(self.render_toasts())
             .children(sheet)
             .children(hint_overlay)
+            .children(welcome)
             // While dragging, X keeps sending us pointer events even over mpv's window.
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, window, cx| {
                 let Some(split) = this.dragging else { return };

@@ -1,10 +1,12 @@
 //! YouTube data via yt-dlp. Lists are streamed (`--flat-playlist -j`, one JSON entry per line)
 //! so the UI can show them page by page. All functions block; run them off the UI thread.
 
+use crate::account::Account;
 use crate::store::Config;
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Read};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Video {
@@ -22,6 +24,9 @@ pub struct Video {
     /// View count, when the listing has it (search and playlists do; channel tabs and feeds don't).
     #[serde(default)]
     pub views: Option<u64>,
+    /// When it was watched ("Today", "Saturday", …) — only on YouTube history entries.
+    #[serde(default)]
+    pub watched: Option<String>,
 }
 
 impl Video {
@@ -94,16 +99,16 @@ struct Entry {
     thumbnails: Vec<Thumb>,
 }
 
-/// Run yt-dlp on `target`, calling `on` for each entry as soon as yt-dlp prints it.
+/// Run yt-dlp on `targets`, calling `on` for each entry as soon as yt-dlp prints it.
 /// PYCRYPTODOME_DISABLE_GMP: pycryptodome otherwise hunts for libgmp via ctypes' find_library,
 /// which on NixOS shells out to the C compiler and adds ~1.7s to every yt-dlp start.
-fn stream(cfg: &Config, target: &str, limit: usize, mut on: impl FnMut(Entry)) -> Result<(), String> {
+fn stream(cfg: &Config, targets: &[String], limit: usize, mut on: impl FnMut(Entry)) -> Result<(), String> {
     let mut child = Command::new("yt-dlp")
         .env("PYCRYPTODOME_DISABLE_GMP", "1")
         .args(["--no-update", "--flat-playlist", "-j", "--no-warnings"])
         .args(["--playlist-end", &limit.to_string()])
         .args(cfg.cookie_args())
-        .arg(target)
+        .args(targets)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -194,11 +199,12 @@ fn to_video(e: Entry) -> Option<Video> {
         channel_url: e.channel_url.or(e.uploader_url),
         duration: e.duration,
         views: e.view_count,
+        watched: None,
     })
 }
 
 fn videos(cfg: &Config, target: &str, limit: usize, on: &mut dyn FnMut(Video)) -> Result<(), String> {
-    stream(cfg, target, limit, |e| to_video(e).into_iter().for_each(&mut *on))
+    stream(cfg, &[target.to_string()], limit, |e| to_video(e).into_iter().for_each(&mut *on))
 }
 
 fn thumb(e: &Entry) -> Option<String> {
@@ -208,7 +214,7 @@ fn thumb(e: &Entry) -> Option<String> {
 
 /// Subscribed channels, in YouTube's order (the UI sorts them once complete).
 pub fn subscriptions(cfg: &Config, on: &mut dyn FnMut(Group)) -> Result<(), String> {
-    stream(cfg, "https://www.youtube.com/feed/channels", 5000, |e| {
+    stream(cfg, &["https://www.youtube.com/feed/channels".to_string()], 5000, |e| {
         let thumb = thumb(&e);
         let (Some(id), Some(url)) = (e.id, e.channel_url.or(e.url)) else { return };
         let title = e.title.map(|t| t.trim().to_string()).unwrap_or_else(|| url.clone());
@@ -221,8 +227,27 @@ pub fn feed(cfg: &Config, on: &mut dyn FnMut(Video)) -> Result<(), String> {
     videos(cfg, ":ytsubs", 150, on)
 }
 
-pub fn history(cfg: &Config, on: &mut dyn FnMut(Video)) -> Result<(), String> {
-    videos(cfg, ":ythistory", 150, on)
+/// The login-gated path works: one entry from the subscriptions feed. Used by the
+/// Connect panel's check, so it must fail loudly when the cookies are not accepted.
+pub fn auth_probe(cfg: &Config) -> Result<(), String> {
+    stream(cfg, &[":ytsubs".to_string()], 1, |_| {}).map(drop)
+}
+
+/// YouTube's watch history, newest first, with the day of each entry. Asked of YouTube
+/// directly: yt-dlp's `:ythistory` leaves out Shorts and some recent entries. Falls back to
+/// yt-dlp when the account can't be reached that way.
+pub fn history(cfg: &Config, account: Option<Arc<Account>>, on: &mut dyn FnMut(Video)) -> Result<(), String> {
+    let list = match account {
+        Some(a) => a.history(150),
+        None => Account::load(cfg).and_then(|a| a.history(150)),
+    };
+    match list {
+        Ok(list) if !list.is_empty() => {
+            list.into_iter().for_each(on);
+            Ok(())
+        }
+        _ => videos(cfg, ":ythistory", 150, on),
+    }
 }
 
 pub fn recommendations(cfg: &Config, on: &mut dyn FnMut(Video)) -> Result<(), String> {
@@ -232,6 +257,64 @@ pub fn recommendations(cfg: &Config, on: &mut dyn FnMut(Video)) -> Result<(), St
 /// Fallback "recommendations" without login: latest uploads of the given channel.
 pub fn channel_uploads(cfg: &Config, channel_url: &str, on: &mut dyn FnMut(Video)) -> Result<(), String> {
     videos(cfg, &format!("{}/videos", channel_url.trim_end_matches('/')), 40, on)
+}
+
+/// The logged-out home: a shuffled mix of random topic searches. YouTube's own home feed,
+/// trending and popular pages all require a login, so anonymous sessions get this instead.
+pub fn anonymous(cfg: &Config, on: &mut dyn FnMut(Video)) -> Result<(), String> {
+    const TOPICS: &[&str] = &[
+        "official music video",
+        "video game gameplay",
+        "space science documentary",
+        "cooking recipe",
+        "funny moments compilation",
+        "football highlights",
+        "tech review",
+        "nature wildlife",
+        "travel vlog",
+        "car review",
+        "history documentary",
+        "stand up comedy",
+        "diy woodworking",
+        "movie trailer",
+        "coding tutorial",
+        "art timelapse",
+    ];
+    // No rand dependency: a xorshift seeded from the process's (randomized) hash state.
+    let mut state = {
+        use std::collections::hash_map::RandomState;
+        use std::hash::{BuildHasher, Hasher};
+        let mut h = RandomState::new().build_hasher();
+        h.write_u64(std::process::id() as u64);
+        h.finish() | 1
+    };
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    // Five distinct topics, picked by partial Fisher-Yates.
+    let mut pool: Vec<&str> = TOPICS.to_vec();
+    for i in 0..5 {
+        let j = i + (next() as usize % (pool.len() - i));
+        pool.swap(i, j);
+    }
+    let targets: Vec<String> = pool[..5].iter().map(|t| format!("ytsearch15:{t}")).collect();
+    let mut found: Vec<Video> = Vec::new();
+    stream(cfg, &targets, 20, |e| {
+        if let Some(v) = to_video(e) {
+            if !found.iter().any(|w| w.id == v.id) {
+                found.push(v);
+            }
+        }
+    })?;
+    // Interleave the topics: collect first, so the rows aren't one topic's block at a time.
+    for i in (1..found.len()).rev() {
+        found.swap(i, (next() as usize) % (i + 1));
+    }
+    found.into_iter().for_each(&mut *on);
+    Ok(())
 }
 
 pub fn search(cfg: &Config, query: &str, on: &mut dyn FnMut(Video)) -> Result<(), String> {
@@ -256,7 +339,7 @@ pub fn playlists(cfg: &Config, on: &mut dyn FnMut(Group)) -> Result<(), String> 
         thumb: None,
         subscribers: None,
     });
-    stream(cfg, "https://www.youtube.com/feed/playlists", 200, |e| {
+    stream(cfg, &["https://www.youtube.com/feed/playlists".to_string()], 200, |e| {
         let thumb = thumb(&e);
         let (Some(id), Some(url)) = (e.id, e.url) else { return };
         on(Group { id, title: e.title.unwrap_or_else(|| "(untitled)".into()), url, thumb, subscribers: None });

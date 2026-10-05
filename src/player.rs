@@ -1,5 +1,6 @@
 //! A single long-lived mpv process, controlled over its JSON IPC socket.
 
+use crate::auth::Auth;
 use crate::store::{Config, Settings};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
@@ -121,6 +122,16 @@ impl Player {
         self.command(json!(["loadfile", url, "replace"]))
     }
 
+    /// Stop playback and exit mpv (logout, or the connect screen coming up).
+    pub fn stop(&mut self) {
+        if let Some(mut c) = self.child.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+        self.bound = false;
+        self.options.clear();
+    }
+
     /// Options the running mpv was started with (empty if none).
     pub fn options(&mut self) -> &[String] {
         if self.alive() { &self.options } else { &[] }
@@ -219,10 +230,10 @@ pub fn options(cfg: &Config, s: &Settings, pip: bool) -> Vec<String> {
         "--stream-lavf-o-append=request_size=10485760".into(),
     ];
     let mut raw = vec!["mark-watched=".to_string()];
-    match (&cfg.cookies_file, &cfg.cookies_from_browser) {
-        (Some(f), _) => raw.push(format!("cookies={f}")),
-        (None, Some(b)) => raw.push(format!("cookies-from-browser={b}")),
-        _ => raw.clear(),
+    match &cfg.auth {
+        Auth::CookiesFile(f) => raw.push(format!("cookies={}", f.display())),
+        Auth::Browser(b) => raw.push(format!("cookies-from-browser={b}")),
+        Auth::None => raw.clear(),
     }
     if !raw.is_empty() {
         out.push(format!("--ytdl-raw-options={}", raw.join(",")));

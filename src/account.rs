@@ -2,17 +2,29 @@
 //! YouTube's internal "InnerTube" API the way yt-dlp authenticates its own requests: browser
 //! cookies plus a SAPISIDHASH Authorization header. Cookies stay in memory only.
 
+use crate::auth::Auth;
 use crate::store::Config;
+use crate::yt::Video;
 use serde_json::{Value, json};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const ORIGIN: &str = "https://www.youtube.com";
 const CLIENT_VERSION: &str = "2.20260708.00.00";
 
+#[derive(Clone)]
 pub struct Account {
     cookie_header: String,
     sapisid: String,
+}
+
+/// The signed-in account as far as YouTube's guide endpoint shows it: handle like
+/// "@anton", and the avatar the guide draws next to it.
+#[derive(Clone, Debug, Default)]
+pub struct Me {
+    pub handle: Option<String>,
+    pub avatar: Option<String>,
 }
 
 /// What the account thinks of one video.
@@ -31,14 +43,32 @@ pub struct VideoStatus {
 }
 
 impl Account {
-    /// Read the YouTube cookies: from `cookies_file`, or exported once from the browser via yt-dlp
-    /// into a private runtime file that is deleted right after reading.
+    /// Read the YouTube cookies: from a cookies file, or exported once from the browser via
+    /// yt-dlp into a private runtime file that is deleted right after reading.
     pub fn load(cfg: &Config) -> Result<Self, String> {
-        let text = match (&cfg.cookies_file, &cfg.cookies_from_browser) {
-            (Some(f), _) => std::fs::read_to_string(f).map_err(|e| format!("{f}: {e}"))?,
-            (None, Some(browser)) => export_browser_cookies(browser)?,
-            _ => return Err("not logged in".into()),
+        let text = match &cfg.auth {
+            Auth::CookiesFile(f) => std::fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?,
+            Auth::Browser(browser) => {
+                let (text, spec) = export_browser_cookies(browser)?;
+                // yt-dlp sometimes needs a keyring suffix ("brave+gnomekeyring") to read
+                // Chromium's encrypted cookies. Remember the spec that worked so every
+                // later call agrees — but only when auth.json (not config.toml) is the
+                // login's source; hand-edited values stay hand-edited.
+                // Skipped when auth.json changed meanwhile (log out, another browser): a
+                // slow export must not write a stale login back.
+                if &spec != browser && cfg.cookies_file.is_none() && cfg.cookies_from_browser.is_none() && Auth::load() == cfg.auth {
+                    Auth::Browser(spec).save();
+                }
+                text
+            }
+            Auth::None => return Err("not logged in".into()),
         };
+        Self::from_cookies(&text)
+    }
+
+    /// Parse a Netscape cookies.txt; needs at least one YouTube login cookie.
+    /// Also used to validate a cookies.txt before importing it.
+    pub fn from_cookies(text: &str) -> Result<Self, String> {
         let cookies: Vec<(String, String)> = text
             .lines()
             .map(|l| l.strip_prefix("#HttpOnly_").unwrap_or(l))
@@ -53,6 +83,22 @@ impl Account {
         let sapisid = get("SAPISID").or_else(|| get("__Secure-3PAPISID")).ok_or("no YouTube login cookies")?;
         let cookie_header = cookies.iter().map(|(n, v)| format!("{n}={v}")).collect::<Vec<_>>().join("; ");
         Ok(Self { cookie_header, sapisid })
+    }
+
+    /// Who is signed in: the guide endpoint's entry for your own channel. A missing handle
+    /// is not an error — only a failed request is (expired cookies answer 401/403).
+    pub fn me(&self) -> Result<Me, String> {
+        let guide = self.post("guide", json!({}))?;
+        let (mut handle, mut avatar) = (None, None);
+        walk(&guide, &mut |key, v| match key {
+            "channelHandleRenderer" if handle.is_none() => {
+                handle = v.get("channelHandleText").and_then(renderer_text);
+                avatar = v["avatar"]["thumbnails"].as_array().and_then(|t| t.last()).and_then(|t| t["url"].as_str()).map(String::from);
+            }
+            "accountName" if handle.is_none() => handle = renderer_text(v),
+            _ => {}
+        });
+        Ok(Me { handle, avatar })
     }
 
     fn post(&self, endpoint: &str, mut body: Value) -> Result<Value, String> {
@@ -106,6 +152,32 @@ impl Account {
         })
     }
 
+    /// The watch history, newest first, each entry with its day ("Today", "Saturday", …) in
+    /// `watched`. Shorts are in it too (`short`). Follows the continuation pages until `limit`
+    /// entries are there; a video watched on several days is listed once, at its latest.
+    pub fn history(&self, limit: usize) -> Result<Vec<Video>, String> {
+        let mut out: Vec<Video> = Vec::new();
+        let mut day = String::new();
+        let mut resp = self.post("browse", json!({ "browseId": "FEhistory" }))?;
+        for _ in 0..8 {
+            collect_history(&resp, &mut day, &mut out);
+            let mut token = None;
+            walk(&resp, &mut |key, v| {
+                if key == "continuationCommand" && token.is_none() {
+                    token = v["token"].as_str().map(String::from);
+                }
+            });
+            match token {
+                Some(token) if out.len() < limit => resp = self.post("browse", json!({ "continuation": token }))?,
+                _ => break,
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        out.retain(|v| seen.insert(v.id.clone()));
+        out.truncate(limit);
+        Ok(out)
+    }
+
     pub fn subscribe(&self, channel_id: &str, on: bool) -> Result<(), String> {
         let ep = if on { "subscription/subscribe" } else { "subscription/unsubscribe" };
         self.post(ep, json!({ "channelIds": [channel_id] })).map(drop)
@@ -153,6 +225,95 @@ fn text(v: &Option<Value>, path: &[&str]) -> Option<String> {
     path.iter().try_fold(v.as_ref()?, |v, k| v.get(k))?.as_str().map(String::from)
 }
 
+/// Text of a renderer node whose wording is either a SimpleText or runs.
+fn renderer_text(v: &Value) -> Option<String> {
+    v.get("simpleText").and_then(Value::as_str).map(String::from).or_else(|| v["runs"][0]["text"].as_str().map(String::from))
+}
+
+/// The videos of a history page in order, each tagged with its section's day. A page continues
+/// the previous one's last day when its first section has no header.
+fn collect_history(v: &Value, day: &mut String, out: &mut Vec<Video>) {
+    match v {
+        Value::Object(m) => match m.get("itemSectionRenderer") {
+            Some(section) => {
+                if let Some(title) = section["header"]["itemSectionHeaderRenderer"].get("title").and_then(renderer_text) {
+                    *day = title;
+                }
+                walk(section, &mut |key, v| match key {
+                    "lockupViewModel" => out.extend(history_video(v, day)),
+                    "shortsLockupViewModel" => out.extend(history_short(v, day)),
+                    _ => {}
+                });
+            }
+            None => m.values().for_each(|v| collect_history(v, day, out)),
+        },
+        Value::Array(a) => a.iter().for_each(|v| collect_history(v, day, out)),
+        _ => {}
+    }
+}
+
+fn history_video(v: &Value, day: &str) -> Option<Video> {
+    if v["contentType"] != "LOCKUP_CONTENT_TYPE_VIDEO" {
+        return None;
+    }
+    let id = v["contentId"].as_str()?.to_string();
+    let meta = &v["metadata"]["lockupMetadataViewModel"];
+    let parts = &meta["metadata"]["contentMetadataViewModel"]["metadataRows"][0]["metadataParts"];
+    let (mut channel_id, mut duration) = (None, None);
+    walk(meta, &mut |key, v| {
+        if key == "browseEndpoint" && channel_id.is_none() {
+            channel_id = v["browseId"].as_str().map(String::from);
+        }
+    });
+    walk(v, &mut |key, v| {
+        if key == "thumbnailBadgeViewModel" && duration.is_none() {
+            duration = v["text"].as_str().and_then(parse_duration);
+        }
+    });
+    Some(Video {
+        title: meta["title"]["content"].as_str().unwrap_or(&id).to_string(),
+        channel: parts[0]["text"]["content"].as_str().map(String::from),
+        channel_url: channel_id.map(|c| format!("https://www.youtube.com/channel/{c}")),
+        duration,
+        short: false,
+        views: parts[1]["text"]["content"].as_str().and_then(parse_views),
+        watched: Some(day.to_string()).filter(|d| !d.is_empty()),
+        id,
+    })
+}
+
+fn history_short(v: &Value, day: &str) -> Option<Video> {
+    let id = v["onTap"]["innertubeCommand"]["reelWatchEndpoint"]["videoId"].as_str()?.to_string();
+    let meta = &v["overlayMetadata"];
+    Some(Video {
+        title: meta["primaryText"]["content"].as_str().unwrap_or(&id).to_string(),
+        channel: None,
+        channel_url: None,
+        duration: None,
+        short: true,
+        views: meta["secondaryText"]["content"].as_str().and_then(parse_views),
+        watched: Some(day.to_string()).filter(|d| !d.is_empty()),
+        id,
+    })
+}
+
+/// "38:32" or "1:24:57" in seconds; None for "LIVE" and the like.
+fn parse_duration(s: &str) -> Option<f64> {
+    s.trim().split(':').try_fold(0u64, |acc, p| Some(acc * 60 + p.parse::<u64>().ok()?)).map(|n| n as f64)
+}
+
+/// "17K views", "1.2M views", "218 views" as a number.
+fn parse_views(s: &str) -> Option<u64> {
+    let n = s.trim().strip_suffix("views")?.trim();
+    let (num, mult) = match n.chars().last()? {
+        'K' | 'k' => (&n[..n.len() - 1], 1e3),
+        'M' | 'm' => (&n[..n.len() - 1], 1e6),
+        'B' | 'b' => (&n[..n.len() - 1], 1e9),
+        _ => (n, 1.),
+    };
+    num.replace(',', "").parse::<f64>().ok().map(|x| (x * mult) as u64)
+}
+
 /// Call `f` for every key/value pair in a JSON tree.
 fn walk(v: &Value, f: &mut impl FnMut(&str, &Value)) {
     match v {
@@ -165,22 +326,48 @@ fn walk(v: &Value, f: &mut impl FnMut(&str, &Value)) {
     }
 }
 
-fn export_browser_cookies(browser: &str) -> Result<String, String> {
+fn export_browser_cookies(browser: &str) -> Result<(String, String), String> {
     let dir = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    let file = dir.join(format!("unbloated-youtube-cookies-{}.txt", std::process::id()));
+    // Exports can overlap (the Connect check next to a status fetch), so each call gets
+    // its own file — a shared path would let one run delete or truncate another's jar.
+    static N: AtomicU64 = AtomicU64::new(0);
+    let file = dir.join(format!(
+        "unbloated-youtube-cookies-{}-{}.txt",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
     // yt-dlp saves its cookie jar on exit, so any quick request will do.
-    let out = Command::new("yt-dlp")
-        .env("PYCRYPTODOME_DISABLE_GMP", "1")
-        .args(["--no-update", "--no-warnings", "--flat-playlist", "--playlist-end", "1", "--simulate"])
-        .args(["--cookies-from-browser", browser, "--cookies"])
-        .arg(&file)
-        .arg(":ytwatchlater")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    let text = std::fs::read_to_string(&file);
-    let _ = std::fs::remove_file(&file);
-    out.map_err(|e| format!("cannot run yt-dlp: {e}"))?;
-    text.map_err(|_| "couldn't read browser cookies".into())
+    let run = |spec: &str| -> Result<(String, bool), String> {
+        let out = Command::new("yt-dlp")
+            .env("PYCRYPTODOME_DISABLE_GMP", "1")
+            .args(["--no-update", "--no-warnings", "--flat-playlist", "--playlist-end", "1", "--simulate"])
+            .args(["--cookies-from-browser", spec, "--cookies"])
+            .arg(&file)
+            .arg(":ytwatchlater")
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("cannot run yt-dlp: {e}"))?;
+        let report = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        // Chromium keeps its cookie keys in the system keyring; yt-dlp's automatic
+        // backend can miss them and export only the plain cookies.
+        let locked = ["could not be decrypted", "cannot decrypt", "no key found"].iter().any(|p| report.contains(p));
+        let text = std::fs::read_to_string(&file).map_err(|_| {
+            let detail = report.lines().rev().find_map(|l| l.strip_prefix("ERROR: ")).unwrap_or("").trim();
+            format!("couldn't read {spec}'s cookies: is the browser installed, and has it been opened once?{}", if detail.is_empty() { String::new() } else { format!(" ({detail})") })
+        });
+        let _ = std::fs::remove_file(&file);
+        let text = text?;
+        Ok((text, locked))
+    };
+    let (text, locked) = run(browser)?;
+    if locked && !browser.contains('+') {
+        let spec = format!("{browser}+gnomekeyring");
+        // The retry can fail (no keyring running); the plain cookies may still be enough.
+        match run(&spec) {
+            Ok((text, _)) => Ok((text, spec)),
+            Err(_) => Ok((text, browser.to_string())),
+        }
+    } else {
+        Ok((text, browser.to_string()))
+    }
 }
