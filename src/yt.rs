@@ -317,6 +317,82 @@ pub fn anonymous(cfg: &Config, on: &mut dyn FnMut(Video)) -> Result<(), String> 
     Ok(())
 }
 
+/// A link to one YouTube video, with the start time the link carries.
+pub struct VideoLink {
+    pub id: String,
+    pub start: Option<f64>,
+}
+
+/// The video a pasted YouTube link points to: `watch?v=`, `youtu.be/`, `/shorts/`, `/live/`,
+/// `/embed/` (with or without the scheme), and a start time from `t=` / `start=`.
+pub fn parse_video_link(text: &str) -> Option<VideoLink> {
+    let text = text.trim();
+    if text.contains(char::is_whitespace) {
+        return None;
+    }
+    let rest = text.strip_prefix("https://").or_else(|| text.strip_prefix("http://")).unwrap_or(text);
+    let (host, path_query) = rest.split_once('/')?;
+    let host = host
+        .strip_prefix("www.")
+        .or_else(|| host.strip_prefix("m."))
+        .or_else(|| host.strip_prefix("music."))
+        .unwrap_or(host);
+    let (path_query, fragment) = path_query.split_once('#').unwrap_or((path_query, ""));
+    let (path, query) = path_query.split_once('?').unwrap_or((path_query, ""));
+    let param = |key: &str| query.split('&').filter_map(|kv| kv.split_once('=')).find(|(k, _)| *k == key).map(|(_, v)| v);
+    let id = match host {
+        "youtu.be" => path.split('/').next(),
+        "youtube.com" | "youtube-nocookie.com" => {
+            let mut parts = path.split('/');
+            match parts.next()? {
+                "watch" => param("v"),
+                "shorts" | "live" | "embed" | "v" => parts.next(),
+                _ => None,
+            }
+        }
+        _ => None,
+    }?;
+    if id.len() != 11 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') {
+        return None;
+    }
+    let start = param("t").or_else(|| param("start")).or_else(|| fragment.strip_prefix("t=")).and_then(parse_offset);
+    Some(VideoLink { id: id.to_string(), start: start.filter(|t| *t > 0.) })
+}
+
+/// "90", "90s" or "1h2m3s" in seconds.
+fn parse_offset(s: &str) -> Option<f64> {
+    if let Ok(n) = s.parse::<u64>() {
+        return Some(n as f64);
+    }
+    let (mut total, mut num) = (0u64, String::new());
+    for c in s.chars() {
+        if c.is_ascii_digit() {
+            num.push(c);
+            continue;
+        }
+        let n: u64 = num.parse().ok()?;
+        num.clear();
+        total += n * match c {
+            'h' => 3600,
+            'm' => 60,
+            's' => 1,
+            _ => return None,
+        };
+    }
+    num.is_empty().then_some(total as f64)
+}
+
+/// One video's details by id, for a pasted link.
+pub fn video(cfg: &Config, id: &str) -> Result<Video, String> {
+    let mut found = None;
+    stream(cfg, &[format!("https://www.youtube.com/watch?v={id}")], 1, |e| {
+        if found.is_none() {
+            found = to_video(e);
+        }
+    })?;
+    found.ok_or_else(|| "video not found".to_string())
+}
+
 pub fn search(cfg: &Config, query: &str, on: &mut dyn FnMut(Video)) -> Result<(), String> {
     videos(cfg, &format!("ytsearch50:{query}"), 50, on)
 }
