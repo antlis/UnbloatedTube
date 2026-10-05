@@ -4,6 +4,25 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Added
+- **Subtitles**: a CC button next to the player buttons (and the V key) turns subtitles on and
+  off. The first use picks your system language; Settings → Other → Subtitles changes it, and
+  several languages work (`en,ru`). The language setting now also makes yt-dlp fetch
+  auto-generated and auto-translated captions, which mpv ignored before, so most videos have
+  subtitles. A Settings → Player buttons toggle hides the button.
+- **Pasted channel and playlist links open in the app**: `/@handle`, `/channel/UC…`, `/c/…`,
+  `/user/…` and `/playlist?list=` links (in search, or with Ctrl+V) open that channel or
+  playlist in the left column; video links play as before.
+
+### Changed
+- With nothing playing and logged out, the Recommendations pane shows the channel of the
+  video waiting in the player, instead of repeating the home list.
+- When the saved login stops working (the browser profile is gone, or YouTube no longer accepts
+  the cookies), the account lists say so, and Settings → Account shows the Connection problem
+  state with *Try again* and *Choose another browser*, instead of only failed lists.
+
 ## 0.11.0 - 2026-10-05
 
 ### Added
