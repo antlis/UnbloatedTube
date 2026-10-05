@@ -4,6 +4,14 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Added
+- **The repository is a Nix flake**: `nix profile install github:antlis/unbloated-youtube`,
+  `nix run github:antlis/unbloated-youtube`, or the package / overlay as an input of a
+  flake-based NixOS or home-manager config. It uses the same package and the same pinned
+  nixpkgs as `default.nix`.
+
 ## 0.10.0 - 2026-10-05
 
 ### Added
