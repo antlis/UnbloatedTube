@@ -34,6 +34,10 @@ pub struct State {
     pub volume: Option<f64>,
     /// mpv's own fullscreen flag (toggled by f / double-click / Esc); unbloated-youtube mirrors it.
     pub fullscreen: bool,
+    /// Subtitle tracks mpv has for the video (it loads only the language set in Settings).
+    pub sub_tracks: u32,
+    /// A subtitle track is selected and visible.
+    pub sub_on: bool,
 }
 
 pub struct Player {
@@ -195,6 +199,12 @@ impl Player {
         let _ = self.command(json!(["cycle", "mute"]));
     }
 
+    /// Show the subtitle track that matches the language setting, or hide the subtitles.
+    pub fn show_subtitles(&self, on: bool) {
+        let _ = self.command(json!(["set_property", "sub-visibility", on]));
+        let _ = self.command(json!(["set_property", "sid", if on { "auto" } else { "no" }]));
+    }
+
     pub fn set_fullscreen(&self, on: bool) {
         let _ = self.command(json!(["set_property", "fullscreen", on]));
     }
@@ -234,6 +244,13 @@ pub fn options(cfg: &Config, s: &Settings, pip: bool) -> Vec<String> {
         Auth::CookiesFile(f) => raw.push(format!("cookies={}", f.display())),
         Auth::Browser(b) => raw.push(format!("cookies-from-browser={b}")),
         Auth::None => raw.clear(),
+    }
+    // mpv's yt-dlp hook only lists subtitles that yt-dlp was asked to fetch, so the language
+    // setting has to say so too (auto-generated and auto-translated captions included).
+    // Commas separate yt-dlp's raw options, so several languages are joined as a regex.
+    let langs = s.sub_lang.split(',').map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("|");
+    if !langs.is_empty() {
+        raw.extend(["write-subs=".to_string(), "write-auto-subs=".to_string(), format!("sub-langs={langs}")]);
     }
     if !raw.is_empty() {
         out.push(format!("--ytdl-raw-options={}", raw.join(",")));
@@ -293,7 +310,7 @@ pub fn sponsorblock_script() -> Option<String> {
 pub fn query(socket: &Path) -> Option<State> {
     let mut s = UnixStream::connect(socket).ok()?;
     s.set_read_timeout(Some(Duration::from_secs(2))).ok();
-    let props = ["time-pos", "duration", "pause", "fullscreen", "path", "idle-active", "eof-reached", "chapter-list", "user-data/unbloated/help", "mute", "volume", "user-data/unbloated/action"];
+    let props = ["time-pos", "duration", "pause", "fullscreen", "path", "idle-active", "eof-reached", "chapter-list", "user-data/unbloated/help", "mute", "volume", "user-data/unbloated/action", "track-list", "sub-visibility"];
     for (i, p) in props.iter().enumerate() {
         writeln!(s, "{}", json!({ "command": ["get_property", p], "request_id": i })).ok()?;
     }
@@ -330,6 +347,9 @@ pub fn query(socket: &Path) -> Option<State> {
         muted: vals[9].as_bool().unwrap_or(false),
         volume: vals[10].as_f64(),
         action: vals[11].as_str().unwrap_or_default().to_string(),
+        sub_tracks: vals[12].as_array().map_or(0, |a| a.iter().filter(|t| t["type"] == "sub").count() as u32),
+        sub_on: vals[13].as_bool().unwrap_or(false)
+            && vals[12].as_array().is_some_and(|a| a.iter().any(|t| t["type"] == "sub" && t["selected"] == true)),
     })
 }
 

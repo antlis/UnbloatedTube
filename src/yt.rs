@@ -323,9 +323,29 @@ pub struct VideoLink {
     pub start: Option<f64>,
 }
 
-/// The video a pasted YouTube link points to: `watch?v=`, `youtu.be/`, `/shorts/`, `/live/`,
-/// `/embed/` (with or without the scheme), and a start time from `t=` / `start=`.
-pub fn parse_video_link(text: &str) -> Option<VideoLink> {
+/// What a pasted YouTube link points to.
+pub enum YtLink {
+    Video(VideoLink),
+    /// `url` is the channel's page without a tab, e.g. https://www.youtube.com/@mkbhd.
+    Channel { url: String },
+    Playlist(String),
+}
+
+/// A link split into host (without www. / m. / music.), path (no leading slash), query and fragment.
+struct LinkParts<'a> {
+    host: &'a str,
+    path: &'a str,
+    query: &'a str,
+    fragment: &'a str,
+}
+
+impl LinkParts<'_> {
+    fn param(&self, key: &str) -> Option<&str> {
+        self.query.split('&').filter_map(|kv| kv.split_once('=')).find(|(k, _)| *k == key).map(|(_, v)| v)
+    }
+}
+
+fn link_parts(text: &str) -> Option<LinkParts<'_>> {
     let text = text.trim();
     if text.contains(char::is_whitespace) {
         return None;
@@ -339,24 +359,56 @@ pub fn parse_video_link(text: &str) -> Option<VideoLink> {
         .unwrap_or(host);
     let (path_query, fragment) = path_query.split_once('#').unwrap_or((path_query, ""));
     let (path, query) = path_query.split_once('?').unwrap_or((path_query, ""));
-    let param = |key: &str| query.split('&').filter_map(|kv| kv.split_once('=')).find(|(k, _)| *k == key).map(|(_, v)| v);
-    let id = match host {
-        "youtu.be" => path.split('/').next(),
+    Some(LinkParts { host, path, query, fragment })
+}
+
+fn is_id_chars(s: &str) -> bool {
+    s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+/// The video a pasted YouTube link points to: `watch?v=`, `youtu.be/`, `/shorts/`, `/live/`,
+/// `/embed/` (with or without the scheme), and a start time from `t=` / `start=`.
+pub fn parse_video_link(text: &str) -> Option<VideoLink> {
+    let p = link_parts(text)?;
+    let id = match p.host {
+        "youtu.be" => p.path.split('/').next(),
         "youtube.com" | "youtube-nocookie.com" => {
-            let mut parts = path.split('/');
+            let mut parts = p.path.split('/');
             match parts.next()? {
-                "watch" => param("v"),
+                "watch" => p.param("v"),
                 "shorts" | "live" | "embed" | "v" => parts.next(),
                 _ => None,
             }
         }
         _ => None,
     }?;
-    if id.len() != 11 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') {
+    if id.len() != 11 || !is_id_chars(id) {
         return None;
     }
-    let start = param("t").or_else(|| param("start")).or_else(|| fragment.strip_prefix("t=")).and_then(parse_offset);
+    let start = p.param("t").or_else(|| p.param("start")).or_else(|| p.fragment.strip_prefix("t=")).and_then(parse_offset);
     Some(VideoLink { id: id.to_string(), start: start.filter(|t| *t > 0.) })
+}
+
+/// A pasted YouTube link: a video (also `watch?v=…&list=…`, which plays the video), a channel
+/// (`/@handle`, `/channel/UC…`, `/c/name`, `/user/name`) or a playlist (`/playlist?list=`).
+pub fn parse_link(text: &str) -> Option<YtLink> {
+    if let Some(video) = parse_video_link(text) {
+        return Some(YtLink::Video(video));
+    }
+    let p = link_parts(text)?;
+    if p.host != "youtube.com" {
+        return None;
+    }
+    let mut parts = p.path.split('/');
+    let (first, second) = (parts.next()?, parts.next().unwrap_or(""));
+    let channel = |path: String| Some(YtLink::Channel { url: format!("https://www.youtube.com/{path}") });
+    match first {
+        "playlist" => p.param("list").filter(|l| l.len() >= 2 && is_id_chars(l)).map(|l| YtLink::Playlist(l.to_string())),
+        "channel" if second.len() == 24 && second.starts_with("UC") && is_id_chars(second) => channel(format!("channel/{second}")),
+        "c" | "user" if !second.is_empty() => channel(format!("{first}/{second}")),
+        h if h.len() > 1 && h.starts_with('@') => channel(h.to_string()),
+        _ => None,
+    }
 }
 
 /// "90", "90s" or "1h2m3s" in seconds.

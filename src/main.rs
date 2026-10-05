@@ -168,13 +168,14 @@ const TEXT_FIELDS: [(&str, &str, fn(&mut Settings) -> &mut String); 3] = [
     ("Download folder", "Empty for your Downloads folder; ~/ works", |s| &mut s.download_dir),
 ];
 
-const BUTTON_TOGGLES: [Toggle; 10] = [
+const BUTTON_TOGGLES: [Toggle; 11] = [
     ("Subscribe", "Subscribe / unsubscribe to the video's channel", |s| &mut s.subscribe_button),
     ("Save to playlist", "Add the video to Watch later or one of your playlists", |s| &mut s.save_button),
     ("Watch later", "Add the video to Watch later in one click (W)", |s| &mut s.watch_later_button),
     ("Like", "Like the video, or remove your like", |s| &mut s.like_button),
     ("Dislike", "Dislike the video, or remove your dislike", |s| &mut s.dislike_button),
     ("Volume", "Mute button and volume bar next to the speed button", |s| &mut s.volume_control),
+    ("Subtitles", "Subtitles on / off (V); the language is set under Other", |s| &mut s.subtitles_button),
     ("Share", "Copy the video's link", |s| &mut s.share_button),
     ("Share at current time", "Copy the video's link so it opens at the current time", |s| &mut s.share_time_button),
     ("Open in browser", "Open the video's page in your default browser", |s| &mut s.browser_button),
@@ -217,12 +218,13 @@ enum Lower {
 
 /// Keyboard shortcuts (also listed in Settings). Keys reach mpv instead while the pointer is
 /// over the video; mpv's own defaults there are similar (Space, arrows, f).
-const SHORTCUTS: [(&str, &str); 27] = [
+const SHORTCUTS: [(&str, &str); 28] = [
     ("Space / K", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     ("J / L", "Back / forward 10 seconds"),
     ("F", "Fullscreen (Esc or f to leave)"),
     ("M", "Mute"),
+    ("V", "Subtitles on / off"),
     ("↑ / ↓", "Volume up / down 5%"),
     ("C", "Copy the video's link"),
     ("⇧C", "Copy the link at the current time"),
@@ -251,12 +253,13 @@ const SHORTCUTS: [(&str, &str); 27] = [
 const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 15, 1)];
 
 /// Vim mode's keys (case matters: ⇧ means Shift).
-const VIM_SHORTCUTS: [(&str, &str); 33] = [
+const VIM_SHORTCUTS: [(&str, &str); 34] = [
     ("Space", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     (", / .", "Back / forward 10 seconds"),
     ("⇧F", "Fullscreen (Esc or f to leave)"),
     ("m", "Mute"),
+    ("v", "Subtitles on / off"),
     ("+ / -", "Volume up / down 5%"),
     ("n / p", "Next / previous video"),
     ("y y", "Copy the video's link"),
@@ -721,7 +724,7 @@ impl Unbloated {
             if self.cfg.has_auth() || name == "anon" {
                 if let Some(items) = store::load_list(name) {
                     *slot(self) = Load::Ready(items);
-                    self.after_load(key);
+                    self.after_load(key, cx);
                 }
             }
         }
@@ -769,11 +772,15 @@ impl Unbloated {
                             _ => std::mem::take(&mut fresh),
                         };
                         let ok = res.is_ok();
+                        let failure = res.as_ref().err().filter(|_| items.is_empty()).cloned();
                         *slot(this) = match res {
                             Err(e) if items.is_empty() => Load::Failed(e),
                             _ => Load::Ready(items),
                         };
-                        this.after_load(key);
+                        if let Some(e) = failure {
+                            this.note_login_failure(key, &e);
+                        }
+                        this.after_load(key, cx);
                         if let (Some(name), true) = (&cache, ok) {
                             store::save_list(name, slot(this).items());
                         }
@@ -790,7 +797,24 @@ impl Unbloated {
         cx.notify();
     }
 
-    fn after_load(&mut self, key: &str) {
+    /// An account list failed like a login that stopped working (expired cookies, a browser
+    /// profile that is gone): show it in Settings → Account, where Try again / Choose another
+    /// browser are, instead of leaving only failed lists.
+    fn note_login_failure(&mut self, key: &str, error: &str) {
+        if ["subs", "feed", "history", "playlists", "recs"].contains(&key) {
+            self.login_failed(error);
+        }
+    }
+
+    fn login_failed(&mut self, error: &str) {
+        if self.cfg.has_auth() && looks_like_login_error(error) && matches!(self.connect, Connect::Idle) {
+            // The browser's cookies couldn't be read (step 1), or YouTube didn't accept them (2).
+            let step = if error.to_lowercase().contains("cookie") { 1 } else { 2 };
+            self.connect = Connect::Failed { step, error: session_hint(error.to_string()) };
+        }
+    }
+
+    fn after_load(&mut self, key: &str, cx: &mut Context<Self>) {
         match key {
             "subs" => {
                 if let Load::Ready(g) = &mut self.subs.groups {
@@ -807,6 +831,8 @@ impl Unbloated {
                 // Only shown: loading it into mpv would be harmless logged out, but a login
                 // later makes yt-dlp mark it watched on YouTube.
                 self.preloaded = true;
+                // Recommended then shows that video's channel instead of repeating the home list.
+                self.load_recs(cx);
             }
             "feed" => {
                 if !self.seen.baseline && matches!(self.feed, Load::Ready(_)) {
@@ -875,12 +901,12 @@ impl Unbloated {
 
     fn search_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         match edit_text(&mut self.caret, "search", &mut self.query, ev, cx) {
-            Edit::Submit => match yt::parse_video_link(&self.query) {
+            Edit::Submit => match yt::parse_link(&self.query) {
                 // A pasted YouTube link plays instead of being searched for.
                 Some(link) => {
                     self.query.clear();
-                    self.open_link(link, cx);
                     self.close_search(window, cx);
+                    self.open_link(link, cx);
                 }
                 None => {
                     self.run_search(cx);
@@ -897,8 +923,27 @@ impl Unbloated {
         cx.notify();
     }
 
-    /// Play a YouTube link: yt-dlp looks the video up, then it plays like a picked one.
-    fn open_link(&mut self, link: yt::VideoLink, cx: &mut Context<Self>) {
+    /// Open a YouTube link: a video plays, a channel or playlist opens in the left column.
+    fn open_link(&mut self, link: yt::YtLink, cx: &mut Context<Self>) {
+        match link {
+            yt::YtLink::Video(video) => self.open_video_link(video, cx),
+            yt::YtLink::Channel { url } => {
+                let id = url.trim_end_matches('/').rsplit('/').next().unwrap_or_default().to_string();
+                let channel = Group { title: id.clone(), url: format!("{url}/videos"), id, thumb: None, subscribers: None };
+                self.show_channel(channel, cx);
+            }
+            yt::YtLink::Playlist(id) => {
+                let url = format!("https://www.youtube.com/playlist?list={id}");
+                let playlist = Group { title: "Playlist".into(), id, url, thumb: None, subscribers: None };
+                self.tab = Tab::Playlists;
+                self.open_group(Tab::Playlists, playlist, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Play a video link: yt-dlp looks the video up, then it plays like a picked one.
+    fn open_video_link(&mut self, link: yt::VideoLink, cx: &mut Context<Self>) {
         self.notice = Some("Opening the link…".into());
         let (cfg, id) = (self.cfg.clone(), link.id.clone());
         let task = cx.background_executor().spawn(async move { yt::video(&cfg, &id) });
@@ -1890,6 +1935,9 @@ impl Unbloated {
                     }
                     Err(e) => Err(e),
                 };
+                if let Err(e) = &res {
+                    this.login_failed(e);
+                }
                 done(this, res, cx);
                 cx.notify();
             })
@@ -2487,6 +2535,29 @@ impl Unbloated {
         cx.notify();
     }
 
+    /// Subtitles on / off. mpv only has the language set in Settings: with none set, the first use
+    /// picks the system language (the video reloads, as for any player setting).
+    fn toggle_subtitles(&mut self, cx: &mut Context<Self>) {
+        let (tracks, on) = self.state.as_ref().map_or((0, false), |s| (s.sub_tracks, s.sub_on));
+        let lang = self.settings.sub_lang.trim().to_string();
+        if tracks > 0 {
+            self.player.show_subtitles(!on);
+        } else if lang.is_empty() {
+            let lang = std::env::var("LANG")
+                .ok()
+                .and_then(|l| l.split(['_', '.']).next().map(str::to_string))
+                .filter(|l| (2..=3).contains(&l.len()) && l.chars().all(|c| c.is_ascii_lowercase()))
+                .unwrap_or_else(|| "en".into());
+            self.notice = Some(format!("Subtitles on ({lang}): reloading the video"));
+            self.settings.sub_lang = lang;
+            self.settings.save();
+            self.apply_player_settings(cx);
+        } else {
+            self.notice = Some(format!("This video has no \"{lang}\" subtitles"));
+        }
+        cx.notify();
+    }
+
     /// Change the volume by `delta` percent (unmuting when raising it).
     fn change_volume(&mut self, delta: f32, cx: &mut Context<Self>) {
         if delta > 0. && self.state.as_ref().is_some_and(|s| s.muted) {
@@ -2565,9 +2636,9 @@ impl Unbloated {
         }
         if k.modifiers.control && k.key == "v" {
             // Ctrl+V outside a text field: play the YouTube link on the clipboard.
-            match cx.read_from_clipboard().and_then(|c| c.text()).and_then(|t| yt::parse_video_link(&t)) {
+            match cx.read_from_clipboard().and_then(|c| c.text()).and_then(|t| yt::parse_link(&t)) {
                 Some(link) => self.open_link(link, cx),
-                None => self.notice = Some("No YouTube video link on the clipboard".into()),
+                None => self.notice = Some("No YouTube link on the clipboard".into()),
             }
             cx.stop_propagation();
             cx.notify();
@@ -2599,6 +2670,7 @@ impl Unbloated {
             "l" if active => self.player.seek_relative(10.),
             "f" if active => self.player.set_fullscreen(!self.fullscreen),
             "m" => self.player.toggle_mute(),
+            "v" => self.toggle_subtitles(cx),
             "up" | "=" => self.change_volume(5., cx),
             "down" | "-" => self.change_volume(-5., cx),
             "e" if k.modifiers.shift => self.toggle_player_full(cx),
@@ -2725,6 +2797,7 @@ impl Unbloated {
             "." if active => self.player.seek_relative(10.),
             "F" if active => self.player.set_fullscreen(!self.fullscreen),
             "m" => self.player.toggle_mute(),
+            "v" => self.toggle_subtitles(cx),
             "+" | "=" => self.change_volume(5., cx),
             "-" => self.change_volume(-5., cx),
             "n" => {
@@ -3421,7 +3494,9 @@ impl Unbloated {
     }
 
     fn failed(&self, e: &str) -> AnyElement {
-        if self.cfg.has_auth() {
+        if self.cfg.has_auth() && looks_like_login_error(e) {
+            self.status(format!("{}\n\nYour YouTube login isn't working. Settings → Account lets you try again or connect another browser.", session_hint(e.to_string())))
+        } else if self.cfg.has_auth() {
             self.status(e.to_string())
         } else {
             self.status(format!("{e}\n\n{}", self.needs_login()))
@@ -4679,7 +4754,7 @@ impl Unbloated {
                     .when(self.settings.volume_control, |d| d.child(self.volume_bar(cx)))
             ))
             // Second row: what you can do with this video.
-            .when(self.account_buttons() || self.settings.share_button || self.settings.share_time_button || self.settings.browser_button || self.settings.download_button, |d| {
+            .when(self.account_buttons() || self.settings.subtitles_button || self.settings.share_button || self.settings.share_time_button || self.settings.browser_button || self.settings.download_button, |d| {
                 d.child(
                     div()
                         .flex()
@@ -4695,6 +4770,15 @@ impl Unbloated {
                                 d.child(
                                     icon_button("download", "download", tip_text, enabled)
                                         .when(enabled, |d| d.on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.download(v.clone(), cx))),
+                                )
+                            })
+                            .when(self.settings.subtitles_button, |d| {
+                                let on = self.state.as_ref().is_some_and(|s| s.sub_on);
+                                let key = if self.settings.vim { "v" } else { "V" };
+                                let tip_text = format!("Subtitles {} ({key})", if on { "on" } else { "off" });
+                                d.child(
+                                    icon_button("subtitles", if on { "cc" } else { "cc-off" }, tip_text, true)
+                                        .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.toggle_subtitles(cx)),
                                 )
                             })
                             .when(self.settings.share_button, |d| {
@@ -5374,8 +5458,16 @@ fn clear_failed<T>(load: &mut Load<T>) {
 }
 
 /// Friendlier wording for a session YouTube rejected: the browser cookies expired.
+/// Whether a list's error reads like a login problem (and not, say, a network one).
+fn looks_like_login_error(error: &str) -> bool {
+    let e = error.to_lowercase();
+    ["sign in", "log in", "login", "cookie", "unauthorized", "403"].iter().any(|p| e.contains(p))
+}
+
 fn session_hint(error: String) -> String {
-    if error.contains("no YouTube login cookies") {
+    if error.contains("cookies database") {
+        "Couldn't find that browser's profile: is it installed, and has it been opened once?".into()
+    } else if error.contains("no YouTube login cookies") {
         "That browser isn't signed in to YouTube. Sign in there, then try again (Chromium-based browsers also need an unlocked keyring).".into()
     } else if error.contains("refused") || error.to_lowercase().contains("sign in") {
         format!("{error} — your YouTube session may have expired; sign in to YouTube in your browser, then try again")

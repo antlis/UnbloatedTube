@@ -54,7 +54,12 @@ list, your playlists, your history, search and a player.
   Enter.
 - **Play a YouTube link**: paste it into search and press Enter, or press Ctrl+V anywhere
   outside a text field to play the link on the clipboard. Understands `watch?v=`, `youtu.be/`,
-  `/shorts/`, `/live/` and `/embed/` links, with a start time from `t=` (`90`, `1m30s`).
+  `/shorts/`, `/live/` and `/embed/` links, with a start time from `t=` (`90`, `1m30s`). Channel
+  links (`/@handle`, `/channel/UC…`, `/c/…`, `/user/…`) and playlist links (`/playlist?list=`)
+  open that channel or playlist in the left column.
+- **Subtitles**: a CC button next to the player's other buttons (or **V**) turns them on and
+  off. The first use picks your system language (Settings → Other → Subtitles changes it);
+  YouTube's auto-generated and auto-translated captions are included, so most videos have them.
 - **Filter any list as you type** (Ctrl+F): channels, playlists, a channel's or playlist's
   videos, history. This is local and instant, with no request to YouTube.
 - **Video info**: views, upload date and subscriber count for the playing video (needs your login),
@@ -123,11 +128,11 @@ Everything is a toggle or a field on the Settings page, which has its own search
 | --- | --- |
 | Account | **Connect YouTube**: pick a browser and test its session, or import a `cookies.txt` (see [Login](#login)) |
 | Tabs & lists | Subscriptions, Playlists, History, Recommendations, Chapters, Comments and Watch later tabs (both off by default), **Shorts** (everywhere) |
-| Buttons | Subscribe, Save to playlist, Watch later, Like, Dislike, Volume, Share, Share at current time, Open in browser, Download |
+| Buttons | Subscribe, Save to playlist, Watch later, Like, Dislike, Volume, Subtitles, Share, Share at current time, Open in browser, Download |
 | Player | Max quality (480p–4K), autoplay, **audio only**, prefer hardware-friendly codecs (skip AV1), hardware decoding, hover controls on the video, mpv's own controls and hotkeys, speed |
 | SponsorBlock | **Skip sponsored segments**, choosing which: sponsor, self-promotion, like/subscribe reminders, intro, credits, preview, filler, non-music |
 | Video info | **Views**, **upload date** (playing video), **subscriber counts** (channels) |
-| Other | Subtitles language, extra mpv options, download folder, upload notifications and their interval, Vim mode, window buttons, **light theme** |
+| Other | Subtitles language (several: `en,ru`), extra mpv options, download folder, upload notifications and their interval, Vim mode, window buttons, **light theme** |
 
 Window layout (column width, player height, Continue watching height) is set by dragging and
 remembered.
@@ -143,6 +148,7 @@ remembered.
 | J / L | Back / forward 10 s |
 | F | Fullscreen |
 | M | Mute |
+| V | Subtitles on / off (`v` in Vim mode) |
 | ↑ / ↓ | Volume up / down 5% (`+` / `-` in Vim mode) |
 | N / P | Next / previous |
 | C | Copy the video's link |
@@ -315,9 +321,9 @@ playlists, history, Watch later) stay hidden until you connect.
 
 ## TODO
 - **Open YouTube links in the app** (instead of the browser). Pasting a video link into search or
-  pressing Ctrl+V plays it already; what's left is links from other programs, in two parts:
-  - In the app: `unbloated-youtube <url>` plays the video (the same link parser as pasting;
-    channels `/@handle` and playlists `list=` are not understood yet, for pasting either). It
+  pressing Ctrl+V plays it already (videos, channels and playlists); what's left is links from
+  other programs, in two parts:
+  - In the app: `unbloated-youtube <url>` opens the link (the same parser as pasting). It
     needs a single instance: a second launch passes the link to the running window over a small socket (like
     mpv's IPC) and exits, otherwise every link opens a new window. The app takes no arguments today.
   - In the system: a `.desktop` file can only claim a whole URL scheme, not one domain, so a small
@@ -325,16 +331,13 @@ playlists, history, Watch later) stay hidden until you connect.
     else to the real browser. Links clicked inside the browser itself don't go through it (needs
     an extension or the browser's "open in external app"). In a NixOS setup it would live in the
     dotfiles next to the desktop entries.
-- **Subtitles.** Today there is only a language code in Settings (mpv's `--slang`; empty means
-  off) and nothing on the player. mpv does the work, so a first version is small:
-  - a CC toggle on the player buttons and the hover bar (`controls.lua`), cycling mpv's `sid`; the
-    app already reads mpv's properties over IPC, so it only needs `sid` and `track-list` added
-  - a picker of the tracks mpv has loaded (language, manual or auto-generated), like the save
-    picker
-  - harder, later: other languages and auto-generated captions. mpv's yt-dlp hook only fetches
-    the `--slang` language, so the rest needs `sub-langs` in `--ytdl-raw-options` (slower starts)
-    or loading yt-dlp's subtitle URLs on demand with `sub-add`; plus style settings (size,
-    position, background)
+- **Subtitles: picker and more.** The CC toggle and the language setting work (the language also
+  tells yt-dlp to fetch auto-generated captions: mpv's hook loads nothing it wasn't asked for). Still
+  open:
+  - a picker for the language of the playing video (mpv's `track-list` has what was loaded), and
+    for translating captions to another language
+  - the CC button on the hover bar over the video (`controls.lua`), next to the player buttons
+  - subtitle style settings (size, position, background)
 - **History: channel links on Shorts.** History's Shorts entries carry no channel, so they have
   no channel button; the Videos entries do.
 - **Test the Connect flow on more setups.** Verified with Brave (keyring) and a failing
