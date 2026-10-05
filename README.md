@@ -325,6 +325,16 @@ playlists, history, Watch later) stay hidden until you connect.
     else to the real browser. Links clicked inside the browser itself don't go through it (needs
     an extension or the browser's "open in external app"). In a NixOS setup it would live in the
     dotfiles next to the desktop entries.
+- **Subtitles.** Today there is only a language code in Settings (mpv's `--slang`; empty means
+  off) and nothing on the player. mpv does the work, so a first version is small:
+  - a CC toggle on the player buttons and the hover bar (`controls.lua`), cycling mpv's `sid`; the
+    app already reads mpv's properties over IPC, so it only needs `sid` and `track-list` added
+  - a picker of the tracks mpv has loaded (language, manual or auto-generated), like the save
+    picker
+  - harder, later: other languages and auto-generated captions. mpv's yt-dlp hook only fetches
+    the `--slang` language, so the rest needs `sub-langs` in `--ytdl-raw-options` (slower starts)
+    or loading yt-dlp's subtitle URLs on demand with `sub-add`; plus style settings (size,
+    position, background)
 - **History: channel links on Shorts.** History's Shorts entries carry no channel, so they have
   no channel button; the Videos entries do.
 - **Test the Connect flow on more setups.** Verified with Brave (keyring) and a failing
@@ -523,7 +533,7 @@ playlists, history, Watch later) stay hidden until you connect.
     creating one; move or copy a video between playlists; remove all watched videos from Watch
     later in one click
   - *Playback*: save the Up next queue as a playlist, and reorder it by dragging; a subtitles
-    toggle and picker on the hover bar (today only a language code in Settings); a quality picker
+    toggle and picker (see *Subtitles* above); a quality picker
     for the playing video (today only a max quality); a loop or repeat button; a sleep timer
   - *Browsing*: a Watch later button on every row (today via the save picker); hide watched
     videos in the New uploads feed; a description tab under the player, next to Comments and
