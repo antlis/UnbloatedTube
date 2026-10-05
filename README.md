@@ -198,13 +198,25 @@ Check the download with the `.sha256` file next to it (`sha256sum -c`).
 
 ### NixOS
 
-To install it, `default.nix` builds a package (`package.nix`) that puts mpv, yt-dlp and deno on its
-`PATH` and installs the desktop entry and icon; they come from a pinned nixpkgs-unstable:
+To install it with Nix, the repository is a flake. Its package (`package.nix`) puts mpv, yt-dlp
+and deno on the app's `PATH` and installs the desktop entry and icon; they come from a pinned
+nixpkgs-unstable:
 
 ```sh
-nix-build              # ./result/bin/unbloated-youtube
-nix-env -f . -i        # or add it to environment.systemPackages / home.packages
+nix profile install github:antlis/unbloated-youtube     # into your profile
+nix run github:antlis/unbloated-youtube                 # or just try it
 ```
+
+In a flake-based NixOS / home-manager config, add it as an input and the package to
+`home.packages` (or `environment.systemPackages`):
+
+```nix
+inputs.unbloated-youtube.url = "github:antlis/unbloated-youtube";
+# …
+home.packages = [ inputs.unbloated-youtube.packages.${pkgs.system}.default ];
+```
+
+Without flakes, `nix-build` (or `nix-env -f . -i`) builds the same package through `default.nix`.
 
 This compiles all ~730 crates (about 25 minutes on 2 cores, with several GB of disk); see the TODO
 on prebuilt binaries. For development, `shell.nix` provides the same tools:
@@ -329,12 +341,13 @@ playlists, history, Watch later) stay hidden until you connect.
   - a cache of the Cargo build in CI (e.g. `Swatinem/rust-cache`) keeps the CI builds themselves
     fast; arm64 and other targets later, if wanted
   - unchecked: the CI and cache details, free-tier limits, and how long the CI build takes
-- **Nix packaging.** `default.nix` and `package.nix` build and wrap the app (done, tested with
-  `nix-build`: it starts from a clean environment with mpv, yt-dlp and deno on its `PATH`). Still
-  open: a flake, a binary cache so users don't compile it (see *Prebuilt binaries*), and a
-  `nixpkgs` submission. A first build compiles every crate. The package pins its own nixpkgs
-  (`nix/unstable.nix`) for yt-dlp, deno and mpv, which is fine for `nix-env` but not what a
-  nixpkgs package would do.
+- **Nix packaging.** `flake.nix` (also `default.nix`) and `package.nix` build and wrap the app
+  (done, tested with `nix-build`: it starts from a clean environment with mpv, yt-dlp and deno
+  on its `PATH`; the flake exposes `packages.<system>.default` and an overlay). Still open: a
+  binary cache so users don't compile it (see *Prebuilt binaries*), and a `nixpkgs` submission.
+  A first build compiles every crate. The package pins its own nixpkgs for yt-dlp, deno and mpv
+  (`nix/unstable.nix` and the flake's input, which must be bumped together), which is fine for a
+  profile but not what a nixpkgs package would do.
 - **AUR package** (Arch). Published as `unbloated-youtube-bin`
   (https://aur.archlinux.org/packages/unbloated-youtube-bin): `packaging/aur/PKGBUILD` is the
   template. It downloads the release archive, pins its sha256, depends on `mpv`, `yt-dlp`,
