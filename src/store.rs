@@ -1,5 +1,6 @@
 //! Config (~/.config/unbloated-youtube/config.toml) and local watch history (~/.local/share/unbloated-youtube/history.json).
 
+use crate::auth::Auth;
 use crate::yt::Video;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::path::PathBuf;
@@ -10,27 +11,29 @@ pub struct Config {
     pub cookies_from_browser: Option<String>,
     /// Netscape cookies.txt, passed to yt-dlp `--cookies`.
     pub cookies_file: Option<String>,
+    /// Where the login actually comes from: config.toml's two fields above, or auth.json
+    /// written by the Connect panel. Resolved in `load`, never read from config.toml itself.
+    #[serde(skip)]
+    pub auth: Auth,
 }
 
 impl Config {
     pub fn load() -> Self {
         let path = config_dir().join("config.toml");
-        std::fs::read_to_string(&path)
+        let mut cfg: Self = std::fs::read_to_string(&path)
             .ok()
             .and_then(|s| toml::from_str(&s).map_err(|e| eprintln!("{}: {e}", path.display())).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        cfg.auth = Auth::resolve(cfg.cookies_file.clone(), cfg.cookies_from_browser.clone());
+        cfg
     }
 
     pub fn cookie_args(&self) -> Vec<String> {
-        match (&self.cookies_file, &self.cookies_from_browser) {
-            (Some(f), _) => vec!["--cookies".into(), f.clone()],
-            (None, Some(b)) => vec!["--cookies-from-browser".into(), b.clone()],
-            _ => vec![],
-        }
+        self.auth.cookie_args()
     }
 
     pub fn has_auth(&self) -> bool {
-        self.cookies_file.is_some() || self.cookies_from_browser.is_some()
+        !self.auth.is_none()
     }
 }
 
@@ -47,6 +50,34 @@ pub fn migrate_old_dirs() {
 
 pub fn config_dir() -> PathBuf {
     dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("unbloated-youtube")
+}
+
+/// Comment out config.toml's login lines (everything else in the file, including other
+/// comments, is left untouched; uncomment to log back in). Ok(false) = no login lines.
+pub fn disable_login_in_config() -> Result<bool, String> {
+    let path = config_dir().join("config.toml");
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut changed = false;
+    let mut out = text
+        .lines()
+        .map(|line| {
+            let key = line.trim_start().split('=').next().unwrap_or("").trim();
+            if key == "cookies_from_browser" || key == "cookies_file" {
+                changed = true;
+                format!("# {line}")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if changed {
+        if text.ends_with('\n') {
+            out.push('\n');
+        }
+        std::fs::write(&path, out).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    Ok(changed)
 }
 
 pub fn data_dir() -> PathBuf {
@@ -219,6 +250,11 @@ pub struct Settings {
     pub player: f32,
     /// Height of History's Continue watching list, in pixels.
     pub continue_height: f32,
+    /// The first-run "Connect YouTube" screen was already dismissed. Missing from an
+    /// existing settings.json means false, so launching logged out shows it once as the
+    /// login screen; logging out sets it back to false.
+    #[serde(default)]
+    pub welcome_seen: bool,
 }
 
 impl Default for Settings {
@@ -269,9 +305,11 @@ impl Default for Settings {
             split: 0.5,
             player: 0.62,
             continue_height: 4. * crate::ROW_H,
+            welcome_seen: false,
         }
     }
 }
+
 
 impl Settings {
     fn path() -> PathBuf {

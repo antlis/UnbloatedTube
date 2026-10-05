@@ -4,6 +4,67 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Added
+- **Connect YouTube** (offered on first run, then in Settings → Account): pick a browser and
+  the app reads that browser's own YouTube session — you sign in in your own browser, no
+  password is ever asked or stored — then checks it in three steps (browser profile found,
+  YouTube session valid, subscription feed reachable) and shows the account. **Log out**
+  forgets the app's copy — and for a `config.toml` login comments those lines out instead
+  (uncomment them to return). An exported `cookies.txt` can be imported under Advanced
+  instead; a hand-written `config.toml` login still wins over the app's choice.
+- Chromium's cookies live in the system keyring, which yt-dlp sometimes can't read on its
+  first try (`cannot decrypt v11 cookies`): the login now retries with an explicit keyring
+  suffix (`brave+gnomekeyring`) and remembers the spec that worked in `auth.json`.
+- **An anonymous home feed** while logged out: YouTube's own home, trending and popular
+  pages need a login, so instead the app shuffles random topic searches (music, gaming,
+  documentaries, cooking, …) into a mixed video list — a new mix with each refresh, cached
+  for the next logged-out launch.
+
+### Changed
+- Account lists that need a login now say "This list needs your YouTube account. Connect it
+  in Settings → Connect YouTube." instead of showing the `config.toml` path to edit by hand.
+- **Logged out, the app starts on the Connect YouTube screen** (dismissable with "Continue
+  without account") and the account lists — subscriptions, feed, history, playlists,
+  recommendations, Watch later — are not offered. Local data (groups, searches, resume
+  positions) stays; the caches return with the next login.
+- **Logged out, the header's account tabs are replaced by a Home pill and a Sign in button**
+  (which opens Settings). Settings hides the
+  toggles that do nothing without a login. The left column and the Recommendations pane show the
+  anonymous feed instead, and the previously watched video is no longer restored — a
+  logged-out launch starts with a clean player.
+- **A video waits in the player without playing**: logged out, a random one from the
+  anonymous feed; right after the first Connect, the latest one from your YouTube history.
+- Settings → Account is always the first section (it used to move to the bottom once
+  connected).
+- **The History tab shows when you watched**: each YouTube history entry has its day
+  ("Today", "Yesterday", "Saturday", …) in its details line, and the list follows YouTube's
+  own order, then what only this app has seen. It is read from YouTube directly (with
+  yt-dlp as the fallback), so it now includes Shorts (shown with the Shorts setting) and the
+  most recent days, which yt-dlp's history missed. With Shorts on, History has Videos and
+  Shorts tabs, so Shorts don't bury the videos.
+
+### Fixed
+- Videos that were only shown in the player (the random one logged out, the latest history
+  video after Connect) are no longer loaded into mpv, whose `mark-watched` would have added
+  them to your YouTube history without you playing them.
+- Recommendations never loaded after connecting from Settings (the pane stayed a skeleton
+  until a restart); the home feed now loads as soon as the connection is verified.
+- A first Connect that fails is rolled back, so the account tabs no longer appear empty; the
+  error now says what went wrong (no browser profile, browser not signed in to YouTube) and
+  the panel says the check can take up to half a minute.
+- Concurrent cookie exports (the Connect check next to a like/subscribe lookup) shared one
+  temp file and failed with "couldn't read browser cookies"; each export has its own now.
+- When the keyring retry fails, the first export's cookies are used instead of failing.
+- A slow cookie export can no longer write a login back after logging out, and account
+  fetches still running at log out no longer refill the cleared lists.
+- An imported `cookies.txt` is created private (0600) from the start.
+- The embedded video no longer floats above the Connect YouTube screen as a black rectangle
+  (the mpv child window stacked over the overlay).
+- Logging out stops the playing video and clears it from the player and lower pane, instead
+  of leaving it running behind the connect screen.
+
 ## 0.9.0 - 2026-10-03
 
 ### Added
