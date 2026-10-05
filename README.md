@@ -310,6 +310,16 @@ playlists, history, Watch later) stay hidden until you connect.
   counts as playing, so a video that is only shown in the player is never preloaded.
 
 ## TODO
+- **Open YouTube links in the app** (instead of the browser). Two parts:
+  - In the app: `unbloated-youtube <url>` plays the video (`watch?v=`, `youtu.be/`, `/shorts/`,
+    `/live/`, `/embed/`; channels `/@handle` and playlists `list=` later). It needs a single
+    instance: a second launch passes the link to the running window over a small socket (like
+    mpv's IPC) and exits, otherwise every link opens a new window. The app takes no arguments today.
+  - In the system: a `.desktop` file can only claim a whole URL scheme, not one domain, so a small
+    router is set as the default browser: `youtube.com` / `youtu.be` go to the app, everything
+    else to the real browser. Links clicked inside the browser itself don't go through it (needs
+    an extension or the browser's "open in external app"). In a NixOS setup it would live in the
+    dotfiles next to the desktop entries.
 - **History: channel links on Shorts.** History's Shorts entries carry no channel, so they have
   no channel button; the Videos entries do.
 - **Test the Connect flow on more setups.** Verified with Brave (keyring) and a failing
