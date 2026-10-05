@@ -7,6 +7,10 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 ## Unreleased
 
 ### Added
+- **Play a YouTube link**: paste it into search and press Enter, or press Ctrl+V outside a
+  text field to play the link on the clipboard (`watch?v=`, `youtu.be/`, `/shorts/`,
+  `/live/`, `/embed/`; a start time from `t=` is honored, e.g. `t=1m30s`). The shortcut
+  help lists it.
 - **The repository is a Nix flake**: `nix profile install github:antlis/unbloated-youtube`,
   `nix run github:antlis/unbloated-youtube`, or the package / overlay as an input of a
   flake-based NixOS or home-manager config. It uses the same package and the same pinned

@@ -217,7 +217,7 @@ enum Lower {
 
 /// Keyboard shortcuts (also listed in Settings). Keys reach mpv instead while the pointer is
 /// over the video; mpv's own defaults there are similar (Space, arrows, f).
-const SHORTCUTS: [(&str, &str); 26] = [
+const SHORTCUTS: [(&str, &str); 27] = [
     ("Space / K", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     ("J / L", "Back / forward 10 seconds"),
@@ -239,7 +239,8 @@ const SHORTCUTS: [(&str, &str); 26] = [
     ("Tab / ⇧Tab", "Move the focus ring (Enter or Space presses, Esc clears)"),
     ("B", "Hide or show the left column"),
     ("⇧B", "Hide or show the right column"),
-    ("/", "Search"),
+    ("/", "Search (a pasted YouTube link plays)"),
+    ("Ctrl-v", "Play the YouTube link on the clipboard"),
     ("Ctrl-f", "Filter the list (channels, videos, history)"),
     ("?", "Show these shortcuts"),
     ("Esc", "Close the playlist picker, or go back from a channel"),
@@ -250,7 +251,7 @@ const SHORTCUTS: [(&str, &str); 26] = [
 const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 15, 1)];
 
 /// Vim mode's keys (case matters: ⇧ means Shift).
-const VIM_SHORTCUTS: [(&str, &str); 32] = [
+const VIM_SHORTCUTS: [(&str, &str); 33] = [
     ("Space", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     (", / .", "Back / forward 10 seconds"),
@@ -279,7 +280,8 @@ const VIM_SHORTCUTS: [(&str, &str); 32] = [
     ("Tab / ⇧Tab", "Move the focus ring (Enter or Space presses, Esc clears)"),
     ("b", "Hide or show the left column"),
     ("⇧B", "Hide or show the right column"),
-    ("/", "Search"),
+    ("/", "Search (a pasted YouTube link plays)"),
+    ("Ctrl-v", "Play the YouTube link on the clipboard"),
     ("Ctrl-f", "Filter the list (channels, videos, history)"),
     ("?", "Show these shortcuts"),
     ("Esc", "Cancel / close / back"),
@@ -433,6 +435,8 @@ struct Unbloated {
     preloaded: bool,
     /// Videos or Shorts list of the History tab.
     history_view: ChannelView,
+    /// Start time of a pasted link, taken by the next `start`.
+    link_start: Option<f64>,
     fullscreen: bool,
     /// A video was requested and mpv hasn't started playing it yet.
     loading: bool,
@@ -651,6 +655,7 @@ impl Unbloated {
             embed: None,
             preloaded: false,
             history_view: ChannelView::Videos,
+            link_start: None,
             fullscreen: false,
             loading: false,
             hide_while_loading: false,
@@ -870,10 +875,18 @@ impl Unbloated {
 
     fn search_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         match edit_text(&mut self.caret, "search", &mut self.query, ev, cx) {
-            Edit::Submit => {
-                self.run_search(cx);
-                window.blur();
-            }
+            Edit::Submit => match yt::parse_video_link(&self.query) {
+                // A pasted YouTube link plays instead of being searched for.
+                Some(link) => {
+                    self.query.clear();
+                    self.open_link(link, cx);
+                    self.close_search(window, cx);
+                }
+                None => {
+                    self.run_search(cx);
+                    window.blur();
+                }
+            },
             Edit::Cancel => self.close_search(window, cx),
             Edit::Changed => {}
             Edit::Moved => {}
@@ -882,6 +895,29 @@ impl Unbloated {
         }
         cx.stop_propagation();
         cx.notify();
+    }
+
+    /// Play a YouTube link: yt-dlp looks the video up, then it plays like a picked one.
+    fn open_link(&mut self, link: yt::VideoLink, cx: &mut Context<Self>) {
+        self.notice = Some("Opening the link…".into());
+        let (cfg, id) = (self.cfg.clone(), link.id.clone());
+        let task = cx.background_executor().spawn(async move { yt::video(&cfg, &id) });
+        cx.spawn(async move |this, cx| {
+            let res = task.await;
+            this.update(cx, |this, cx| {
+                match res {
+                    Ok(video) => {
+                        this.notice = None;
+                        this.link_start = link.start;
+                        this.play(video, None, cx);
+                    }
+                    Err(e) => this.notice = Some(format!("Couldn't open the link: {e}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Enter search mode (/ or the search icon): full-width field, focused.
@@ -1756,7 +1792,7 @@ impl Unbloated {
             e.borrow_mut().set_visible(true);
             e.borrow().id()
         });
-        let start = self.history.position(&video.id);
+        let start = self.link_start.take().unwrap_or_else(|| self.history.position(&video.id));
         let options = player::options(&self.cfg, &self.settings, self.pip);
         // Hide the old video's last frame only when mpv keeps running: a freshly started mpv
         // (first video, or changed options) never shows its picture if ours is hidden then.
@@ -2523,6 +2559,16 @@ impl Unbloated {
             }
         }
         if self.settings.vim && self.vim_key(ev, window, cx) {
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+        if k.modifiers.control && k.key == "v" {
+            // Ctrl+V outside a text field: play the YouTube link on the clipboard.
+            match cx.read_from_clipboard().and_then(|c| c.text()).and_then(|t| yt::parse_video_link(&t)) {
+                Some(link) => self.open_link(link, cx),
+                None => self.notice = Some("No YouTube video link on the clipboard".into()),
+            }
             cx.stop_propagation();
             cx.notify();
             return;
@@ -5607,7 +5653,7 @@ impl Render for Unbloated {
                 .cursor_text()
                 .map(|d| match (self.query.is_empty(), focused) {
                     (_, true) => d.text_color(themed(TEXT)).child(self.caret_text("search", &self.query, "Search YouTube")),
-                    (true, false) => d.text_color(themed(MUTED)).child("Search YouTube"),
+                    (true, false) => d.text_color(themed(MUTED)).child("Search YouTube, or paste a link"),
                     (false, false) => d.text_color(themed(TEXT)).child(self.query.clone()),
                 })
                 .on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| {

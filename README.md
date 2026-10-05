@@ -52,6 +52,9 @@ list, your playlists, your history, search and a player.
   Shorts have their own tabs.
 - **Search**: a search mode with recent searches. Nothing is sent to YouTube until you press
   Enter.
+- **Play a YouTube link**: paste it into search and press Enter, or press Ctrl+V anywhere
+  outside a text field to play the link on the clipboard. Understands `watch?v=`, `youtu.be/`,
+  `/shorts/`, `/live/` and `/embed/` links, with a start time from `t=` (`90`, `1m30s`).
 - **Filter any list as you type** (Ctrl+F): channels, playlists, a channel's or playlist's
   videos, history. This is local and instant, with no request to YouTube.
 - **Video info**: views, upload date and subscriber count for the playing video (needs your login),
@@ -156,6 +159,7 @@ remembered.
 | ⇧B | Hide or show the right column |
 | / | Search |
 | Ctrl+F | Filter the list |
+| Ctrl+V | Play the YouTube link on the clipboard |
 | Esc | Close / back |
 
 Text fields support Home/End, arrows (Ctrl: by word), Shift to select, Ctrl+A/C/X/V.
@@ -310,10 +314,11 @@ playlists, history, Watch later) stay hidden until you connect.
   counts as playing, so a video that is only shown in the player is never preloaded.
 
 ## TODO
-- **Open YouTube links in the app** (instead of the browser). Two parts:
-  - In the app: `unbloated-youtube <url>` plays the video (`watch?v=`, `youtu.be/`, `/shorts/`,
-    `/live/`, `/embed/`; channels `/@handle` and playlists `list=` later). It needs a single
-    instance: a second launch passes the link to the running window over a small socket (like
+- **Open YouTube links in the app** (instead of the browser). Pasting a video link into search or
+  pressing Ctrl+V plays it already; what's left is links from other programs, in two parts:
+  - In the app: `unbloated-youtube <url>` plays the video (the same link parser as pasting;
+    channels `/@handle` and playlists `list=` are not understood yet, for pasting either). It
+    needs a single instance: a second launch passes the link to the running window over a small socket (like
     mpv's IPC) and exits, otherwise every link opens a new window. The app takes no arguments today.
   - In the system: a `.desktop` file can only claim a whole URL scheme, not one domain, so a small
     router is set as the default browser: `youtube.com` / `youtu.be` go to the app, everything
