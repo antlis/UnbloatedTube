@@ -279,35 +279,51 @@ playlists, history, Watch later) stay hidden until you connect.
 
 ### Cast targets
 
-The **Cast** button sends the playing video's page link and position to another device. Each target in
-`config.toml` is either a command (the app knows nothing about the receiver, whose side lives in
-its own project) or the `url` of a receiver with a remote API. The button shows only when at least one target exists
-(one button per target; **T** casts to the first, in name order), and Settings → Player buttons →
-Cast hides it.
+The **Cast** button (or **T**) sends the playing video's page link and position to another device,
+and pauses the video here. The app knows no device itself: you tell it what to run. The button shows
+only when a target exists (one button per target; **T** casts to the first, in name order), and
+Settings → Player buttons → Cast hides it.
 
-For a quick setup without editing files, **Settings → Cast command** takes the same kind of
-command as one line, e.g. `catt -d "Living Room" cast {url}` (arguments split at spaces; quote the
-ones that contain spaces; no shell). When it is filled it wins: the app then has one target, named
-"device", and ignores the `[cast.*]` tables of config.toml until the field is emptied. It only
-sends the video; controlling the receiver (below) needs a `url` target in config.toml.
+**A Chromecast or Google TV** (the common case) works through [`catt`](https://github.com/skorokithakis/catt)
+("Cast All The Things"), a small command-line tool; no account or token is needed. Install it
+(`pipx install catt`, or `nix run nixpkgs#catt`), find your device with `catt scan`, and put the
+command in **Settings → Cast command**, with `{url}` standing for the video:
+
+```
+catt -d "Living Room" cast {url} -t {start}
+```
+
+`-d` is the device name `catt scan` printed (leave `-d "Living Room"` out if you have only one),
+and `-t {start}` makes it start where you are, in whole seconds. That is all: press T on a video.
+The same thing in `config.toml`, which also allows several devices, one button each:
 
 ```toml
-# A TV box running tg-mpv-bot with its remote play API on (see that project's README):
-[cast.tv]
-command = ["curl", "-sS", "--fail-with-body", "--max-time", "30",
-           "-H", "Authorization: Bearer YOUR-TOKEN",
-           "--json", "{\"url\":\"{url}\",\"start\":{start}}",
-           "http://tv-box:8085/play"]
+[cast.living-room]
+command = ["catt", "-d", "Living Room", "cast", "{url}", "-t", "{start}"]
 
-# Or let the app talk to it: it then shows what the TV plays and controls it (see below).
 [cast.bedroom]
+command = ["catt", "-d", "Bedroom TV", "cast", "{url}", "-t", "{start}"]
+```
+
+Anything else that takes a link works the same way, as an argument list (never a shell string):
+`["mpv", "{url}"]`, `["ssh", "tv-box", "play-video", "{url}"]`, a script of your own, `curl` against
+some API. A command only *sends* the video: after that the app can't pause or seek the device
+(use its own remote, or `catt pause`, `catt stop`).
+
+**A receiver the app can control** is the other kind of target: a `url` and `token` instead of a
+`command`, for a receiver speaking the remote API described below (the bot
+[tg-mpv-bot](https://github.com/antlis/tg-mpv-bot) does, running mpv on a TV box). The app then
+sends the video itself, shows what the device plays, and its controls drive the device:
+
+```toml
+[cast.tv]
 url = "http://tv-box:8085"
 token = "YOUR-TOKEN"
-
-# Anything else that takes a link works the same way:
-[cast.living-room]
-command = ["catt", "-d", "Living Room", "cast", "{url}"]
 ```
+
+The Settings field and `config.toml` combine like this: when **Settings → Cast command** is
+filled it wins, and the app has one target, named "device", ignoring the `[cast.*]` tables until
+the field is emptied. A `url` target needs `config.toml`, because the field only holds a command.
 
 - Placeholders: `{url}` (the video's page link), `{start}` (the current position, whole seconds),
   `{id}`, `{title}`. The command is an argument list, never a shell string: links and titles come
