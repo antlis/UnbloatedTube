@@ -4,7 +4,7 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
-## Unreleased
+## 0.14.0 - 2026-10-06
 
 ### Added
 - **Version and GitHub link**: the bottom of Settings shows the installed version and a GitHub button that opens the project's page.
