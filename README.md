@@ -141,6 +141,8 @@ Everything is a toggle or a field on the Settings page, which has its own search
 | Video info | **Views**, **upload date** (playing video), **subscriber counts** (channels) |
 | Other | Extra mpv options, download folder, upload notifications and their interval, Vim mode, window buttons, **light theme** |
 
+At the very bottom of the page, a **GitHub** button opens the project's page and the installed version is shown next to it.
+
 Window layout (column width, player height, Continue watching height) is set by dragging and
 remembered.
 

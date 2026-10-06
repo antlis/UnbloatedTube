@@ -167,6 +167,9 @@ const SEGMENTS: [(&str, &str); 8] = [
     ("Filler", "filler"),
     ("Non-music in music videos", "music_offtopic"),
 ];
+/// Where the project lives; opened by the button at the bottom of Settings.
+const REPO_URL: &str = "https://github.com/antlis/unbloated-youtube";
+
 const SPEEDS: [f32; 6] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
 
 /// Settings text fields: label, hint, field.
@@ -2532,7 +2535,12 @@ impl Unbloated {
 
     fn open_in_browser(&mut self, cx: &mut Context<Self>) {
         let Some(url) = self.current.as_ref().map(|v| v.url()) else { return };
-        match std::process::Command::new("xdg-open").arg(&url).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
+        self.open_url(&url, cx);
+    }
+
+    /// Open a link in the default browser.
+    fn open_url(&mut self, url: &str, cx: &mut Context<Self>) {
+        match std::process::Command::new("xdg-open").arg(url).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
             // Reaped in the background so it doesn't linger as a zombie.
             Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
             Err(e) => self.notice = Some(format!("Cannot open the browser: {e}")),
@@ -4603,6 +4611,33 @@ impl Unbloated {
                     }),
                 )
             })
+            .child(
+                div()
+                    .px_4()
+                    .pt_4()
+                    .pb_4()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .id("about-github")
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .px_3()
+                            .py(px(7.))
+                            .rounded_md()
+                            .bg(themed(HOVER))
+                            .cursor_pointer()
+                            .hover(|d| d.bg(themed(BORDER)))
+                            .tooltip(tip(REPO_URL))
+                            .child(svg().path(icons::path("github")).size(px(16.)).text_color(themed(TEXT)))
+                            .child(div().text_sm().text_color(themed(TEXT)).child("GitHub"))
+                            .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.open_url(REPO_URL, cx)),
+                    )
+                    .child(div().text_xs().text_color(themed(MUTED)).child(format!("unbloated-youtube {}", env!("CARGO_PKG_VERSION")))),
+            )
             .into_any_element()
     }
 

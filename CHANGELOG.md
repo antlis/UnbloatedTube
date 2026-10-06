@@ -7,6 +7,7 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 ## Unreleased
 
 ### Added
+- **Version and GitHub link**: the bottom of Settings shows the installed version and a GitHub button that opens the project's page.
 - **Cast**: a button next to the player buttons (and **T**) sends the playing video to another
   device by running a command from `config.toml`: one `[cast.<name>]` table with a `command`
   argument list per target, using `{url}`, `{start}`, `{id}` and `{title}`. The command runs in the
