@@ -1,5 +1,6 @@
 mod account;
 mod auth;
+mod cast;
 mod embed;
 mod icons;
 mod player;
@@ -175,7 +176,7 @@ const TEXT_FIELDS: [(&str, &str, fn(&mut Settings) -> &mut String); 3] = [
     ("Download folder", "Empty for your Downloads folder; ~/ works", |s| &mut s.download_dir),
 ];
 
-const BUTTON_TOGGLES: [Toggle; 11] = [
+const BUTTON_TOGGLES: [Toggle; 12] = [
     ("Subscribe", "Subscribe / unsubscribe to the video's channel", |s| &mut s.subscribe_button),
     ("Save to playlist", "Add the video to Watch later or one of your playlists", |s| &mut s.save_button),
     ("Watch later", "Add the video to Watch later in one click (W)", |s| &mut s.watch_later_button),
@@ -183,6 +184,7 @@ const BUTTON_TOGGLES: [Toggle; 11] = [
     ("Dislike", "Dislike the video, or remove your dislike", |s| &mut s.dislike_button),
     ("Volume", "Mute button and volume bar next to the speed button", |s| &mut s.volume_control),
     ("Subtitles", "CC button: subtitles on / off for the video (V); language and size are under Subtitles", |s| &mut s.subtitles_button),
+    ("Cast", "Send the video to a cast target from config.toml (T); the button shows once one is set up", |s| &mut s.cast_button),
     ("Share", "Copy the video's link", |s| &mut s.share_button),
     ("Share at current time", "Copy the video's link so it opens at the current time", |s| &mut s.share_time_button),
     ("Open in browser", "Open the video's page in your default browser", |s| &mut s.browser_button),
@@ -225,13 +227,14 @@ enum Lower {
 
 /// Keyboard shortcuts (also listed in Settings). Keys reach mpv instead while the pointer is
 /// over the video; mpv's own defaults there are similar (Space, arrows, f).
-const SHORTCUTS: [(&str, &str); 28] = [
+const SHORTCUTS: [(&str, &str); 29] = [
     ("Space / K", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     ("J / L", "Back / forward 10 seconds"),
     ("F", "Fullscreen (Esc or f to leave)"),
     ("M", "Mute"),
     ("V", "Subtitles on / off"),
+    ("T", "Cast the video to the first cast target (config.toml)"),
     ("↑ / ↓", "Volume up / down 5%"),
     ("C", "Copy the video's link"),
     ("⇧C", "Copy the link at the current time"),
@@ -260,13 +263,14 @@ const SHORTCUTS: [(&str, &str); 28] = [
 const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 15, 1)];
 
 /// Vim mode's keys (case matters: ⇧ means Shift).
-const VIM_SHORTCUTS: [(&str, &str); 34] = [
+const VIM_SHORTCUTS: [(&str, &str); 35] = [
     ("Space", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     (", / .", "Back / forward 10 seconds"),
     ("⇧F", "Fullscreen (Esc or f to leave)"),
     ("m", "Mute"),
     ("v", "Subtitles on / off"),
+    ("t", "Cast the video to the first cast target (config.toml)"),
     ("+ / -", "Volume up / down 5%"),
     ("n / p", "Next / previous video"),
     ("y y", "Copy the video's link"),
@@ -2556,6 +2560,48 @@ impl Unbloated {
         cx.notify();
     }
 
+    /// Whether the Cast button shows: a target in config.toml, and the button on in Settings.
+    fn cast_available(&self) -> bool {
+        self.settings.cast_button && !self.cfg.cast.is_empty()
+    }
+
+    /// Send the playing video to a cast target (the first one for the T key): the command from
+    /// config.toml runs on a background thread, then the local video pauses.
+    fn cast_to(&mut self, name: Option<String>, cx: &mut Context<Self>) {
+        let Some(video) = self.current.clone() else { return };
+        let Some((name, target)) = name
+            .and_then(|n| self.cfg.cast.get(&n).map(|t| (n, t.clone())))
+            .or_else(|| self.cfg.cast.iter().next().map(|(n, t)| (n.clone(), t.clone())))
+        else {
+            self.notice = Some("No cast target: add [cast.<name>] to config.toml".into());
+            cx.notify();
+            return;
+        };
+        // Where it is now (the saved position when mpv isn't running).
+        let start = self.state.as_ref().map_or_else(|| self.history.position(&video.id), |s| s.position).max(0.) as u64;
+        let title = video.title.clone();
+        let command = cast::expand(&target.command, &cast::Playing { url: &video.url(), id: &video.id, title: &title, start });
+        self.notice = Some(format!("Casting to {name}…"));
+        let task = cx.background_executor().spawn(async move { cast::run(&command, Duration::from_secs(60)) });
+        cx.spawn(async move |this, cx| {
+            let res = task.await;
+            this.update(cx, |this, cx| {
+                match res {
+                    Ok(()) => {
+                        this.notice = Some(format!("Sent to {name}"));
+                        // Otherwise it plays here too.
+                        this.player.pause();
+                    }
+                    Err(e) => this.notice = Some(format!("Cast to {name} failed: {e}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
     /// The subtitle languages to look for: the setting, or the system language ("en" if unknown).
     fn sub_langs(&self) -> String {
         let setting = self.settings.sub_lang.trim();
@@ -2754,6 +2800,7 @@ impl Unbloated {
             "f" if active => self.player.set_fullscreen(!self.fullscreen),
             "m" => self.player.toggle_mute(),
             "v" => self.toggle_subtitles(cx),
+            "t" => self.cast_to(None, cx),
             "up" | "=" => self.change_volume(5., cx),
             "down" | "-" => self.change_volume(-5., cx),
             "e" if k.modifiers.shift => self.toggle_player_full(cx),
@@ -2881,6 +2928,7 @@ impl Unbloated {
             "F" if active => self.player.set_fullscreen(!self.fullscreen),
             "m" => self.player.toggle_mute(),
             "v" => self.toggle_subtitles(cx),
+            "t" => self.cast_to(None, cx),
             "+" | "=" => self.change_volume(5., cx),
             "-" => self.change_volume(-5., cx),
             "n" => {
@@ -4853,7 +4901,7 @@ impl Unbloated {
                     .when(self.settings.volume_control, |d| d.child(self.volume_bar(cx)))
             ))
             // Second row: what you can do with this video.
-            .when(self.account_buttons() || self.settings.subtitles_button || self.settings.share_button || self.settings.share_time_button || self.settings.browser_button || self.settings.download_button, |d| {
+            .when(self.account_buttons() || self.cast_available() || self.settings.subtitles_button || self.settings.share_button || self.settings.share_time_button || self.settings.browser_button || self.settings.download_button, |d| {
                 d.child(
                     div()
                         .flex()
@@ -4870,6 +4918,15 @@ impl Unbloated {
                                     icon_button("download", "download", tip_text, enabled)
                                         .when(enabled, |d| d.on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.download(v.clone(), cx))),
                                 )
+                            })
+                            .when(self.cast_available(), |d| {
+                                let many = self.cfg.cast.len() > 1;
+                                d.children(self.cfg.cast.keys().enumerate().map(|(i, name)| {
+                                    let name = name.clone();
+                                    let target = name.clone();
+                                    icon_button(("cast", i), "cast", format!("Cast to {name}{}", if i == 0 && !many { " (T)" } else { "" }), true)
+                                        .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.cast_to(Some(target.clone()), cx))
+                                }))
                             })
                             .when(self.settings.subtitles_button, |d| {
                                 let on = self.state.as_ref().is_some_and(|s| s.sub_on);

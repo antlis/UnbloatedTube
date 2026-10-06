@@ -15,6 +15,16 @@ pub struct Config {
     /// written by the Connect panel. Resolved in `load`, never read from config.toml itself.
     #[serde(skip)]
     pub auth: Auth,
+    /// Places to send the playing video to: `[cast.<name>]` tables with a `command`.
+    #[serde(default)]
+    pub cast: std::collections::BTreeMap<String, CastTarget>,
+}
+
+/// A cast target: the command to run, with `{url}`, `{start}`, `{id}` and `{title}` filled in
+/// (see `cast.rs`).
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct CastTarget {
+    pub command: Vec<String>,
 }
 
 impl Config {
@@ -213,6 +223,7 @@ pub struct Settings {
     pub watch_later_button: bool,
     pub share_button: bool,
     pub subtitles_button: bool,
+    pub cast_button: bool,
     pub share_time_button: bool,
     pub browser_button: bool,
     pub download_button: bool,
@@ -286,6 +297,7 @@ impl Default for Settings {
             dislike_button: false,
             share_button: true,
             subtitles_button: true,
+            cast_button: true,
             share_time_button: true,
             browser_button: true,
             download_button: true,
