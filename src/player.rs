@@ -201,6 +201,10 @@ impl Player {
         let _ = self.command(json!(["seek", secs, "relative"]));
     }
 
+    pub fn pause(&self) {
+        let _ = self.command(json!(["set_property", "pause", true]));
+    }
+
     pub fn toggle_mute(&self) {
         let _ = self.command(json!(["cycle", "mute"]));
     }

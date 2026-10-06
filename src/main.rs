@@ -1,5 +1,6 @@
 mod account;
 mod auth;
+mod cast;
 mod embed;
 mod icons;
 mod player;
@@ -169,13 +170,14 @@ const SEGMENTS: [(&str, &str); 8] = [
 const SPEEDS: [f32; 6] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
 
 /// Settings text fields: label, hint, field.
-const TEXT_FIELDS: [(&str, &str, fn(&mut Settings) -> &mut String); 3] = [
+const TEXT_FIELDS: [(&str, &str, fn(&mut Settings) -> &mut String); 4] = [
+    ("Cast command", "catt -d \"Living Room\" cast {url}", |s| &mut s.cast_command),
     ("Subtitle language", "Code, e.g. en or ru, or several (en,ru); empty uses your system language", |s| &mut s.sub_lang),
     ("Extra mpv options", "e.g. --volume=70 --deband", |s| &mut s.mpv_args),
     ("Download folder", "Empty for your Downloads folder; ~/ works", |s| &mut s.download_dir),
 ];
 
-const BUTTON_TOGGLES: [Toggle; 11] = [
+const BUTTON_TOGGLES: [Toggle; 12] = [
     ("Subscribe", "Subscribe / unsubscribe to the video's channel", |s| &mut s.subscribe_button),
     ("Save to playlist", "Add the video to Watch later or one of your playlists", |s| &mut s.save_button),
     ("Watch later", "Add the video to Watch later in one click (W)", |s| &mut s.watch_later_button),
@@ -183,6 +185,7 @@ const BUTTON_TOGGLES: [Toggle; 11] = [
     ("Dislike", "Dislike the video, or remove your dislike", |s| &mut s.dislike_button),
     ("Volume", "Mute button and volume bar next to the speed button", |s| &mut s.volume_control),
     ("Subtitles", "CC button: subtitles on / off for the video (V); language and size are under Subtitles", |s| &mut s.subtitles_button),
+    ("Cast", "Send the video to another device (T); the button shows once a Cast command (Settings) or a [cast] target (config.toml) exists", |s| &mut s.cast_button),
     ("Share", "Copy the video's link", |s| &mut s.share_button),
     ("Share at current time", "Copy the video's link so it opens at the current time", |s| &mut s.share_time_button),
     ("Open in browser", "Open the video's page in your default browser", |s| &mut s.browser_button),
@@ -225,13 +228,14 @@ enum Lower {
 
 /// Keyboard shortcuts (also listed in Settings). Keys reach mpv instead while the pointer is
 /// over the video; mpv's own defaults there are similar (Space, arrows, f).
-const SHORTCUTS: [(&str, &str); 28] = [
+const SHORTCUTS: [(&str, &str); 29] = [
     ("Space / K", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     ("J / L", "Back / forward 10 seconds"),
     ("F", "Fullscreen (Esc or f to leave)"),
     ("M", "Mute"),
     ("V", "Subtitles on / off"),
+    ("T", "Cast the video to the first cast target (config.toml)"),
     ("↑ / ↓", "Volume up / down 5%"),
     ("C", "Copy the video's link"),
     ("⇧C", "Copy the link at the current time"),
@@ -260,13 +264,14 @@ const SHORTCUTS: [(&str, &str); 28] = [
 const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 15, 1)];
 
 /// Vim mode's keys (case matters: ⇧ means Shift).
-const VIM_SHORTCUTS: [(&str, &str); 34] = [
+const VIM_SHORTCUTS: [(&str, &str); 35] = [
     ("Space", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     (", / .", "Back / forward 10 seconds"),
     ("⇧F", "Fullscreen (Esc or f to leave)"),
     ("m", "Mute"),
     ("v", "Subtitles on / off"),
+    ("t", "Cast the video to the first cast target (config.toml)"),
     ("+ / -", "Volume up / down 5%"),
     ("n / p", "Next / previous video"),
     ("y y", "Copy the video's link"),
@@ -329,6 +334,19 @@ impl Browser {
 /// Entries streamed by a background yt-dlp run, plus its result once finished.
 type Inbox<T> = Arc<Mutex<(Vec<T>, Option<Result<(), String>>)>>;
 
+/// The video is playing on a receiver that speaks the remote API: the app's controls drive it.
+struct Casting {
+    name: String,
+    remote: cast::Remote,
+    /// The last answer of the receiver; None until the first one.
+    status: Option<cast::Status>,
+    /// Whether the receiver has played it yet: it may take seconds to start, and only after that
+    /// does "nothing playing" mean it ended.
+    seen: bool,
+    started: Instant,
+    polling: bool,
+}
+
 struct Unbloated {
     cfg: Arc<Config>,
     settings: Settings,
@@ -387,6 +405,10 @@ struct Unbloated {
     hints: Option<(Vec<HintTarget>, String)>,
     /// Picture-in-picture: mpv plays in its own small always-on-top window.
     pip: bool,
+    /// Set while the video plays on a cast receiver (see `Casting`).
+    casting: Option<Casting>,
+    /// Closing the window was asked while casting: the dialog offers to stop the receiver too.
+    quit_prompt: bool,
     /// Live filter for the left list (channels, a channel's videos, History), and its focus.
     list_filter: String,
     filter_focus: FocusHandle,
@@ -431,7 +453,7 @@ struct Unbloated {
     settings_filter: String,
     settings_focus: FocusHandle,
     /// Focus of the settings text fields, in TEXT_FIELDS order.
-    field_focus: [FocusHandle; 3],
+    field_focus: [FocusHandle; 4],
     /// Latest fetch per list; older fetches of the same list are ignored.
     generations: HashMap<&'static str, u64>,
     history: History,
@@ -555,6 +577,17 @@ impl Unbloated {
         LIGHT.store(settings.light_theme, std::sync::atomic::Ordering::Relaxed);
         let root_focus = cx.focus_handle();
         window.focus(&root_focus);
+        // A close from the window manager asks the same question as our close button.
+        let this = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |_, cx| {
+            this.update(cx, |this, cx| {
+                let casting = this.casting.is_some();
+                this.quit_prompt |= casting;
+                cx.notify();
+                !casting
+            })
+            .unwrap_or(true)
+        });
         // Logged out: no account tabs, no restored video — the anonymous home takes over.
         let restore = cfg.has_auth().then(|| history.last()).flatten().map(|w| w.video.clone());
         let tab = if cfg.has_auth() {
@@ -636,6 +669,8 @@ impl Unbloated {
             channel_menu: None,
             menu_hovered: false,
             pip: false,
+            casting: None,
+            quit_prompt: false,
             searching: false,
             list_filter: String::new(),
             filter_focus: cx.focus_handle(),
@@ -664,7 +699,7 @@ impl Unbloated {
             hints: None,
             settings_filter: String::new(),
             settings_focus: cx.focus_handle(),
-            field_focus: [cx.focus_handle(), cx.focus_handle(), cx.focus_handle()],
+            field_focus: [cx.focus_handle(), cx.focus_handle(), cx.focus_handle(), cx.focus_handle()],
             generations: HashMap::new(),
             current: restore,
             history,
@@ -1122,6 +1157,7 @@ impl Unbloated {
             && !self.saving
             && !self.show_keys
             && !self.pip
+            && self.casting.is_none()
             && !self.lower_full
             && !self.right_collapsed
             // The connect screen is a GPUI overlay; the X11 child window would float above it.
@@ -1856,6 +1892,7 @@ impl Unbloated {
             e.borrow_mut().set_visible(true);
             e.borrow().id()
         });
+        self.casting = None;
         let start = self.link_start.take().unwrap_or_else(|| self.history.position(&video.id));
         self.subs_pending = None;
         self.subs_wanted = self.settings.subtitles.then(|| video.id.clone());
@@ -2556,6 +2593,235 @@ impl Unbloated {
         cx.notify();
     }
 
+    /// Whether the Cast button shows: a target in config.toml, and the button on in Settings.
+    fn cast_available(&self) -> bool {
+        self.settings.cast_button && !self.cast_targets().is_empty()
+    }
+
+    /// Where the video can be cast: the command from Settings, which wins, else config.toml's targets.
+    fn cast_targets(&self) -> std::collections::BTreeMap<String, store::CastTarget> {
+        let command = cast::split_command(&self.settings.cast_command);
+        if command.is_empty() {
+            return self.cfg.cast.clone();
+        }
+        [("device".to_string(), store::CastTarget { command, ..Default::default() })].into()
+    }
+
+    /// Send the playing video to a cast target (the first one for the T key). A target with a `url`
+    /// is asked over the remote API and then controlled from here; otherwise its command from
+    /// config.toml runs. Either way happens on a background thread, then the local video pauses.
+    fn cast_to(&mut self, name: Option<String>, cx: &mut Context<Self>) {
+        let Some(video) = self.current.clone() else { return };
+        let targets = self.cast_targets();
+        let Some((name, target)) = name
+            .and_then(|n| targets.get(&n).map(|t| (n, t.clone())))
+            .or_else(|| targets.iter().next().map(|(n, t)| (n.clone(), t.clone())))
+        else {
+            self.notice = Some("No cast target: add [cast.<name>] to config.toml".into());
+            cx.notify();
+            return;
+        };
+        // Where it is now (the saved position when mpv isn't running).
+        let start = self.state.as_ref().map_or_else(|| self.history.position(&video.id), |s| s.position).max(0.) as u64;
+        let title = video.title.clone();
+        let remote = target.url.as_deref().map(|u| cast::Remote::new(u, target.token.as_deref().unwrap_or_default()));
+        let command = cast::expand(&target.command, &cast::Playing { url: &video.url(), id: &video.id, title: &title, start });
+        self.notice = Some(format!("Casting to {name}…"));
+        let (task_remote, link) = (remote.clone(), video.url());
+        let task = cx.background_executor().spawn(async move {
+            match task_remote {
+                Some(r) => r.play(&link, start),
+                None => cast::run(&command, Duration::from_secs(60)),
+            }
+        });
+        cx.spawn(async move |this, cx| {
+            let res = task.await;
+            this.update(cx, |this, cx| {
+                match res {
+                    Ok(()) => {
+                        this.notice = Some(format!("Sent to {name}"));
+                        // Otherwise it plays here too.
+                        this.player.pause();
+                        this.casting = remote.map(|remote| Casting {
+                            name,
+                            remote,
+                            status: None,
+                            seen: false,
+                            started: Instant::now(),
+                            polling: false,
+                        });
+                        this.sync_embed();
+                    }
+                    Err(e) => this.notice = Some(format!("Cast to {name} failed: {e}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Ask the cast receiver how it is doing, at most one question at a time. It ends the cast
+    /// view when the receiver has stopped (finished, closed, or someone pressed stop on the TV).
+    fn poll_cast(&mut self, cx: &mut Context<Self>) {
+        let Some(c) = self.casting.as_mut().filter(|c| !c.polling) else { return };
+        c.polling = true;
+        let remote = c.remote.clone();
+        let task = cx.background_executor().spawn(async move { remote.status() });
+        cx.spawn(async move |this, cx| {
+            let res = task.await;
+            this.update(cx, |this, cx| {
+                let Some(c) = this.casting.as_mut() else { return };
+                c.polling = false;
+                let alive = matches!(&res, Ok(s) if s.playing);
+                if let Ok(s) = res {
+                    c.seen |= s.playing;
+                    c.status = Some(s);
+                }
+                if (c.seen && !alive) || (!c.seen && c.started.elapsed() > Duration::from_secs(90)) {
+                    this.end_cast("Cast ended", cx);
+                } else {
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Leave the cast view and show the local (still paused) video again.
+    fn end_cast(&mut self, notice: &str, cx: &mut Context<Self>) {
+        self.casting = None;
+        self.notice = Some(notice.to_string());
+        self.sync_embed();
+        cx.notify();
+    }
+
+    /// Close the window; while casting, ask first whether the receiver should stop too.
+    fn request_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.casting.is_some() {
+            self.quit_prompt = true;
+            cx.notify();
+        } else {
+            window.remove_window();
+        }
+    }
+
+    /// The close dialog's answer: stop the receiver (briefly waiting for it) or leave it playing.
+    fn quit_cast(&mut self, stop: bool, window: &mut Window) {
+        if let (true, Some(c)) = (stop, &self.casting) {
+            let _ = c.remote.stop_within(Duration::from_secs(2));
+        }
+        self.casting = None;
+        window.remove_window();
+    }
+
+    fn render_quit_prompt(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        let name = self.casting.as_ref().filter(|_| self.quit_prompt)?.name.clone();
+        Some(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .child(div().id("quit-backdrop").absolute().top_0().left_0().size_full().occlude().bg(gpui::black().opacity(0.5)))
+                .child(
+                    div().absolute().top_0().left_0().size_full().flex().items_center().justify_center().child(
+                        div()
+                            .id("quit-prompt")
+                            .occlude()
+                            .w(px(340.))
+                            .p_4()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .rounded_md()
+                            .bg(themed(HOVER))
+                            .border_1()
+                            .border_color(themed(BORDER))
+                            .shadow_lg()
+                            .child(div().text_sm().text_color(themed(TEXT)).child(format!("Still casting to {name}")))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_wrap()
+                                    .gap_2()
+                                    .child(
+                                        self.chip("quit-stop", format!("Stop {name} and quit"), true)
+                                            .on_click_hinted(&self.hint_reg(), cx, |this, _, window, _| this.quit_cast(true, window)),
+                                    )
+                                    .child(
+                                        self.chip("quit-keep", "Keep playing and quit", true)
+                                            .on_click_hinted(&self.hint_reg(), cx, |this, _, window, _| this.quit_cast(false, window)),
+                                    )
+                                    .child(self.chip("quit-cancel", "Cancel", true).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                                        this.quit_prompt = false;
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+                ),
+        )
+    }
+
+    /// Stop the receiver and leave the cast view.
+    fn stop_cast(&mut self, cx: &mut Context<Self>) {
+        let Some(c) = &self.casting else { return };
+        let remote = c.remote.clone();
+        cx.background_executor().spawn(async move { remote.ctl(serde_json::json!({ "action": "stop" })) }).detach();
+        self.end_cast("Stopped casting", cx);
+    }
+
+    /// Send a control to the receiver and show its effect at once; the next poll corrects it.
+    fn cast_ctl(&mut self, body: serde_json::Value, cx: &mut Context<Self>) {
+        let Some(c) = &self.casting else { return };
+        let remote = c.remote.clone();
+        let task = cx.background_executor().spawn(async move { remote.ctl(body) });
+        cx.spawn(async move |this, cx| {
+            if let Err(e) = task.await {
+                this.update(cx, |this, cx| {
+                    this.notice = Some(format!("Cast: {e}"));
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Play or pause: the receiver while casting, else the local player.
+    fn pause_toggle(&mut self, cx: &mut Context<Self>) {
+        if let Some(st) = self.casting.as_mut().and_then(|c| c.status.as_mut()) {
+            st.paused = !st.paused;
+            self.cast_ctl(serde_json::json!({ "action": "toggle" }), cx);
+            cx.notify();
+        } else if self.casting.is_none() {
+            self.player.toggle_pause();
+        }
+    }
+
+    /// Seek by `secs`: the receiver while casting, else the local player.
+    fn seek_by(&mut self, secs: f64, cx: &mut Context<Self>) {
+        match self.casting.as_ref().and_then(|c| c.status.as_ref()) {
+            Some(st) => self.seek_to((st.position + secs).max(0.), cx),
+            None if self.casting.is_none() => self.player.seek_relative(secs),
+            None => {}
+        }
+    }
+
+    /// Seek to `secs`: the receiver while casting, else the local player.
+    fn seek_to(&mut self, secs: f64, cx: &mut Context<Self>) {
+        if let Some(st) = self.casting.as_mut().and_then(|c| c.status.as_mut()) {
+            let secs = if st.duration > 0. { secs.min(st.duration) } else { secs };
+            st.position = secs;
+            self.cast_ctl(serde_json::json!({ "action": "seek", "position": secs }), cx);
+            cx.notify();
+        } else if self.casting.is_none() {
+            self.player.seek_absolute(secs);
+        }
+    }
+
     /// The subtitle languages to look for: the setting, or the system language ("en" if unknown).
     fn sub_langs(&self) -> String {
         let setting = self.settings.sub_lang.trim();
@@ -2662,7 +2928,9 @@ impl Unbloated {
     }
 
     fn toggle_play(&mut self, cx: &mut Context<Self>) {
-        if self.state.is_some() {
+        if self.casting.is_some() {
+            self.pause_toggle(cx);
+        } else if self.state.is_some() {
             self.player.toggle_pause();
         } else if let Some(v) = self.current.clone() {
             self.play(v, None, cx);
@@ -2679,6 +2947,15 @@ impl Unbloated {
         }
         if self.fullscreen && k.key == "escape" {
             self.player.set_fullscreen(false);
+            cx.stop_propagation();
+            return;
+        }
+        if self.quit_prompt {
+            // The dialog is modal: Escape cancels it, other keys do nothing.
+            if k.key == "escape" {
+                self.quit_prompt = false;
+                cx.notify();
+            }
             cx.stop_propagation();
             return;
         }
@@ -2736,7 +3013,7 @@ impl Unbloated {
         if k.modifiers.control || k.modifiers.alt || k.modifiers.platform {
             return;
         }
-        let active = self.state.is_some();
+        let active = self.state.is_some() || self.casting.is_some();
         // "?" is Shift+/ on most layouts: check the typed character before the "/" key.
         if k.key_char.as_deref() == Some("?") || (self.show_keys && k.key == "escape") {
             self.show_keys = !self.show_keys;
@@ -2747,13 +3024,14 @@ impl Unbloated {
         }
         match k.key.as_str() {
             "space" | "k" => self.toggle_play(cx),
-            "left" if active => self.player.seek_relative(-5.),
-            "right" if active => self.player.seek_relative(5.),
-            "j" if active => self.player.seek_relative(-10.),
-            "l" if active => self.player.seek_relative(10.),
-            "f" if active => self.player.set_fullscreen(!self.fullscreen),
+            "left" if active => self.seek_by(-5., cx),
+            "right" if active => self.seek_by(5., cx),
+            "j" if active => self.seek_by(-10., cx),
+            "l" if active => self.seek_by(10., cx),
+            "f" if active && self.casting.is_none() => self.player.set_fullscreen(!self.fullscreen),
             "m" => self.player.toggle_mute(),
             "v" => self.toggle_subtitles(cx),
+            "t" => self.cast_to(None, cx),
             "up" | "=" => self.change_volume(5., cx),
             "down" | "-" => self.change_volume(-5., cx),
             "e" if k.modifiers.shift => self.toggle_player_full(cx),
@@ -2805,7 +3083,7 @@ impl Unbloated {
         }
         let pending_g = std::mem::take(&mut self.vim_g);
         let pending_y = std::mem::take(&mut self.vim_y);
-        let active = self.state.is_some();
+        let active = self.state.is_some() || self.casting.is_some();
         let len = self.left_items().len();
         let page = 10;
         match token.as_str() {
@@ -2874,13 +3152,14 @@ impl Unbloated {
                 }
             }
             "space" => self.toggle_play(cx),
-            "left" if active => self.player.seek_relative(-5.),
-            "right" if active => self.player.seek_relative(5.),
-            "," if active => self.player.seek_relative(-10.),
-            "." if active => self.player.seek_relative(10.),
-            "F" if active => self.player.set_fullscreen(!self.fullscreen),
+            "left" if active => self.seek_by(-5., cx),
+            "right" if active => self.seek_by(5., cx),
+            "," if active => self.seek_by(-10., cx),
+            "." if active => self.seek_by(10., cx),
+            "F" if active && self.casting.is_none() => self.player.set_fullscreen(!self.fullscreen),
             "m" => self.player.toggle_mute(),
             "v" => self.toggle_subtitles(cx),
+            "t" => self.cast_to(None, cx),
             "+" | "=" => self.change_volume(5., cx),
             "-" => self.change_volume(-5., cx),
             "n" => {
@@ -3230,6 +3509,9 @@ impl Unbloated {
     fn tick(&mut self, state: Option<player::State>, window: &mut Window, cx: &mut Context<Self>) {
         self.ticks += 1;
         self.expire_notices(cx);
+        if self.ticks % 15 == 0 {
+            self.poll_cast(cx);
+        }
         self.preload(cx);
         self.load_status(cx);
         self.poll_subtitles(state.as_ref(), cx);
@@ -3863,6 +4145,13 @@ impl Unbloated {
                         cx.notify();
                     })),
             )
+            .when(label == "Cast command", |d| {
+                d.child(div().text_xs().text_color(themed(MUTED)).child(
+                    "Casts the video with this command (T or the Cast button) and replaces the [cast] targets in config.toml; empty uses those. \
+                     {url} is the video's link; {start} (seconds), {id} and {title} work too. Quote arguments that contain spaces. \
+                     It is not run through a shell, and it only sends the video: control of the receiver needs a target in config.toml.",
+                ))
+            })
     }
 
     /// A button in the Connect panel: accent when `primary`, neutral otherwise.
@@ -4632,6 +4921,54 @@ impl Unbloated {
                     ),
             );
         }
+        if let Some(c) = &self.casting {
+            let (name, status) = (c.name.clone(), c.status.clone());
+            let line = match &status {
+                Some(s) if s.playing => format!("{} / {}", fmt_duration(s.position), fmt_duration(s.duration)),
+                _ => "Starting…".to_string(),
+            };
+            let paused = status.as_ref().is_some_and(|s| s.paused);
+            screen = screen.child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap_3()
+                    .bg(gpui::black().opacity(0.85))
+                    .child(div().text_sm().text_color(themed(TEXT)).child(format!("Casting to {name}")))
+                    .child(div().text_xs().text_color(themed(MUTED)).child(line))
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                self.chip("cast-back", "−10s", status.is_some())
+                                    .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.seek_by(-10., cx)),
+                            )
+                            .child(
+                                self.chip("cast-pause", if paused { "Play" } else { "Pause" }, status.is_some())
+                                    .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.pause_toggle(cx)),
+                            )
+                            .child(
+                                self.chip("cast-fwd", "+10s", status.is_some())
+                                    .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.seek_by(10., cx)),
+                            )
+                            .child(
+                                self.chip("cast-stop", "Stop", true)
+                                    .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.stop_cast(cx)),
+                            ),
+                    )
+                    .child(
+                        self.chip("cast-here", "Back to this screen", true)
+                            .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.end_cast("Cast view closed, it keeps playing there", cx)),
+                    ),
+            );
+        }
         // Nothing playing yet (e.g. after startup): clicking the picture starts it. The playback
         // buttons under the video are replaced by the hover bar, which exists only in mpv's window.
         if !full && !self.pip && !self.loading && self.state.is_none() && self.settings.video_controls {
@@ -4678,9 +5015,12 @@ impl Unbloated {
         };
         let resume = self.history.position(&video.id);
         let screen = self.screen(&video, false, cx);
-        let (pos, dur, paused, active) = match &self.state {
-            Some(s) => (s.position, s.duration, s.paused, true),
-            None => (resume, video.duration.unwrap_or(0.), true, false),
+        let cast_status = self.casting.as_ref().map(|c| c.status.clone());
+        let (pos, dur, paused, active) = match (&cast_status, &self.state) {
+            (Some(Some(c)), _) => (c.position, c.duration, c.paused, true),
+            (Some(None), _) => (resume, video.duration.unwrap_or(0.), true, false),
+            (None, Some(s)) => (s.position, s.duration, s.paused, true),
+            (None, None) => (resume, video.duration.unwrap_or(0.), true, false),
         };
         let filled = if dur > 0. { ((pos / dur) * SEEK_SEGMENTS as f64) as usize } else { 0 };
         let chapters = self.state.as_ref().map(|s| s.chapters.clone()).unwrap_or_default();
@@ -4794,8 +5134,8 @@ impl Unbloated {
                             .child(div().size_full().bg(if i < filled { themed(ACCENT) } else { themed(BORDER) }))
                             .when(dur > 0., |d| d.tooltip(tip(tooltip)))
                             .when(active, |d| {
-                                d.on_click(cx.listener(move |this, _, _, _| {
-                                    this.player.seek_absolute(dur * i as f64 / SEEK_SEGMENTS as f64)
+                                d.on_click(cx.listener(move |this, _, _, cx| {
+                                    this.seek_to(dur * i as f64 / SEEK_SEGMENTS as f64, cx)
                                 }))
                             })
                     }))
@@ -4807,7 +5147,9 @@ impl Unbloated {
                     .flex()
                     .items_center()
                     .child(icon_button("play", play_icon, play_tip, true).on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
-                        if this.state.is_some() {
+                        if this.casting.is_some() {
+                            this.pause_toggle(cx);
+                        } else if this.state.is_some() {
                             this.player.toggle_pause();
                         } else {
                             this.play(replay.clone(), None, cx);
@@ -4817,11 +5159,11 @@ impl Unbloated {
                     .child(self.step_button("next", "next", "Next (N)", 1, cx))
                     .child(
                         icon_button("back10", "back", "Back 10 seconds (J)", active)
-                            .on_click_hinted(&self.hint_reg(), cx, |this, _, _, _| this.player.seek_relative(-10.)),
+                            .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.seek_by(-10., cx)),
                     )
                     .child(
                         icon_button("fwd10", "forward", "Forward 10 seconds (L)", active)
-                            .on_click_hinted(&self.hint_reg(), cx, |this, _, _, _| this.player.seek_relative(10.)),
+                            .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.seek_by(10., cx)),
                     )
                     .child(
                         icon_button("pip", "pip", if self.pip { "Back into the app" } else { "Picture-in-picture" }, active || self.pip)
@@ -4853,7 +5195,7 @@ impl Unbloated {
                     .when(self.settings.volume_control, |d| d.child(self.volume_bar(cx)))
             ))
             // Second row: what you can do with this video.
-            .when(self.account_buttons() || self.settings.subtitles_button || self.settings.share_button || self.settings.share_time_button || self.settings.browser_button || self.settings.download_button, |d| {
+            .when(self.account_buttons() || self.cast_available() || self.settings.subtitles_button || self.settings.share_button || self.settings.share_time_button || self.settings.browser_button || self.settings.download_button, |d| {
                 d.child(
                     div()
                         .flex()
@@ -4870,6 +5212,15 @@ impl Unbloated {
                                     icon_button("download", "download", tip_text, enabled)
                                         .when(enabled, |d| d.on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.download(v.clone(), cx))),
                                 )
+                            })
+                            .when(self.cast_available(), |d| {
+                                let targets = self.cast_targets();
+                                let many = targets.len() > 1;
+                                d.children(targets.into_keys().enumerate().map(|(i, name)| {
+                                    let target = name.clone();
+                                    icon_button(("cast", i), "cast", format!("Cast to {name}{}", if i == 0 && !many { " (T)" } else { "" }), true)
+                                        .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.cast_to(Some(target.clone()), cx))
+                                }))
                             })
                             .when(self.settings.subtitles_button, |d| {
                                 let on = self.state.as_ref().is_some_and(|s| s.sub_on);
@@ -5363,7 +5714,7 @@ impl Unbloated {
                                     .text_color(if is_current { themed(TEXT) } else { themed(MUTED) })
                                     .child(title),
                             )
-                            .on_click_hinted(&this.hint_reg(), cx, move |this, _, _, _| this.player.seek_absolute(start))
+                            .on_click_hinted(&this.hint_reg(), cx, move |this, _, _, cx| this.seek_to(start, cx))
                     })
                     .collect()
             }),
@@ -5987,7 +6338,7 @@ impl Render for Unbloated {
                     .border_color(themed(BORDER))
                     .child(control("win-min", "minimize", "Minimize", HOVER, MUTED).on_click(|_, window, _| window.minimize_window()))
                     .child(control("win-max", "maximize", "Maximize", HOVER, MUTED).on_click(|_, window, _| window.zoom_window()))
-                    .child(control("win-close", "close", "Close", ACCENT, TEXT).on_click(|_, window, _| window.remove_window())),
+                    .child(control("win-close", "close", "Close", ACCENT, TEXT).on_click(cx.listener(|this, _, window, cx| this.request_close(window, cx)))),
             )
         } else {
             right
@@ -6125,6 +6476,7 @@ impl Render for Unbloated {
             .children((!self.right_collapsed).then_some(right))
             .children(kb_ring)
             .children(self.render_channel_menu(window, cx))
+            .children(self.render_quit_prompt(cx))
             .children(self.render_toasts())
             .children(sheet)
             .children(hint_overlay)

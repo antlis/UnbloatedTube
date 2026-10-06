@@ -4,6 +4,28 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Added
+- **Cast**: a button next to the player buttons (and **T**) sends the playing video to another
+  device by running a command from `config.toml`: one `[cast.<name>]` table with a `command`
+  argument list per target, using `{url}`, `{start}`, `{id}` and `{title}`. The command runs in the
+  background (60 s limit, never through a shell); on success the local video pauses and the
+  notice says "Sent to <name>", on failure it shows the receiver's own reason. The button shows
+  only when a target exists, and Settings → Player buttons → Cast turns it off. Built with
+  [tg-mpv-bot](https://github.com/antlis/tg-mpv-bot)'s new remote play API in mind (a `curl`
+  target), but it works with anything that takes a link (`catt`, `ssh` plus a script, …). One
+  video per cast; playlists aren't sent yet.
+- **Cast command setting**: Settings → Cast command takes a command line (e.g.
+  `catt -d "Living Room" cast {url}`, no token needed) and, when filled, replaces the `[cast.*]`
+  targets of config.toml. Arguments split at spaces and quotes, never through a shell.
+- **Cast control**: a target with `url` and `token` (a tg-mpv-bot with its remote API on) is also
+  controlled from the app. The video area becomes "Casting to <name>" with the receiver's real
+  position; Space, J/L, the arrow keys, the progress bar and the play, back and forward buttons
+  drive the receiver, **Stop** stops it, and the view closes by itself when the receiver stops
+  (finished, or stopped on the TV). Closing the window while casting asks whether to stop the
+  receiver too, keep it playing, or cancel. Targets with only a `command` stay fire and forget.
+
 ## 0.13.0 - 2026-10-06
 
 ### Added

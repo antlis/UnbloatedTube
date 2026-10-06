@@ -15,6 +15,20 @@ pub struct Config {
     /// written by the Connect panel. Resolved in `load`, never read from config.toml itself.
     #[serde(skip)]
     pub auth: Auth,
+    /// Places to send the playing video to: `[cast.<name>]` tables with a `command`.
+    #[serde(default)]
+    pub cast: std::collections::BTreeMap<String, CastTarget>,
+}
+
+/// A cast target: either a `url` (+ `token`) of a receiver that speaks the tg-mpv-bot remote API,
+/// which the app then also controls, or a `command` to run with `{url}`, `{start}`, `{id}` and
+/// `{title}` filled in (see `cast.rs`).
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct CastTarget {
+    pub command: Vec<String>,
+    pub url: Option<String>,
+    pub token: Option<String>,
 }
 
 impl Config {
@@ -213,6 +227,7 @@ pub struct Settings {
     pub watch_later_button: bool,
     pub share_button: bool,
     pub subtitles_button: bool,
+    pub cast_button: bool,
     pub share_time_button: bool,
     pub browser_button: bool,
     pub download_button: bool,
@@ -243,6 +258,9 @@ pub struct Settings {
     pub subtitles: bool,
     /// Subtitle language code(s), e.g. "en" or "en,ru"; empty = the system language.
     pub sub_lang: String,
+    /// Command that casts the video (see `cast.rs`), e.g. `catt -d "Living Room" cast {url}`; when
+    /// set it replaces the `[cast.*]` targets of config.toml.
+    pub cast_command: String,
     /// Also use YouTube's automatic (and translated) captions when a video has none of its own.
     pub sub_auto: bool,
     /// Subtitle size, as mpv's `sub-scale` (1 = normal).
@@ -286,6 +304,7 @@ impl Default for Settings {
             dislike_button: false,
             share_button: true,
             subtitles_button: true,
+            cast_button: true,
             share_time_button: true,
             browser_button: true,
             download_button: true,
@@ -309,6 +328,7 @@ impl Default for Settings {
             audio_only: false,
             subtitles: false,
             sub_lang: String::new(),
+            cast_command: String::new(),
             sub_auto: true,
             sub_scale: 1.0,
             mpv_args: String::new(),
