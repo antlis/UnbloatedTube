@@ -81,6 +81,13 @@ list, your playlists, your history, search and a player.
 - **Remove from playlist**: hover a video in an open playlist and click the trash icon (in
   Liked videos this unlikes it).
 - **Add a whole playlist to Up next** with one button in the playlist header.
+- **Right-click any video** (Recommended, History, a channel's videos, New uploads, Up next, Watch
+  later, search results): **Copy link**, **Add to Up next** (or remove it), **Save to Watch later**,
+  and below a divider your own playlists in a scrolling list (the ones YouTube's Save menu offers),
+  ticked where the video already is; click one to add the video, or a ticked one to remove it.
+  On the playing video the same menu also has copy link at the current time, loop, speed, subtitles,
+  stats for nerds and open in browser (the video is replaced by its thumbnail while it is open).
+  Logged out you get Copy link and Up next only. Escape or a click elsewhere closes it.
 - A notice confirms every action (or says why YouTube refused it, e.g. for playlists you
   saved from someone else, which you can't edit).
 

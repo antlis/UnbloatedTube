@@ -24,7 +24,8 @@ pub struct State {
     pub chapters: Vec<(f64, String)>,
     /// "?" was pressed over the video since the last query.
     pub help: bool,
-    /// Something the hover bar (controls.lua) wants the app to do: "prev", "next", "speed" or "pip".
+    /// Something the hover bar (controls.lua) wants the app to do: "prev", "next", "speed", "pip"
+    /// or "menu X Y" / "menu {json with x and y}" (right click; see `menu_position`).
     pub action: String,
     pub position: f64,
     pub duration: f64,
@@ -41,6 +42,17 @@ pub struct State {
     pub sub_id: Option<i64>,
     /// One of them is selected and visible.
     pub sub_on: bool,
+}
+
+/// Where a right click happened, in mpv's window pixels, from its `menu ...` action: the hover
+/// bar's script sends "menu 12 34", the plain binding mpv's `mouse-pos` as JSON.
+pub fn menu_position(action: &str) -> Option<(f64, f64)> {
+    let rest = action.strip_prefix("menu")?.trim();
+    if let Ok(v) = serde_json::from_str::<Value>(rest) {
+        return Some((v["x"].as_f64()?, v["y"].as_f64()?));
+    }
+    let mut n = rest.split_whitespace().map(str::parse::<f64>);
+    Some((n.next()?.ok()?, n.next()?.ok()?))
 }
 
 pub struct Player {
@@ -157,6 +169,10 @@ impl Player {
                 && self.command(json!(["keybind", "?", "set user-data/unbloated/help yes"])).is_ok()
                 // mpv's default (a double click toggles fullscreen), which the setting above removes.
                 && self.command(json!(["keybind", "MBTN_LEFT_DBL", "cycle fullscreen"])).is_ok()
+                // Right click: the app's video menu, at the pointer (also without the hover bar's script).
+                && self
+                    .command(json!(["keybind", "MBTN_RIGHT", "expand-properties set user-data/unbloated/action \"menu ${mouse-pos}\""]))
+                    .is_ok()
                 && [("UP", 5), ("=", 5), ("+", 5), ("DOWN", -5), ("-", -5)]
                     .iter()
                     .all(|(key, step)| self.command(json!(["keybind", key, format!("add volume {step}")])).is_ok());
@@ -222,6 +238,16 @@ impl Player {
 
     pub fn set_fullscreen(&self, on: bool) {
         let _ = self.command(json!(["set_property", "fullscreen", on]));
+    }
+
+    /// Loop the current video (mpv's `loop-file`), showing the new state over the picture.
+    pub fn toggle_loop(&self) {
+        let _ = self.command(json!(["cycle-values", "loop-file", "inf", "no"]));
+    }
+
+    /// mpv's "stats for nerds" overlay.
+    pub fn toggle_stats(&self) {
+        let _ = self.command(json!(["script-binding", "stats/display-stats-toggle"]));
     }
 
     pub fn seek_absolute(&self, secs: f64) {

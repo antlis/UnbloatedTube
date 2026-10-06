@@ -42,6 +42,15 @@ pub struct VideoStatus {
     pub subscribers: Option<String>,
 }
 
+/// A playlist the account can add a video to, as YouTube's Save menu lists it.
+#[derive(Clone, Debug)]
+pub struct SaveOption {
+    pub id: String,
+    pub title: String,
+    /// The video is already in it.
+    pub contains: bool,
+}
+
 impl Account {
     /// Read the YouTube cookies: from a cookies file, or exported once from the browser via
     /// yt-dlp into a private runtime file that is deleted right after reading.
@@ -191,6 +200,22 @@ impl Account {
     pub fn dislike(&self, video_id: &str, on: bool) -> Result<(), String> {
         let ep = if on { "like/dislike" } else { "like/removelike" };
         self.post(ep, json!({ "target": { "videoId": video_id } })).map(drop)
+    }
+
+    /// The playlists the video can be saved to (only your own, Watch later left out) and which
+    /// already hold it: what YouTube's own Save menu shows. Read-only.
+    pub fn save_options(&self, video_id: &str) -> Result<Vec<SaveOption>, String> {
+        let resp = self.post("playlist/get_add_to_playlist", json!({ "videoIds": [video_id], "excludeWatchLater": true }))?;
+        let mut out = Vec::new();
+        walk(&resp, &mut |key, v| {
+            if key == "playlistAddToOptionRenderer" {
+                if let (Some(id), Some(title)) = (v["playlistId"].as_str(), renderer_text(&v["title"])) {
+                    // "ALL" when the (one) video is in it.
+                    out.push(SaveOption { id: id.into(), title, contains: v["containsSelectedVideos"].as_str() == Some("ALL") });
+                }
+            }
+        });
+        Ok(out)
     }
 
     pub fn save_to_playlist(&self, playlist_id: &str, video_id: &str) -> Result<(), String> {

@@ -277,6 +277,12 @@ mp.add_forced_key_binding("MBTN_LEFT", "unbloated-click", function()
     if visible then show() end
 end)
 
+-- Right click: the app opens its video menu where the pointer is (x y in this window's pixels).
+mp.add_forced_key_binding("MBTN_RIGHT", "unbloated-menu", function()
+  local x, y = mp.get_mouse_pos()
+  ask_app(string.format("menu %d %d", x, y))
+end)
+
 mp.add_forced_key_binding("MBTN_LEFT_DBL", "unbloated-dblclick", function()
     local x, y = mp.get_mouse_pos()
     if not on_bar(x, y) then mp.commandv("cycle", "fullscreen") end
