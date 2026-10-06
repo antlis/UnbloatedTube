@@ -588,6 +588,29 @@ pub fn group_videos(cfg: &Config, url: &str, on: &mut dyn FnMut(Video)) -> Resul
 }
 
 /// All of a playlist (up to YouTube's 5000): saved videos go to its end.
+/// Put a video in the account's YouTube history, as watching it does (yt-dlp's `--mark-watched`
+/// sends the same playback ping the site does). Needs the login; no download happens.
+pub fn mark_watched(cfg: &Config, id: &str) -> Result<(), String> {
+    let out = Command::new("yt-dlp")
+        .env("PYCRYPTODOME_DISABLE_GMP", "1")
+        .args(["--no-update", "--no-warnings", "--skip-download", "--no-playlist", "--mark-watched"])
+        .args(cfg.cookie_args())
+        .arg(format!("https://www.youtube.com/watch?v={id}"))
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("can't run yt-dlp: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let err = String::from_utf8_lossy(&out.stderr);
+    Err(err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("yt-dlp failed").to_string())
+}
+
+/// The first `n` videos of a playlist (to cast it without opening it).
+pub fn playlist_head(cfg: &Config, url: &str, n: usize, on: &mut dyn FnMut(Video)) -> Result<(), String> {
+    videos(cfg, url, n, on)
+}
+
 pub fn playlist_videos(cfg: &Config, url: &str, on: &mut dyn FnMut(Video)) -> Result<(), String> {
     videos(cfg, url, 5000, on)
 }

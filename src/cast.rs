@@ -132,6 +132,9 @@ pub struct Remote {
 #[derive(Clone, Debug, Default)]
 pub struct Status {
     pub playing: bool,
+    pub title: String,
+    /// Position and size of the receiver's queue, when it is playing one.
+    pub queue: Option<(usize, usize)>,
     pub position: f64,
     pub duration: f64,
     pub paused: bool,
@@ -170,6 +173,11 @@ impl Remote {
         self.call("POST", "/play", Some(serde_json::json!({ "url": url, "start": start }))).map(drop)
     }
 
+    /// Send a list: the receiver plays `urls` one after another from `index` (at most 200).
+    pub fn play_list(&self, urls: &[String], index: usize, start: u64) -> Result<(), String> {
+        self.call("POST", "/play", Some(serde_json::json!({ "urls": urls, "index": index, "start": start }))).map(drop)
+    }
+
     pub fn ctl(&self, body: serde_json::Value) -> Result<(), String> {
         self.call("POST", "/ctl", Some(body)).map(drop)
     }
@@ -183,6 +191,8 @@ impl Remote {
         let v = self.call("GET", "/status", None)?;
         Ok(Status {
             playing: v["playing"].as_bool().unwrap_or(false),
+            title: v["title"].as_str().unwrap_or_default().to_string(),
+            queue: v["queue"]["position"].as_u64().zip(v["queue"]["count"].as_u64()).map(|(p, n)| (p as usize, n as usize)),
             position: v["position"].as_f64().unwrap_or(0.),
             duration: v["duration"].as_f64().unwrap_or(0.),
             paused: v["paused"].as_bool().unwrap_or(false),

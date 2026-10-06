@@ -99,6 +99,8 @@ list, your playlists, your history, search and a player.
   where you stopped.
 - **Up next** queue (add with the `+` on any row); otherwise Next/autoplay continues through the
   list you picked the video from.
+  Playing a whole playlist (the **Play** icon in its header, or right-click, **Play**) empties
+  Up next first, so Next follows the playlist.
 - **Picture-in-picture**: move playback into a small always-on-top mpv window and keep
   browsing.
 - **Volume**: mute button and a volume bar next to the speed button, or `↑`/`↓` (`+`/`-` in Vim
@@ -352,8 +354,27 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   waits at most 2 seconds for the receiver. A crash or kill can't ask, so the receiver keeps
   playing. Playing another video here leaves the cast view too and does not touch the receiver. A `command` target has none of this: it is fire and forget.
 - The page link, not a stream link, is sent on purpose: the receiver's own yt-dlp resolves it at
-  full quality, but it needs its own login for videos that need one. One video per cast: playlists
-  and the Up next queue aren't sent yet.
+  full quality, but it needs its own login for videos that need one. 
+- **Casting a list.** With a `url` target (tg-mpv-bot 1.14 or newer) you can send more than one
+  video, and the receiver plays them one after another by itself, so the app can close:
+  - **right-click a playlist** in the Playlists list, then **Cast**: it sends the whole playlist
+    without opening it (the same menu has **Play**, which plays the playlist here as the queue);
+  - the **Cast icon in an open playlist's header** (next to "Add all to Up next" and a **Play**
+    icon that plays the playlist here as the queue) sends the whole playlist from its first video;
+  - **Cast all** at the top of the **Up next** tab sends the queue;
+  - **right-click any video, then Cast from here**, sends that video and the ones after it in
+    the list it is in (Recommended, History, a channel, search, ...).
+
+  At most 200 videos go out at once. The cast view then shows "3 of 12" and the receiver's current
+  title, and the main video area (picture, title, channel, details) follows the receiver to the video
+  playing there. **Previous** / **Next** (also **N** and **P**, and the player's own buttons) move
+  through the receiver's queue. A `command` target casts only the first video of a list. T and
+  the Cast button still send just the playing video.
+
+  **History:** when you are logged in, each video that starts on a `url` receiver is put in your
+  YouTube history (the app asks YouTube to mark it watched, through yt-dlp and your browser login,
+  so it is the same as watching it here); a `command` target marks its one video when you send it.
+  It shows in the History tab after a refresh. The TV box itself doesn't need a YouTube login.
 
 ## Architecture
 
@@ -494,18 +515,17 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   - a Flatpak; `mpv` is easy to include, but the X11 embedding, `yt-dlp` updates and reading
     the browser's cookies from inside the sandbox need care
 - **Casting: what's left.** The button, the config targets and tg-mpv-bot's remote play API
-  exist (see [Cast targets](#cast-targets)); one video per cast. Still open:
-  - *Playlists and Up next*: send a playlist link, or the queue, so the receiver plays them in
-    order. The bot needs an endpoint that lists a playlist with yt-dlp and queues it, and a rule
-    for replace or append.
+  exist (see [Cast targets](#cast-targets)), also for lists. Still open:
+  - *Longer lists*: a list is cut at 200 videos; the receiver could ask for more as it plays.
   - *Remote control beyond tg-mpv-bot*: only receivers with its API are controlled, and volume,
     subtitles and next/previous aren't wired to the app's controls yet.
   - *A target picker* instead of one button per target, once there are many.
   - *Other receivers with a built-in client*: Chromecast (Default Media Receiver, or the YouTube
     receiver through the Lounge protocol), DLNA/UPnP and AirPlay. `catt` already covers
     Chromecast through a command target.
-  - Whether a cast counts as watched in History is undecided: the receiver's mpv marks it watched
-    on YouTube itself (the bot passes its own yt-dlp options), the app records nothing.
+  - *Cast and resume positions*: a cast doesn't save a resume position in the app (the video starts
+    again from the beginning when played here); only the bot's own history (`/history` in Telegram)
+    has it as well.
 - **Bundling mpv, yt-dlp and deno** (ideas, none started). They are separate programs the app
   starts by name through `PATH`, so bundling means looking in a folder of the app's own first.
   - yt-dlp and deno publish standalone Linux binaries (deno is large, probably ~100 MB; unchecked).

@@ -348,6 +348,12 @@ struct Casting {
     seen: bool,
     started: Instant,
     polling: bool,
+    /// A list was sent, so the receiver has a queue: Next and Previous drive it.
+    listed: bool,
+    /// The videos sent (what the receiver's queue position indexes), and which of them were
+    /// already put in the YouTube history.
+    items: Vec<Video>,
+    marked: std::collections::HashSet<usize>,
 }
 
 struct Unbloated {
@@ -454,6 +460,10 @@ struct Unbloated {
     /// when the pointer was last on it: like the subscription menu, it closes by itself after the
     /// pointer has been away for 2 seconds.
     video_menu: Option<(Video, gpui::Point<Pixels>, bool, Instant)>,
+    /// Right-click menu of a playlist in the list of playlists (Cast); closes like the others.
+    playlist_menu: Option<(Group, gpui::Point<Pixels>, Instant)>,
+    /// The list the right-clicked video is in, for "Cast from here"; None on the playing video.
+    menu_queue: Option<Arc<[Video]>>,
     /// The playlists that menu offers for the video id, with whether it is in each; None while loading.
     menu_lists: Option<(String, Option<Vec<account::SaveOption>>)>,
     /// That menu was opened by right-clicking the playing video, so it also has the player rows.
@@ -680,6 +690,8 @@ impl Unbloated {
             right_collapsed: false,
             channel_menu: None,
             video_menu: None,
+            playlist_menu: None,
+            menu_queue: None,
             player_menu: false,
             menu_lists: None,
             menu_hovered: false,
@@ -1233,6 +1245,10 @@ impl Unbloated {
         if !self.menu_hovered && self.video_menu.as_ref().is_some_and(|m| m.3.elapsed() > Duration::from_secs(2)) {
             self.close_video_menu(cx);
         }
+        if !self.menu_hovered && self.playlist_menu.as_ref().is_some_and(|m| m.2.elapsed() > Duration::from_secs(2)) {
+            self.playlist_menu = None;
+            cx.notify();
+        }
         // Re-render once when a finished download's line should disappear.
         if self.downloads.values().any(|d| d.done_at.is_some_and(|t| (6.0..6.3).contains(&t.elapsed().as_secs_f32()))) {
             cx.notify();
@@ -1619,8 +1635,9 @@ impl Unbloated {
 
     /// Open the right-click menu of a video at `pos`. Playlists (for the list at the bottom) are
     /// fetched when you're logged in and they aren't loaded yet.
-    fn open_video_menu(&mut self, video: Video, pos: gpui::Point<Pixels>, window: &Window, cx: &mut Context<Self>) {
+    fn open_video_menu(&mut self, video: Video, queue: Option<Arc<[Video]>>, pos: gpui::Point<Pixels>, window: &Window, cx: &mut Context<Self>) {
         self.channel_menu = None;
+        self.menu_queue = queue;
         // The left column's menu stays inside it; anywhere else it may cover the video.
         let left_only = !self.left_collapsed
             && !self.right_collapsed
@@ -1655,7 +1672,7 @@ impl Unbloated {
         let s = window.scale_factor() as f64;
         let (ox, oy) = embed.borrow().origin();
         let pos = gpui::point(px(((ox as f64 + at.0) / s) as f32), px(((oy as f64 + at.1) / s) as f32));
-        self.open_video_menu(video, pos, window, cx);
+        self.open_video_menu(video, None, pos, window, cx);
         if let Some(m) = &mut self.video_menu {
             m.2 = true;
         }
@@ -1669,6 +1686,182 @@ impl Unbloated {
         self.player_menu = false;
         self.sync_embed();
         cx.notify();
+    }
+
+    /// Play `videos` here as the queue, from the first. Up next is emptied first: it would otherwise
+    /// take over at the first Next, and the point of playing a playlist is to hear it through.
+    fn play_all(&mut self, videos: Vec<Video>, cx: &mut Context<Self>) {
+        let Some(first) = videos.first().cloned() else { return };
+        if !self.up_next.is_empty() {
+            self.up_next.clear();
+            store::save_data("up_next", &self.up_next);
+        }
+        self.play(first, Some(videos.into()), cx);
+    }
+
+    /// Play a playlist here without opening it: all its videos are listed, then the first plays
+    /// with the rest as the queue (Next and autoplay go through them).
+    fn play_playlist(&mut self, group: Group, cx: &mut Context<Self>) {
+        self.playlist_menu = None;
+        if self.playlists.open.as_ref().is_some_and(|g| g.id == group.id) {
+            if let Load::Ready(v) = &self.playlists.videos {
+                let videos = self.visible(v);
+                if !videos.is_empty() {
+                    self.play_all(videos, cx);
+                    return;
+                }
+            }
+        }
+        self.notice = Some(format!("Loading {}…", group.title));
+        let (cfg, url) = (self.cfg.clone(), group.url.clone());
+        let task = cx.background_executor().spawn(async move {
+            let mut out = Vec::new();
+            yt::playlist_videos(&cfg, &url, &mut |v| out.push(v)).map(|_| out)
+        });
+        cx.spawn(async move |this, cx| {
+            let res = task.await;
+            this.update(cx, |this, cx| match res {
+                Ok(videos) => {
+                    let videos = this.visible(&videos);
+                    if videos.is_empty() {
+                        this.notice = Some(format!("{} has no videos", group.title));
+                        cx.notify();
+                    } else {
+                        this.play_all(videos, cx);
+                    }
+                }
+                Err(e) => {
+                    this.notice = Some(format!("Couldn't list {}: {e}", group.title));
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Cast a playlist without opening it: its first 200 videos are listed, then sent.
+    fn cast_playlist(&mut self, group: Group, target: String, cx: &mut Context<Self>) {
+        self.playlist_menu = None;
+        // The one that is open is already loaded.
+        if self.playlists.open.as_ref().is_some_and(|g| g.id == group.id) {
+            if let Load::Ready(v) = &self.playlists.videos {
+                let videos = self.visible(v);
+                self.cast_list(Some(target), videos, cx);
+                return;
+            }
+        }
+        self.notice = Some(format!("Loading {}…", group.title));
+        let (cfg, url) = (self.cfg.clone(), group.url.clone());
+        let task = cx.background_executor().spawn(async move {
+            let mut out = Vec::new();
+            yt::playlist_head(&cfg, &url, 200, &mut |v| out.push(v)).map(|_| out)
+        });
+        cx.spawn(async move |this, cx| {
+            let res = task.await;
+            this.update(cx, |this, cx| match res {
+                Ok(videos) if !videos.is_empty() => {
+                    let videos = this.visible(&videos);
+                    this.cast_list(Some(target), videos, cx);
+                }
+                Ok(_) => {
+                    this.notice = Some(format!("{} has no videos", group.title));
+                    cx.notify();
+                }
+                Err(e) => {
+                    this.notice = Some(format!("Couldn't list {}: {e}", group.title));
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// The right-click menu of a playlist: Play here, and Cast (one row per target). A backdrop closes it.
+    fn render_playlist_menu(&self, window: &Window, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        let (group, pos, _) = self.playlist_menu.clone()?;
+        let targets = self.cast_targets();
+        let many = targets.len() > 1;
+        const MENU_W: f32 = 220.;
+        let win = window.viewport_size();
+        let win_w = f32::from(win.width);
+        let column_right = if self.left_collapsed || self.right_collapsed { win_w } else { self.settings.split * win_w };
+        let left = f32::from(pos.x).min(column_right - MENU_W - 8.).max(8.);
+        let top = f32::from(pos.y).min(f32::from(win.height) - 48. - 28. - 36. * (targets.len() + 1) as f32).max(8.);
+        let play_group = group.clone();
+        let rows: Vec<_> = targets
+            .into_keys()
+            .enumerate()
+            .map(|(i, name)| {
+                let (g, target) = (group.clone(), name.clone());
+                div()
+                    .id(("playlist-menu-cast", i))
+                    .px_3()
+                    .py_2()
+                    .text_sm()
+                    .cursor_pointer()
+                    .text_color(themed(TEXT))
+                    .hover(|d| d.bg(themed(BORDER)))
+                    .child(if many { format!("Cast to {name}") } else { "Cast".to_string() })
+                    .on_click(cx.listener(move |this, _, _, cx| this.cast_playlist(g.clone(), target.clone(), cx)))
+            })
+            .collect();
+        Some(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .child(
+                    div()
+                        .id("playlist-menu-backdrop")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .occlude()
+                        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| { this.playlist_menu = None; cx.notify(); }))
+                        .on_mouse_down(MouseButton::Right, cx.listener(|this, _, _, cx| { this.playlist_menu = None; cx.notify(); })),
+                )
+                .child(
+                    div()
+                        .id("playlist-menu")
+                        .absolute()
+                        .left(px(left))
+                        .top(px(top))
+                        .occlude()
+                        .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                            this.menu_hovered = *hovered;
+                            if let (false, Some((_, _, at))) = (*hovered, &mut this.playlist_menu) {
+                                *at = Instant::now();
+                            }
+                        }))
+                        .w(px(MENU_W))
+                        .py_1()
+                        .rounded_md()
+                        .bg(themed(HOVER))
+                        .border_1()
+                        .border_color(themed(BORDER))
+                        .shadow_lg()
+                        .child(div().px_3().py_1().text_xs().text_color(themed(MUTED)).truncate().child(group.title.clone()))
+                        .child(
+                            div()
+                                .id("playlist-menu-play")
+                                .px_3()
+                                .py_2()
+                                .text_sm()
+                                .cursor_pointer()
+                                .text_color(themed(TEXT))
+                                .hover(|d| d.bg(themed(BORDER)))
+                                .child("Play")
+                                .on_click(cx.listener(move |this, _, _, cx| this.play_playlist(play_group.clone(), cx))),
+                        )
+                        .children(rows),
+                ),
+        )
     }
 
     /// The right-click menu of a video: copy link, Up next, Watch later, then the playlists in a
@@ -1717,7 +1910,7 @@ impl Unbloated {
         const MENU_W: f32 = 240.;
         const ROW_H: f32 = 36.;
         const EDGE: f32 = 48.;
-        let fixed_h = 28. + ROW_H * 2. + if auth { ROW_H + 9. + 24. } else { 0. } + if self.player_menu { ROW_H * 6. + 9. } else { 0. };
+        let fixed_h = 28. + ROW_H * 2. + if self.menu_queue.is_some() && self.cast_available() { ROW_H * self.cast_targets().len() as f32 } else { 0. } + if auth { ROW_H + 9. + 24. } else { 0. } + if self.player_menu { ROW_H * 6. + 9. } else { 0. };
         let win = window.viewport_size();
         let (win_w, mut win_h) = (f32::from(win.width), f32::from(win.height));
         if let Some(display) = window.display(cx) {
@@ -1735,6 +1928,40 @@ impl Unbloated {
         let (v_copy, v_queue, v_later) = (video.clone(), video.clone(), video.clone());
         let player_menu = self.player_menu;
         let speed = self.settings.speed;
+        // One row per cast target: this video and the ones after it in its list.
+        let rest: Option<Vec<Video>> = self
+            .menu_queue
+            .as_ref()
+            .filter(|_| self.cast_available())
+            .map(|q| q.iter().skip_while(|v| v.id != video.id).cloned().collect::<Vec<_>>())
+            .filter(|r| !r.is_empty());
+        let cast_rows: Vec<_> = rest
+            .map(|rest| {
+                let targets = self.cast_targets();
+                let many = targets.len() > 1;
+                let label = if rest.len() > 1 { "from here" } else { "this video" };
+                targets
+                    .into_keys()
+                    .enumerate()
+                    .map(|(i, name)| {
+                        let (rest, target) = (rest.clone(), name.clone());
+                        div()
+                            .id(("video-menu-cast", i))
+                            .px_3()
+                            .py_2()
+                            .text_sm()
+                            .cursor_pointer()
+                            .text_color(themed(TEXT))
+                            .hover(|d| d.bg(themed(BORDER)))
+                            .child(if many { format!("Cast {label} to {name}") } else { format!("Cast {label}") })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.close_video_menu(cx);
+                                this.cast_list(Some(target.clone()), rest.clone(), cx);
+                            }))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         Some(
             div()
                 .absolute()
@@ -1802,6 +2029,7 @@ impl Unbloated {
                             })))
                             .child(div().my_1().h(px(1.)).bg(themed(BORDER)))
                         })
+                        .children(cast_rows)
                         .child(row("video-menu-copy").child("Copy link").on_click(cx.listener(move |this, _, _, cx| {
                             this.close_video_menu(cx);
                             this.copy_video_link(&v_copy, cx);
@@ -2861,11 +3089,18 @@ impl Unbloated {
         [("device".to_string(), store::CastTarget { command, ..Default::default() })].into()
     }
 
-    /// Send the playing video to a cast target (the first one for the T key). A target with a `url`
-    /// is asked over the remote API and then controlled from here; otherwise its command from
-    /// config.toml runs. Either way happens on a background thread, then the local video pauses.
+    /// Send the playing video to a cast target (the first one for the T key).
     fn cast_to(&mut self, name: Option<String>, cx: &mut Context<Self>) {
         let Some(video) = self.current.clone() else { return };
+        self.cast_list(name, vec![video], cx);
+    }
+
+    /// Send `videos` to a cast target, the first now and the rest after it. A target with a `url`
+    /// is asked over the remote API (a list becomes the receiver's queue, 200 videos at most) and
+    /// then controlled from here; a command target gets the first video only. Either way happens
+    /// on a background thread, then the local video pauses.
+    fn cast_list(&mut self, name: Option<String>, videos: Vec<Video>, cx: &mut Context<Self>) {
+        let Some(video) = videos.first().cloned() else { return };
         let targets = self.cast_targets();
         let Some((name, target)) = name
             .and_then(|n| targets.get(&n).map(|t| (n, t.clone())))
@@ -2875,16 +3110,21 @@ impl Unbloated {
             cx.notify();
             return;
         };
-        // Where it is now (the saved position when mpv isn't running).
-        let start = self.state.as_ref().map_or_else(|| self.history.position(&video.id), |s| s.position).max(0.) as u64;
+        // Where the first one is now (the saved position unless it is the one playing here).
+        let live = self.current.as_ref().is_some_and(|c| c.id == video.id).then(|| self.state.as_ref().map(|s| s.position)).flatten();
+        let start = live.unwrap_or_else(|| self.history.position(&video.id)).max(0.) as u64;
         let title = video.title.clone();
         let remote = target.url.as_deref().map(|u| cast::Remote::new(u, target.token.as_deref().unwrap_or_default()));
         let command = cast::expand(&target.command, &cast::Playing { url: &video.url(), id: &video.id, title: &title, start });
+        let items: Vec<Video> = videos.iter().take(200).cloned().collect();
+        let urls: Vec<String> = items.iter().map(|v| v.url()).collect();
+        let listed = remote.is_some() && urls.len() > 1;
         self.notice = Some(format!("Casting to {name}…"));
-        let (task_remote, link) = (remote.clone(), video.url());
+        let task_remote = remote.clone();
         let task = cx.background_executor().spawn(async move {
             match task_remote {
-                Some(r) => r.play(&link, start),
+                Some(r) if urls.len() > 1 => r.play_list(&urls, 0, start),
+                Some(r) => r.play(&urls[0], start),
                 None => cast::run(&command, Duration::from_secs(60)),
             }
         });
@@ -2903,7 +3143,14 @@ impl Unbloated {
                             seen: false,
                             started: Instant::now(),
                             polling: false,
+                            listed,
+                            items: items.clone(),
+                            marked: Default::default(),
                         });
+                        // A command target can't be asked what plays: its one video counts now.
+                        if this.casting.is_none() {
+                            this.mark_watched(&items[0].id, cx);
+                        }
                         this.sync_embed();
                     }
                     Err(e) => this.notice = Some(format!("Cast to {name} failed: {e}")),
@@ -2914,6 +3161,30 @@ impl Unbloated {
         })
         .detach();
         cx.notify();
+    }
+
+    /// Record `id` in the account's YouTube history (a background yt-dlp call); only when logged in.
+    fn mark_watched(&mut self, id: &str, cx: &mut Context<Self>) {
+        if !self.cfg.has_auth() {
+            return;
+        }
+        let (cfg, id) = (self.cfg.clone(), id.to_string());
+        cx.background_executor()
+            .spawn(async move {
+                if let Err(e) = yt::mark_watched(&cfg, &id) {
+                    eprintln!("unbloated-youtube: couldn't add {id} to the history: {e}");
+                }
+            })
+            .detach();
+    }
+
+    /// Next or previous: the receiver's queue while casting a list, else the list here.
+    fn next_prev(&mut self, forward: bool, cx: &mut Context<Self>) {
+        if self.casting.as_ref().is_some_and(|c| c.listed) {
+            self.cast_ctl(serde_json::json!({ "action": if forward { "next" } else { "prev" } }), cx);
+        } else if let Some(v) = if forward { self.next_video() } else { self.neighbor(-1) } {
+            self.play(v, None, cx);
+        }
     }
 
     /// Ask the cast receiver how it is doing, at most one question at a time. It ends the cast
@@ -2928,11 +3199,30 @@ impl Unbloated {
             this.update(cx, |this, cx| {
                 let Some(c) = this.casting.as_mut() else { return };
                 c.polling = false;
-                let alive = matches!(&res, Ok(s) if s.playing);
+                let alive = matches!(&res, Ok(s) if s.playing || s.queue.is_some());
                 if let Ok(s) = res {
-                    c.seen |= s.playing;
+                    c.seen |= s.playing || s.queue.is_some();
                     c.status = Some(s);
                 }
+                // The video that just started counts as watched: it goes in the YouTube history.
+                let now = c.status.as_ref().filter(|s| s.playing).map(|s| s.queue.map_or(0, |(i, _)| i));
+                let fresh = now.filter(|i| *i < c.items.len() && c.marked.insert(*i)).map(|i| c.items[i].id.clone());
+                if let Some(id) = fresh {
+                    this.mark_watched(&id, cx);
+                }
+                // The main video area follows the receiver: title, picture and details of the
+                // video that plays there. (Like playing it here, it leaves Up next.)
+                let shown = now.and_then(|i| this.casting.as_ref().and_then(|c| c.items.get(i).cloned()));
+                if let Some(v) = shown.filter(|v| this.current.as_ref().is_none_or(|c| c.id != v.id)) {
+                    if let Some(i) = this.up_next.iter().position(|q| q.id == v.id) {
+                        this.up_next.remove(i);
+                        store::save_data("up_next", &this.up_next);
+                    }
+                    this.history.touch(&v);
+                    this.current = Some(v);
+                    cx.notify();
+                }
+                let Some(c) = this.casting.as_mut() else { return };
                 if (c.seen && !alive) || (!c.seen && c.started.elapsed() > Duration::from_secs(90)) {
                     this.end_cast("Cast ended", cx);
                 } else {
@@ -2947,6 +3237,14 @@ impl Unbloated {
     /// Leave the cast view and show the local (still paused) video again.
     fn end_cast(&mut self, notice: &str, cx: &mut Context<Self>) {
         self.casting = None;
+        // The main area followed the receiver; an mpv holding another video is dropped, so
+        // pressing play starts the one shown (a paused leftover would show the wrong picture).
+        if let (Some(s), Some(v)) = (&self.state, &self.current) {
+            if s.path != v.url() {
+                self.player.stop();
+                self.state = None;
+            }
+        }
         self.notice = Some(notice.to_string());
         self.sync_embed();
         cx.notify();
@@ -3213,6 +3511,12 @@ impl Unbloated {
             cx.stop_propagation();
             return;
         }
+        if self.playlist_menu.is_some() && k.key == "escape" {
+            self.playlist_menu = None;
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         if self.video_menu.is_some() && k.key == "escape" {
             self.close_video_menu(cx);
             cx.stop_propagation();
@@ -3304,16 +3608,8 @@ impl Unbloated {
             "c" => self.copy_link(cx),
             "o" => self.open_in_browser(cx),
             "w" => self.watch_later(cx),
-            "n" => {
-                if let Some(v) = self.next_video() {
-                    self.play(v, None, cx);
-                }
-            }
-            "p" => {
-                if let Some(v) = self.neighbor(-1) {
-                    self.play(v, None, cx);
-                }
-            }
+            "n" => self.next_prev(true, cx),
+            "p" => self.next_prev(false, cx),
             "/" => self.open_search(window, cx),
             "escape" if self.saving => self.close_save(cx),
             "escape" if self.searching => self.close_search(window, cx),
@@ -3421,16 +3717,8 @@ impl Unbloated {
             "t" => self.cast_to(None, cx),
             "+" | "=" => self.change_volume(5., cx),
             "-" => self.change_volume(-5., cx),
-            "n" => {
-                if let Some(v) = self.next_video() {
-                    self.play(v, None, cx);
-                }
-            }
-            "p" => {
-                if let Some(v) = self.neighbor(-1) {
-                    self.play(v, None, cx);
-                }
-            }
+            "n" => self.next_prev(true, cx),
+            "p" => self.next_prev(false, cx),
             "/" => self.open_search(window, cx),
             _ => return false,
         }
@@ -3503,7 +3791,7 @@ impl Unbloated {
 
     /// Tab / Shift+Tab: move the focus ring to the next / previous clickable thing.
     fn kb_step(&mut self, back: bool, window: &mut Window) {
-        if self.show_keys || self.saving || self.channel_menu.is_some() || self.video_menu.is_some() || self.hints.is_some() {
+        if self.show_keys || self.saving || self.channel_menu.is_some() || self.video_menu.is_some() || self.playlist_menu.is_some() || self.hints.is_some() {
             return;
         }
         // Leave a text field, so typing doesn't go into it any more.
@@ -3829,7 +4117,7 @@ impl Unbloated {
             cx.notify();
         }
         let state = state.filter(|s| !s.idle && !self.loading);
-        if let (Some(s), Some(v)) = (&state, &self.current) {
+        if let (Some(s), Some(v), true) = (&state, &self.current, self.casting.is_none()) {
             // Finished videos restart from the beginning next time, and show as watched.
             let finished = s.duration > 0. && s.position > s.duration - 15.;
             let pos = if finished { 0. } else { s.position };
@@ -4024,11 +4312,14 @@ impl Unbloated {
             .join("  ·  ");
         let thumb = self.thumb_el(&video.id, Some(video.thumb_url()), 96., 54., px(4.), cx);
         let menu_video = video.clone();
+        let menu_queue = queue.clone();
         div()
             .id(id)
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(move |this, ev: &gpui::MouseDownEvent, window, cx| this.open_video_menu(menu_video.clone(), ev.position, window, cx)),
+                cx.listener(move |this, ev: &gpui::MouseDownEvent, window, cx| {
+                    this.open_video_menu(menu_video.clone(), Some(menu_queue.clone()), ev.position, window, cx)
+                }),
             )
             .w_full()
             .overflow_hidden()
@@ -5003,6 +5294,20 @@ impl Unbloated {
                     this.enqueue_all(tab, cx);
                 })
             });
+            let play_button = (tab == Tab::Playlists).then(|| {
+                self.icon_chip("play-all", "play", false, "Play the whole playlist").on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    let videos = this.visible(&this.browser_videos(tab));
+                    this.play_all(videos, cx);
+                })
+            });
+            let cast_button = (tab == Tab::Playlists && self.cast_available()).then(|| {
+                self.icon_chip("cast-all", "cast", false, "Cast the whole playlist").on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    let videos = this.visible(&this.browser_videos(tab));
+                    this.cast_list(None, videos, cx);
+                })
+            });
             let group_editor = (is_channel && self.editing_groups).then(|| self.render_group_editor(&open.id, window, cx));
 
             let view = self.browser_ref(tab).view;
@@ -5040,6 +5345,8 @@ impl Unbloated {
                         .children(groups_button)
                         .children(sub_button)
                         .children(queue_button)
+                        .children(play_button)
+                        .children(cast_button)
                         .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
                             this.browser(tab).open = None;
                             cx.notify();
@@ -5107,8 +5414,22 @@ impl Unbloated {
                             this.groups.iter().filter(|g| g.channels.contains(&group.id)).map(|g| g.name.clone()).collect();
                         // Right-click a subscribed channel (not "New uploads") for its menu.
                         let menu_group = (tab == Tab::Subscriptions && group.id.starts_with("UC") && this.cfg.has_auth()).then(|| group.clone());
+                        // Right-click a playlist: cast it without opening it.
+                        let menu_playlist = (tab == Tab::Playlists).then(|| group.clone());
                         div()
                             .id(i)
+                            .when_some(menu_playlist, |d, g| {
+                                d.on_mouse_down(
+                                    MouseButton::Right,
+                                    cx.listener(move |this, ev: &gpui::MouseDownEvent, _, cx| {
+                                        this.channel_menu = None;
+                                        this.video_menu = None;
+                                        this.playlist_menu = Some((g.clone(), ev.position, Instant::now()));
+                                        this.menu_hovered = false;
+                                        cx.notify();
+                                    }),
+                                )
+                            })
                             .when_some(menu_group, |d, g| {
                                 d.on_mouse_down(
                                     MouseButton::Right,
@@ -5224,6 +5545,9 @@ impl Unbloated {
                 Some(s) if s.playing => format!("{} / {}", fmt_duration(s.position), fmt_duration(s.duration)),
                 _ => "Starting…".to_string(),
             };
+            let listed = self.casting.as_ref().is_some_and(|c| c.listed);
+            let queue_line = status.as_ref().and_then(|s| s.queue).map(|(i, n)| format!("{} of {n}", i + 1));
+            let now_title = status.as_ref().map(|s| s.title.clone()).filter(|t| !t.is_empty());
             let paused = status.as_ref().is_some_and(|s| s.paused);
             screen = screen.child(
                 div()
@@ -5238,11 +5562,19 @@ impl Unbloated {
                     .gap_3()
                     .bg(gpui::black().opacity(0.85))
                     .child(div().text_sm().text_color(themed(TEXT)).child(format!("Casting to {name}")))
+                    .children(queue_line.map(|q| div().text_xs().text_color(themed(MUTED)).child(q)))
+                    .children(now_title.map(|t| div().max_w(px(420.)).px_4().text_sm().text_color(themed(TEXT)).truncate().child(t)))
                     .child(div().text_xs().text_color(themed(MUTED)).child(line))
                     .child(
                         div()
                             .flex()
                             .gap_2()
+                            .when(listed, |d| {
+                                d.child(
+                                    self.chip("cast-prev", "Previous", true)
+                                        .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.next_prev(false, cx)),
+                                )
+                            })
                             .child(
                                 self.chip("cast-back", "−10s", status.is_some())
                                     .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.seek_by(-10., cx)),
@@ -5255,6 +5587,12 @@ impl Unbloated {
                                 self.chip("cast-fwd", "+10s", status.is_some())
                                     .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.seek_by(10., cx)),
                             )
+                            .when(listed, |d| {
+                                d.child(
+                                    self.chip("cast-next", "Next", true)
+                                        .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.next_prev(true, cx)),
+                                )
+                            })
                             .child(
                                 self.chip("cast-stop", "Stop", true)
                                     .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.stop_cast(cx)),
@@ -5320,7 +5658,7 @@ impl Unbloated {
             (None, None) => (resume, video.duration.unwrap_or(0.), true, false),
         };
         let filled = if dur > 0. { ((pos / dur) * SEEK_SEGMENTS as f64) as usize } else { 0 };
-        let chapters = self.state.as_ref().map(|s| s.chapters.clone()).unwrap_or_default();
+        let chapters = self.state.as_ref().filter(|_| self.casting.is_none()).map(|s| s.chapters.clone()).unwrap_or_default();
 
         let (play_icon, play_tip) = match (active, paused) {
             (true, true) => ("play", "Play (Space)".to_string()),
@@ -5857,6 +6195,11 @@ impl Unbloated {
         step: isize,
         cx: &mut Context<Self>,
     ) -> Stateful<gpui::Div> {
+        // Casting a list: these drive the receiver's queue.
+        if self.casting.as_ref().is_some_and(|c| c.listed) {
+            return icon_button(id, icon, format!("{tip} (on the receiver)"), true)
+                .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.next_prev(step > 0, cx));
+        }
         let target = if step > 0 { self.next_video() } else { self.neighbor(step) };
         let tip = match &target {
             Some(v) => format!("{tip}: {}", v.title),
@@ -5961,7 +6304,7 @@ impl Unbloated {
     /// The playing video's chapters (empty when off in Settings or the video has none).
     fn chapter_list(&self) -> Arc<[(f64, String)]> {
         match &self.state {
-            Some(s) if self.settings.chapters => s.chapters.clone().into(),
+            Some(s) if self.settings.chapters && self.casting.is_none() => s.chapters.clone().into(),
             _ => Arc::from(Vec::new()),
         }
     }
@@ -6658,7 +7001,28 @@ impl Render for Unbloated {
                 Lower::WatchLater => self.render_watch_later(cx),
                 Lower::Recommended => self.render_recs(cx),
                 Lower::UpNext if self.up_next.is_empty() => self.status("Nothing queued. Hover a video and press + to add it."),
-                Lower::UpNext => self.video_list("up-next", &self.up_next.clone(), None, cx),
+                Lower::UpNext => {
+                let list = self.video_list("up-next", &self.up_next.clone(), None, cx);
+                if self.cast_available() && !self.up_next.is_empty() {
+                    let n = self.up_next.len();
+                    div()
+                        .flex()
+                        .flex_col()
+                        .size_full()
+                        .child(
+                            div().flex().flex_none().px_3().py_1().child(
+                                self.chip("up-next-cast", format!("Cast all {n}"), true).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                                    let videos = this.up_next.clone();
+                                    this.cast_list(None, videos, cx);
+                                }),
+                            ),
+                        )
+                        .child(div().flex().flex_col().flex_1().min_h_0().child(list))
+                        .into_any_element()
+                } else {
+                    list
+                }
+            }
             };
             right
                 .child(player.h(if self.lower_full { px(0.).into() } else { relative(self.settings.player) }).overflow_hidden().flex_none())
@@ -6774,6 +7138,7 @@ impl Render for Unbloated {
             .children(kb_ring)
             .children(self.render_channel_menu(window, cx))
             .children(self.render_video_menu(window, cx))
+            .children(self.render_playlist_menu(window, cx))
             .children(self.render_quit_prompt(cx))
             .children(self.render_toasts())
             .children(sheet)
