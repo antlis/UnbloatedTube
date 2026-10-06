@@ -4,7 +4,7 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
-## Unreleased
+## 0.15.0 - 2026-10-06
 
 ### Added
 - **Right-click menu on every video**: Copy link, Add to (or Remove from) Up next, Save to Watch
