@@ -67,6 +67,11 @@ impl Embed {
         let _ = self.conn.flush();
     }
 
+    /// Where the video area starts, in device pixels relative to the app's window.
+    pub fn origin(&self) -> (i32, i32) {
+        (self.rect.0, self.rect.1)
+    }
+
     pub fn set_visible(&mut self, visible: bool) {
         self.wanted = visible;
         self.apply();

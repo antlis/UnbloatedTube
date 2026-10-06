@@ -449,6 +449,15 @@ struct Unbloated {
     right_collapsed: bool,
     /// Right-click menu on a subscription: the channel, where it was opened and when (it closes by itself).
     channel_menu: Option<(Group, gpui::Point<Pixels>, Instant)>,
+    /// Right-click menu of a video in any list: the video, where it opened, and whether mpv's
+    /// window must hide because the menu can reach over it (clicks outside the left column), and
+    /// when the pointer was last on it: like the subscription menu, it closes by itself after the
+    /// pointer has been away for 2 seconds.
+    video_menu: Option<(Video, gpui::Point<Pixels>, bool, Instant)>,
+    /// The playlists that menu offers for the video id, with whether it is in each; None while loading.
+    menu_lists: Option<(String, Option<Vec<account::SaveOption>>)>,
+    /// That menu was opened by right-clicking the playing video, so it also has the player rows.
+    player_menu: bool,
     /// The pointer is over the menu (it closes 2 seconds after the pointer is away).
     menu_hovered: bool,
     /// The keyboard shortcuts card (opened with ?).
@@ -670,6 +679,9 @@ impl Unbloated {
             left_collapsed: false,
             right_collapsed: false,
             channel_menu: None,
+            video_menu: None,
+            player_menu: false,
+            menu_lists: None,
             menu_hovered: false,
             pip: false,
             casting: None,
@@ -1160,6 +1172,7 @@ impl Unbloated {
             && !self.saving
             && !self.show_keys
             && !self.pip
+            && !self.video_menu.as_ref().is_some_and(|m| m.2)
             && self.casting.is_none()
             && !self.lower_full
             && !self.right_collapsed
@@ -1216,6 +1229,9 @@ impl Unbloated {
             self.channel_menu = None;
             self.confirm_unsub = None;
             cx.notify();
+        }
+        if !self.menu_hovered && self.video_menu.as_ref().is_some_and(|m| m.3.elapsed() > Duration::from_secs(2)) {
+            self.close_video_menu(cx);
         }
         // Re-render once when a finished download's line should disappear.
         if self.downloads.values().any(|d| d.done_at.is_some_and(|t| (6.0..6.3).contains(&t.elapsed().as_secs_f32()))) {
@@ -1601,6 +1617,223 @@ impl Unbloated {
         row.child(self.new_group_chip(window, cx))
     }
 
+    /// Open the right-click menu of a video at `pos`. Playlists (for the list at the bottom) are
+    /// fetched when you're logged in and they aren't loaded yet.
+    fn open_video_menu(&mut self, video: Video, pos: gpui::Point<Pixels>, window: &Window, cx: &mut Context<Self>) {
+        self.channel_menu = None;
+        // The left column's menu stays inside it; anywhere else it may cover the video.
+        let left_only = !self.left_collapsed
+            && !self.right_collapsed
+            && f32::from(pos.x) < self.settings.split * f32::from(window.viewport_size().width);
+        self.video_menu = Some((video, pos, !left_only, Instant::now()));
+        self.player_menu = false;
+        self.menu_hovered = false;
+        // Your editable playlists, and which hold this video, as YouTube's Save menu has them.
+        self.menu_lists = None;
+        if self.cfg.has_auth() {
+            let id = self.video_menu.as_ref().map(|m| m.0.id.clone()).unwrap_or_default();
+            self.menu_lists = Some((id.clone(), None));
+            let vid = id.clone();
+            self.with_account(cx, move |a| a.save_options(&vid), move |this, res, cx| {
+                if let Some((cur, slot)) = &mut this.menu_lists {
+                    if *cur == id {
+                        *slot = Some(res.unwrap_or_default());
+                        cx.notify();
+                    }
+                }
+            });
+        }
+        self.sync_embed();
+        cx.notify();
+    }
+
+    /// Right click on the playing video (mpv's window, so the position comes from mpv, in its
+    /// pixels): the same menu with the player rows. mpv's window hides while it is open, which
+    /// shows the thumbnail behind it.
+    fn open_player_menu(&mut self, at: (f64, f64), window: &Window, cx: &mut Context<Self>) {
+        let (Some(video), Some(embed)) = (self.current.clone(), self.embed.clone()) else { return };
+        let s = window.scale_factor() as f64;
+        let (ox, oy) = embed.borrow().origin();
+        let pos = gpui::point(px(((ox as f64 + at.0) / s) as f32), px(((oy as f64 + at.1) / s) as f32));
+        self.open_video_menu(video, pos, window, cx);
+        if let Some(m) = &mut self.video_menu {
+            m.2 = true;
+        }
+        self.player_menu = true;
+        self.sync_embed();
+        cx.notify();
+    }
+
+    fn close_video_menu(&mut self, cx: &mut Context<Self>) {
+        self.video_menu = None;
+        self.player_menu = false;
+        self.sync_embed();
+        cx.notify();
+    }
+
+    /// The right-click menu of a video: copy link, Up next, Watch later, then the playlists in a
+    /// scrolling list. A backdrop closes it.
+    fn render_video_menu(&self, window: &Window, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        let (video, pos, over_player, _) = self.video_menu.clone()?;
+        let auth = self.cfg.has_auth();
+        let queued = self.up_next.iter().any(|v| v.id == video.id);
+        let row = |id: &'static str| div().id(id).px_3().py_2().text_sm().cursor_pointer().text_color(themed(TEXT)).hover(|d| d.bg(themed(BORDER)));
+        // Ticked when the video is already in the playlist; clicking toggles, like the groups menu.
+        let lists = self.menu_lists.as_ref().filter(|(id, _)| *id == video.id).and_then(|(_, l)| l.clone());
+        let loading = lists.is_none();
+        let list_rows: Vec<_> = lists
+            .unwrap_or_default()
+            .into_iter()
+            .enumerate()
+            .map(|(i, o)| {
+                let (v, member) = (video.clone(), o.contains);
+                let pl = Group { id: o.id.clone(), title: o.title.clone(), url: String::new(), thumb: None, subscribers: None };
+                div()
+                    .id(("video-menu-playlist", i))
+                    .px_3()
+                    .py_2()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_sm()
+                    .cursor_pointer()
+                    .text_color(themed(TEXT))
+                    .hover(|d| d.bg(themed(BORDER)))
+                    .child(div().w(px(14.)).flex_none().when(member, |d| d.child(svg().path(icons::path("check")).size(px(14.)).text_color(themed(ACCENT)))))
+                    .child(div().truncate().child(o.title.clone()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.close_video_menu(cx);
+                        if member {
+                            this.remove_from_playlist(pl.clone(), v.clone(), cx);
+                        } else {
+                            this.save_video_to(v.clone(), pl.clone(), cx);
+                        }
+                    }))
+            })
+            .collect();
+        let n_lists = list_rows.len();
+        // Fixed rows: title, Copy link, Up next, [Watch later, divider, "Save to playlist"]. The
+        // list shows at most 5½ rows (the cut-off one says it scrolls), less if the window is short.
+        const MENU_W: f32 = 240.;
+        const ROW_H: f32 = 36.;
+        const EDGE: f32 = 48.;
+        let fixed_h = 28. + ROW_H * 2. + if auth { ROW_H + 9. + 24. } else { 0. } + if self.player_menu { ROW_H * 6. + 9. } else { 0. };
+        let win = window.viewport_size();
+        let (win_w, mut win_h) = (f32::from(win.width), f32::from(win.height));
+        if let Some(display) = window.display(cx) {
+            let top_on_screen = f32::from(window.window_bounds().get_bounds().origin.y);
+            win_h = win_h.min(f32::from(display.bounds().size.height) - top_on_screen);
+        }
+        let list_max = (ROW_H * 5.5).min(win_h - fixed_h - EDGE).max(ROW_H);
+        let list_h = if auth { (n_lists as f32 * ROW_H).max(ROW_H).min(list_max) } else { 0. };
+        let column_right = if over_player { win_w } else { self.settings.split * win_w };
+        let left = f32::from(pos.x).min(column_right - MENU_W - 8.).max(8.);
+        // Too short a window for every row: the menu itself scrolls (the playlists already
+        // shrank to one row above).
+        let avail = (win_h - EDGE - 8.).max(ROW_H * 4.);
+        let top = f32::from(pos.y).min(win_h - (fixed_h + list_h).min(avail) - EDGE).max(8.);
+        let (v_copy, v_queue, v_later) = (video.clone(), video.clone(), video.clone());
+        let player_menu = self.player_menu;
+        let speed = self.settings.speed;
+        Some(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .child(
+                    div()
+                        .id("video-menu-backdrop")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .occlude()
+                        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close_video_menu(cx)))
+                        .on_mouse_down(MouseButton::Right, cx.listener(|this, _, _, cx| this.close_video_menu(cx))),
+                )
+                .child(
+                    div()
+                        .id("video-menu")
+                        .absolute()
+                        .left(px(left))
+                        .top(px(top))
+                        .max_h(px(avail))
+                        .overflow_y_scroll()
+                        .occlude()
+                        .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                            this.menu_hovered = *hovered;
+                            if let (false, Some((_, _, _, at))) = (*hovered, &mut this.video_menu) {
+                                *at = Instant::now();
+                            }
+                        }))
+                        .w(px(MENU_W))
+                        .py_1()
+                        .rounded_md()
+                        .bg(themed(HOVER))
+                        .border_1()
+                        .border_color(themed(BORDER))
+                        .shadow_lg()
+                        .child(div().px_3().py_1().text_xs().text_color(themed(MUTED)).truncate().child(video.title.clone()))
+                        .when(player_menu, |d| {
+                            d.child(row("video-menu-time").child("Copy link at current time").on_click(cx.listener(|this, _, _, cx| {
+                                this.close_video_menu(cx);
+                                this.copy_link_at_time(cx);
+                            })))
+                            .child(row("video-menu-loop").child("Loop").on_click(cx.listener(|this, _, _, cx| {
+                                this.close_video_menu(cx);
+                                this.player.toggle_loop();
+                            })))
+                            .child(row("video-menu-speed").child(format!("Speed: {speed}×, next")).on_click(cx.listener(|this, _, _, cx| {
+                                this.close_video_menu(cx);
+                                this.cycle_speed(cx);
+                            })))
+                            .child(row("video-menu-subs").child("Subtitles on / off").on_click(cx.listener(|this, _, _, cx| {
+                                this.close_video_menu(cx);
+                                this.toggle_subtitles(cx);
+                            })))
+                            .child(row("video-menu-stats").child("Stats for nerds").on_click(cx.listener(|this, _, _, cx| {
+                                this.close_video_menu(cx);
+                                this.player.toggle_stats();
+                            })))
+                            .child(row("video-menu-browser").child("Open in browser").on_click(cx.listener(|this, _, _, cx| {
+                                this.close_video_menu(cx);
+                                this.open_in_browser(cx);
+                            })))
+                            .child(div().my_1().h(px(1.)).bg(themed(BORDER)))
+                        })
+                        .child(row("video-menu-copy").child("Copy link").on_click(cx.listener(move |this, _, _, cx| {
+                            this.close_video_menu(cx);
+                            this.copy_video_link(&v_copy, cx);
+                        })))
+                        .child(
+                            row("video-menu-queue").child(if queued { "Remove from Up next" } else { "Add to Up next" }).on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.close_video_menu(cx);
+                                    if queued {
+                                        this.dequeue(&v_queue.id, cx);
+                                    } else {
+                                        this.enqueue(v_queue.clone(), cx);
+                                    }
+                                },
+                            )),
+                        )
+                        .when(auth, |d| {
+                            d.child(row("video-menu-later").child("Save to Watch later").on_click(cx.listener(move |this, _, _, cx| {
+                                this.close_video_menu(cx);
+                                this.add_to_watch_later(v_later.clone(), cx);
+                            })))
+                            .child(div().my_1().h(px(1.)).bg(themed(BORDER)))
+                            .child(div().px_3().pb_1().text_xs().text_color(themed(MUTED)).child("Save to playlist"))
+                            .child(div().id("video-menu-playlists").max_h(px(list_max)).overflow_y_scroll().children(list_rows))
+                            .when(n_lists == 0, |d| {
+                                d.child(div().px_3().py_1().text_xs().text_color(themed(MUTED)).child(if loading { "Loading playlists…" } else { "No playlists" }))
+                            })
+                        }),
+                ),
+        )
+    }
+
     /// The right-click menu of a subscription: a backdrop that closes it and the menu at the click.
     fn render_channel_menu(&self, window: &Window, cx: &mut Context<Self>) -> Option<gpui::Div> {
         let (g, pos, _) = self.channel_menu.clone()?;
@@ -1648,7 +1881,9 @@ impl Unbloated {
         // Stay inside the left column: the video is a native window drawn over everything on its side.
         let column_right = if self.left_collapsed || self.right_collapsed { win_w } else { self.settings.split * win_w };
         let left = f32::from(pos.x).min(column_right - MENU_W - 8.).max(8.);
-        let top = f32::from(pos.y).min(win_h - (FIXED_H + list_h) - EDGE).max(8.);
+        // Too short a window for every row: the menu itself scrolls too.
+        let avail = (win_h - EDGE - 8.).max(ROW_H * 4.);
+        let top = f32::from(pos.y).min(win_h - (FIXED_H + list_h).min(avail) - EDGE).max(8.);
         fn close(this: &mut Unbloated, cx: &mut Context<Unbloated>) {
             this.channel_menu = None;
             this.confirm_unsub = None;
@@ -1677,6 +1912,8 @@ impl Unbloated {
                         .absolute()
                         .left(px(left))
                         .top(px(top))
+                        .max_h(px(avail))
+                        .overflow_y_scroll()
                         .occlude()
                         .on_hover(cx.listener(|this, hovered: &bool, _, _| {
                             this.menu_hovered = *hovered;
@@ -2367,13 +2604,18 @@ impl Unbloated {
     }
 
     fn save_to(&mut self, playlist: Group, cx: &mut Context<Self>) {
-        let Some(id) = self.current.as_ref().map(|v| v.id.clone()) else { return };
+        let Some(video) = self.current.clone() else { return };
         self.close_save(cx);
+        self.save_video_to(video, playlist, cx);
+    }
+
+    /// Add any video to a playlist (Watch later too, which also updates its tab's list).
+    fn save_video_to(&mut self, video: Video, playlist: Group, cx: &mut Context<Self>) {
         if playlist.id == "WL" {
-            // Same as the Watch later button: also updates the Watch later tab's list.
-            self.watch_later(cx);
+            self.add_to_watch_later(video, cx);
             return;
         }
+        let id = video.id;
         self.notice = Some(format!("Saving to {}…", playlist.title));
         let pid = playlist.id.clone();
         self.with_account(cx, move |a| a.save_to_playlist(&pid, &id), move |this, res, _| {
@@ -2458,8 +2700,12 @@ impl Unbloated {
 
     /// Copy the current video's link (Share button, C, or yy in Vim mode).
     fn copy_link(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.current.as_ref().map(|v| v.id.clone()) else { return };
-        let link = format!("https://youtu.be/{id}");
+        let Some(video) = self.current.clone() else { return };
+        self.copy_video_link(&video, cx);
+    }
+
+    fn copy_video_link(&mut self, video: &Video, cx: &mut Context<Self>) {
+        let link = format!("https://youtu.be/{}", video.id);
         cx.write_to_clipboard(ClipboardItem::new_string(link.clone()));
         self.notice = Some(format!("Link copied: {link}"));
         cx.notify();
@@ -2967,6 +3213,11 @@ impl Unbloated {
             cx.stop_propagation();
             return;
         }
+        if self.video_menu.is_some() && k.key == "escape" {
+            self.close_video_menu(cx);
+            cx.stop_propagation();
+            return;
+        }
         if self.channel_menu.is_some() && k.key == "escape" {
             self.channel_menu = None;
             self.confirm_unsub = None;
@@ -3252,7 +3503,7 @@ impl Unbloated {
 
     /// Tab / Shift+Tab: move the focus ring to the next / previous clickable thing.
     fn kb_step(&mut self, back: bool, window: &mut Window) {
-        if self.show_keys || self.saving || self.channel_menu.is_some() || self.hints.is_some() {
+        if self.show_keys || self.saving || self.channel_menu.is_some() || self.video_menu.is_some() || self.hints.is_some() {
             return;
         }
         // Leave a text field, so typing doesn't go into it any more.
@@ -3564,6 +3815,11 @@ impl Unbloated {
                 }
                 "speed" => self.cycle_speed(cx),
                 "pip" => self.toggle_pip(cx),
+                a if a.starts_with("menu") && !self.fullscreen => {
+                    if let Some(at) = player::menu_position(a) {
+                        self.open_player_menu(at, window, cx);
+                    }
+                }
                 _ => {}
             }
         }
@@ -3767,8 +4023,13 @@ impl Unbloated {
             .collect::<Vec<_>>()
             .join("  ·  ");
         let thumb = self.thumb_el(&video.id, Some(video.thumb_url()), 96., 54., px(4.), cx);
+        let menu_video = video.clone();
         div()
             .id(id)
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, ev: &gpui::MouseDownEvent, window, cx| this.open_video_menu(menu_video.clone(), ev.position, window, cx)),
+            )
             .w_full()
             .overflow_hidden()
             .h(px(ROW_H))
@@ -4853,6 +5114,7 @@ impl Unbloated {
                                     MouseButton::Right,
                                     cx.listener(move |this, ev: &gpui::MouseDownEvent, _, cx| {
                                         this.confirm_unsub = None;
+                                        this.video_menu = None;
                                         this.channel_menu = Some((g.clone(), ev.position, Instant::now()));
                                         this.menu_hovered = false;
                                         cx.notify();
@@ -6511,6 +6773,7 @@ impl Render for Unbloated {
             .children((!self.right_collapsed).then_some(right))
             .children(kb_ring)
             .children(self.render_channel_menu(window, cx))
+            .children(self.render_video_menu(window, cx))
             .children(self.render_quit_prompt(cx))
             .children(self.render_toasts())
             .children(sheet)

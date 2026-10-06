@@ -4,6 +4,23 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Added
+- **Right-click menu on every video**: Copy link, Add to (or Remove from) Up next, Save to Watch
+  later, and your playlists in a scrolling list at the bottom, for videos in any list
+  (Recommended, History, channel videos, New uploads, Up next, Watch later, search). Logged out it
+  has Copy link and Up next.
+- **Right-click on the playing video** opens the same menu at the pointer, with extra rows: copy link
+  at the current time, loop, speed, subtitles, stats for nerds, open in browser. mpv's window hides
+  while it is open, so the thumbnail shows behind the menu.
+- The menu's playlists are only the ones you can edit, and a tick marks those that already hold the
+  video (click a ticked one to remove it).
+
+### Fixed
+- The right-click menus (videos and subscriptions) scroll as a whole when the window is too short
+  to show every row; before, only their lists shrank.
+
 ## 0.14.0 - 2026-10-06
 
 ### Added
