@@ -34,9 +34,12 @@ pub struct State {
     pub volume: Option<f64>,
     /// mpv's own fullscreen flag (toggled by f / double-click / Esc); unbloated-youtube mirrors it.
     pub fullscreen: bool,
-    /// Subtitle tracks mpv has for the video (it loads only the language set in Settings).
+    /// Subtitle tracks the app added (downloaded files). mpv's own ones, which are URLs that
+    /// YouTube refuses to serve it, don't count.
     pub sub_tracks: u32,
-    /// A subtitle track is selected and visible.
+    /// The first such track's id, to select it.
+    pub sub_id: Option<i64>,
+    /// One of them is selected and visible.
     pub sub_on: bool,
 }
 
@@ -122,6 +125,9 @@ impl Player {
             return Ok(());
         }
         self.command(json!(["set_property", "start", start.to_string()]))?;
+        // mpv keeps "subtitles off" across files, so a CC click would silently hide the
+        // captions of every later video: each new video starts with them on again.
+        let _ = self.command(json!(["set_property", "sub-visibility", true]));
         self.command(json!(["set_property", "pause", paused]))?;
         self.command(json!(["loadfile", url, "replace"]))
     }
@@ -199,10 +205,15 @@ impl Player {
         let _ = self.command(json!(["cycle", "mute"]));
     }
 
-    /// Show the subtitle track that matches the language setting, or hide the subtitles.
-    pub fn show_subtitles(&self, on: bool) {
+    /// Load a subtitle file and show it.
+    pub fn add_subtitle(&self, file: &Path) {
+        let _ = self.command(json!(["sub-add", file.display().to_string(), "select"]));
+    }
+
+    /// Show the subtitle track `id`, or hide the subtitles.
+    pub fn show_subtitles(&self, on: bool, id: Option<i64>) {
         let _ = self.command(json!(["set_property", "sub-visibility", on]));
-        let _ = self.command(json!(["set_property", "sid", if on { "auto" } else { "no" }]));
+        let _ = self.command(json!(["set_property", "sid", if on { json!(id.unwrap_or(1)) } else { json!("no") }]));
     }
 
     pub fn set_fullscreen(&self, on: bool) {
@@ -245,13 +256,6 @@ pub fn options(cfg: &Config, s: &Settings, pip: bool) -> Vec<String> {
         Auth::Browser(b) => raw.push(format!("cookies-from-browser={b}")),
         Auth::None => raw.clear(),
     }
-    // mpv's yt-dlp hook only lists subtitles that yt-dlp was asked to fetch, so the language
-    // setting has to say so too (auto-generated and auto-translated captions included).
-    // Commas separate yt-dlp's raw options, so several languages are joined as a regex.
-    let langs = s.sub_lang.split(',').map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("|");
-    if !langs.is_empty() {
-        raw.extend(["write-subs=".to_string(), "write-auto-subs=".to_string(), format!("sub-langs={langs}")]);
-    }
     if !raw.is_empty() {
         out.push(format!("--ytdl-raw-options={}", raw.join(",")));
     }
@@ -266,10 +270,9 @@ pub fn options(cfg: &Config, s: &Settings, pip: bool) -> Vec<String> {
                 .map(String::from),
         );
     }
-    match s.sub_lang.trim() {
-        "" => out.push("--sid=no".into()),
-        lang => out.push(format!("--slang={lang}")),
-    }
+    // Subtitles are downloaded by the app (YouTube refuses mpv's own request for them) and
+    // added with `sub-add`, so mpv has none of its own.
+    out.push(format!("--sub-scale={}", s.sub_scale));
     if let (true, Some(script)) = (s.sponsorblock, sponsorblock_script()) {
         out.push(format!("--script={script}"));
         out.push(format!("--script-opts=sponsorblock_minimal-categories={}", s.skip_segments.join(";")));
@@ -326,6 +329,11 @@ pub fn query(socket: &Path) -> Option<State> {
             }
         }
     }
+    let tracks = vals[12].as_array().cloned().unwrap_or_default();
+    let ours: Vec<&Value> = tracks
+        .iter()
+        .filter(|t| t["type"] == "sub" && t["external-filename"].as_str().is_some_and(|f| f.starts_with('/')))
+        .collect();
     Some(State {
         position: vals[0].as_f64().unwrap_or(0.0),
         playing: vals[0].is_number(),
@@ -347,9 +355,9 @@ pub fn query(socket: &Path) -> Option<State> {
         muted: vals[9].as_bool().unwrap_or(false),
         volume: vals[10].as_f64(),
         action: vals[11].as_str().unwrap_or_default().to_string(),
-        sub_tracks: vals[12].as_array().map_or(0, |a| a.iter().filter(|t| t["type"] == "sub").count() as u32),
-        sub_on: vals[13].as_bool().unwrap_or(false)
-            && vals[12].as_array().is_some_and(|a| a.iter().any(|t| t["type"] == "sub" && t["selected"] == true)),
+        sub_tracks: ours.len() as u32,
+        sub_id: ours.first().and_then(|t| t["id"].as_i64()),
+        sub_on: vals[13].as_bool().unwrap_or(false) && ours.iter().any(|t| t["selected"] == true),
     })
 }
 

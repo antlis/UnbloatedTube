@@ -434,6 +434,140 @@ fn parse_offset(s: &str) -> Option<f64> {
     num.is_empty().then_some(total as f64)
 }
 
+/// The captions of a video as a .vtt file in `dir` (the first of `langs` that exists), downloaded
+/// by yt-dlp and cached there. mpv can't fetch them itself: YouTube answers its request with
+/// HTTP 429 and only serves yt-dlp's browser-like one. `Ok(None)`: no captions in those languages.
+pub fn subtitles(cfg: &Config, id: &str, langs: &str, auto: bool, dir: &std::path::Path) -> Result<Option<std::path::PathBuf>, String> {
+    let langs: Vec<&str> = langs.split(',').map(str::trim).filter(|l| !l.is_empty()).collect();
+    let find = || langs.iter().map(|l| dir.join(format!("{id}.{l}.vtt"))).find(|p| p.exists());
+    // Rewrites YouTube's rolling auto-captions (once: a tidied file has no word times left).
+    let tidy = |file: &std::path::Path| {
+        if let Some(text) = std::fs::read_to_string(file).ok().as_deref().and_then(tidy_auto_captions) {
+            let _ = std::fs::write(file, text);
+        }
+    };
+    if let Some(file) = find() {
+        tidy(&file);
+        return Ok(Some(file));
+    }
+    let _ = std::fs::create_dir_all(dir);
+    // Old caption files go: two weeks.
+    let old = std::time::Duration::from_secs(14 * 24 * 3600);
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let aged = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|e| e > old);
+        if aged {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    let out = Command::new("yt-dlp")
+        .env("PYCRYPTODOME_DISABLE_GMP", "1")
+        .args(["--no-update", "--no-warnings", "--skip-download", "--no-playlist", "--write-subs"])
+        .args(auto.then_some("--write-auto-subs"))
+        .args(["--sub-format", "vtt", "--sub-langs", &langs.join(",")])
+        .arg("-o")
+        .arg(dir.join("%(id)s.%(ext)s"))
+        .args(cfg.cookie_args())
+        .arg(format!("https://www.youtube.com/watch?v={id}"))
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run yt-dlp: {e}"))?;
+    if let Some(file) = find() {
+        tidy(&file);
+        return Ok(Some(file));
+    }
+    let err = String::from_utf8_lossy(&out.stderr);
+    if err.contains("429") {
+        Err("YouTube refused the captions (HTTP 429); signing in helps".into())
+    } else {
+        Ok(None)
+    }
+}
+
+/// Seconds of a WebVTT timestamp, "00:01:02.345" or "01:02.345".
+fn vtt_time(s: &str) -> Option<f64> {
+    let parts: Vec<f64> = s.trim().split(':').map(|p| p.parse().ok()).collect::<Option<_>>()?;
+    Some(parts.iter().fold(0., |acc, p| acc * 60. + p))
+}
+
+fn vtt_stamp(t: f64) -> String {
+    let ms = (t.max(0.) * 1000.).round() as u64;
+    format!("{:02}:{:02}:{:02}.{:03}", ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000)
+}
+
+/// YouTube's auto-generated captions are "rolling": every cue repeats the line before it and adds
+/// a new one whose words carry their own times (`<00:00:02.601><c>details </c>`), with 40 ms cues
+/// in between. Shown as is, two lines scroll and the new words appear before they are spoken.
+/// This rebuilds ordinary captions from the word times: short phrases of one or two lines, each
+/// shown while it is spoken. None when the file has no word times (manual captions are fine).
+fn tidy_auto_captions(vtt: &str) -> Option<String> {
+    if !vtt.contains("<c>") {
+        return None;
+    }
+    // (start, end, text) per word
+    let mut words: Vec<(f64, f64, String)> = Vec::new();
+    for block in vtt.split("\n\n") {
+        let mut lines = block.lines().skip_while(|l| !l.contains("-->"));
+        let Some(timing) = lines.next() else { continue };
+        let Some((from, to)) = timing.split_once("-->") else { continue };
+        let (Some(start), Some(end)) = (vtt_time(from), vtt_time(to.split_whitespace().next().unwrap_or(""))) else { continue };
+        // The new line is the one with word times.
+        let Some(line) = lines.find(|l| l.contains("<c>")) else { continue };
+        let line = line.replace("<c>", "").replace("</c>", "");
+        // "from <00:00:04.206>hurricanes <00:00:04.661>and": text, then (time, text) pairs.
+        let mut pieces = line.split('<');
+        let lead = pieces.next().unwrap_or("");
+        let mut timed: Vec<(f64, String)> = lead.split_whitespace().map(|w| (start, w.to_string())).collect();
+        for piece in pieces {
+            let Some((stamp, text)) = piece.split_once('>') else { continue };
+            let Some(at) = vtt_time(stamp) else { continue };
+            timed.extend(text.split_whitespace().map(|w| (at, w.to_string())));
+        }
+        for i in 0..timed.len() {
+            let next = timed.get(i + 1).map_or(end, |n| n.0);
+            words.push((timed[i].0, next.max(timed[i].0 + 0.05), timed[i].1.clone()));
+        }
+    }
+    if words.is_empty() {
+        return None;
+    }
+    // Phrases: up to ~42 characters or 5 seconds, split at pauses and sentence ends.
+    let mut chunks: Vec<(f64, f64, String)> = Vec::new();
+    for (start, end, word) in words {
+        let extend = chunks.last().is_some_and(|(c_start, c_end, text)| {
+            let sentence_end = text.ends_with(['.', '?', '!']);
+            !sentence_end && start - c_end < 0.9 && end - c_start <= 5. && text.len() + 1 + word.len() <= 42
+        });
+        match chunks.last_mut() {
+            Some(last) if extend => {
+                last.1 = end;
+                last.2.push(' ');
+                last.2.push_str(&word);
+            }
+            _ => chunks.push((start, end, word)),
+        }
+    }
+    let mut out = String::from("WEBVTT\nKind: captions\n\n");
+    for i in 0..chunks.len() {
+        let (start, end, text) = &chunks[i];
+        // Gone shortly after the last word (but not too briefly), and before the next phrase starts.
+        let mut end = (end + 0.3).max(start + 0.7);
+        if let Some(next) = chunks.get(i + 1) {
+            end = end.min(next.0);
+        }
+        let end = end.max(start + 0.1);
+        // Two balanced lines for a long phrase.
+        let text = if text.len() > 26 {
+            let mid = text.len() / 2;
+            let cut = text.char_indices().filter(|(_, c)| *c == ' ').map(|(i, _)| i).min_by_key(|i| i.abs_diff(mid));
+            cut.map_or(text.clone(), |i| format!("{}\n{}", &text[..i], &text[i + 1..]))
+        } else {
+            text.clone()
+        };
+        out.push_str(&format!("{} --> {}\n{}\n\n", vtt_stamp(*start), vtt_stamp(end), text));
+    }
+    Some(out)
+}
+
 /// One video's details by id, for a pasted link.
 pub fn video(cfg: &Config, id: &str) -> Result<Video, String> {
     let mut found = None;

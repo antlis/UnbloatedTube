@@ -58,8 +58,12 @@ list, your playlists, your history, search and a player.
   links (`/@handle`, `/channel/UC…`, `/c/…`, `/user/…`) and playlist links (`/playlist?list=`)
   open that channel or playlist in the left column.
 - **Subtitles**: a CC button next to the player's other buttons (or **V**) turns them on and
-  off. The first use picks your system language (Settings → Other → Subtitles changes it);
-  YouTube's auto-generated and auto-translated captions are included, so most videos have them.
+  off for the playing video; the first click turns subtitles on. Settings → Subtitles has the
+  on/off switch, the language (or several, `en,ru`; empty uses your system language), whether
+  YouTube's auto-generated and auto-translated captions count, and the size. The captions are
+  downloaded with yt-dlp (and cached for two weeks), because YouTube refuses to serve them to mpv
+  itself. Auto-generated captions are rewritten into short phrases that follow the speech
+  (YouTube's own file scrolls two lines and shows words early). For some videos YouTube also refuses yt-dlp without a login: Connect YouTube for those.
 - **Filter any list as you type** (Ctrl+F): channels, playlists, a channel's or playlist's
   videos, history. This is local and instant, with no request to YouTube.
 - **Video info**: views, upload date and subscriber count for the playing video (needs your login),
@@ -129,10 +133,11 @@ Everything is a toggle or a field on the Settings page, which has its own search
 | Account | **Connect YouTube**: pick a browser and test its session, or import a `cookies.txt` (see [Login](#login)) |
 | Tabs & lists | Subscriptions, Playlists, History, Recommendations, Chapters, Comments and Watch later tabs (both off by default), **Shorts** (everywhere) |
 | Buttons | Subscribe, Save to playlist, Watch later, Like, Dislike, Volume, Subtitles, Share, Share at current time, Open in browser, Download |
+| Subtitles | On/off, language(s), auto-generated captions, size |
 | Player | Max quality (480p–4K), autoplay, **audio only**, prefer hardware-friendly codecs (skip AV1), hardware decoding, hover controls on the video, mpv's own controls and hotkeys, speed |
 | SponsorBlock | **Skip sponsored segments**, choosing which: sponsor, self-promotion, like/subscribe reminders, intro, credits, preview, filler, non-music |
 | Video info | **Views**, **upload date** (playing video), **subscriber counts** (channels) |
-| Other | Subtitles language (several: `en,ru`), extra mpv options, download folder, upload notifications and their interval, Vim mode, window buttons, **light theme** |
+| Other | Extra mpv options, download folder, upload notifications and their interval, Vim mode, window buttons, **light theme** |
 
 Window layout (column width, player height, Continue watching height) is set by dragging and
 remembered.
@@ -331,13 +336,14 @@ playlists, history, Watch later) stay hidden until you connect.
     else to the real browser. Links clicked inside the browser itself don't go through it (needs
     an extension or the browser's "open in external app"). In a NixOS setup it would live in the
     dotfiles next to the desktop entries.
-- **Subtitles: picker and more.** The CC toggle and the language setting work (the language also
-  tells yt-dlp to fetch auto-generated captions: mpv's hook loads nothing it wasn't asked for). Still
+- **Subtitles: picker and more.** The CC toggle and the Settings → Subtitles section work. Still
   open:
-  - a picker for the language of the playing video (mpv's `track-list` has what was loaded), and
-    for translating captions to another language
+  - a picker for the language of the playing video (the app downloads one language at a time),
+    and for translating captions to another language
   - the CC button on the hover bar over the video (`controls.lua`), next to the player buttons
-  - subtitle style settings (size, position, background)
+  - subtitle style beyond size (position, background)
+  - videos YouTube refuses to give captions to without a login (HTTP 429): a clearer hint, or a
+    way to get them (yt-dlp's PO token plugins)
 - **History: channel links on Shorts.** History's Shorts entries carry no channel, so they have
   no channel button; the Videos entries do.
 - **Test the Connect flow on more setups.** Verified with Brave (keyring) and a failing

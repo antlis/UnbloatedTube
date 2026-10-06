@@ -139,6 +139,13 @@ const ACCOUNT_ONLY: [&str; 9] = [
     "Dislike",
 ];
 
+const SUB_TOGGLES: [Toggle; 2] = [
+    ("Subtitles", "Show subtitles on videos (the CC button or V turns them off for one video)", |s| &mut s.subtitles),
+    ("Auto-generated captions", "Also use YouTube's automatic and translated captions when a video has none of its own", |s| &mut s.sub_auto),
+];
+/// Subtitle sizes: label and mpv's `sub-scale`.
+const SUB_SCALES: [(&str, f32); 4] = [("Small", 0.8), ("Normal", 1.0), ("Large", 1.4), ("Huge", 1.8)];
+
 const QUALITIES: [u32; 5] = [480, 720, 1080, 1440, 2160];
 const NOTIFY_MINUTES: [u32; 4] = [5, 15, 30, 60];
 
@@ -163,7 +170,7 @@ const SPEEDS: [f32; 6] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
 
 /// Settings text fields: label, hint, field.
 const TEXT_FIELDS: [(&str, &str, fn(&mut Settings) -> &mut String); 3] = [
-    ("Subtitles", "Language code, e.g. en or ru; empty for none", |s| &mut s.sub_lang),
+    ("Subtitle language", "Code, e.g. en or ru, or several (en,ru); empty uses your system language", |s| &mut s.sub_lang),
     ("Extra mpv options", "e.g. --volume=70 --deband", |s| &mut s.mpv_args),
     ("Download folder", "Empty for your Downloads folder; ~/ works", |s| &mut s.download_dir),
 ];
@@ -175,7 +182,7 @@ const BUTTON_TOGGLES: [Toggle; 11] = [
     ("Like", "Like the video, or remove your like", |s| &mut s.like_button),
     ("Dislike", "Dislike the video, or remove your dislike", |s| &mut s.dislike_button),
     ("Volume", "Mute button and volume bar next to the speed button", |s| &mut s.volume_control),
-    ("Subtitles", "Subtitles on / off (V); the language is set under Other", |s| &mut s.subtitles_button),
+    ("Subtitles", "CC button: subtitles on / off for the video (V); language and size are under Subtitles", |s| &mut s.subtitles_button),
     ("Share", "Copy the video's link", |s| &mut s.share_button),
     ("Share at current time", "Copy the video's link so it opens at the current time", |s| &mut s.share_time_button),
     ("Open in browser", "Open the video's page in your default browser", |s| &mut s.browser_button),
@@ -440,6 +447,14 @@ struct Unbloated {
     history_view: ChannelView,
     /// Start time of a pasted link, taken by the next `start`.
     link_start: Option<f64>,
+    /// A video whose captions the next tick should fetch.
+    subs_wanted: Option<String>,
+    /// Captions being downloaded for this video id.
+    subs_loading: Option<String>,
+    /// Downloaded captions, waiting for mpv to have that video open.
+    subs_pending: Option<(String, PathBuf)>,
+    /// The video id we found no captions for.
+    subs_none: Option<String>,
     fullscreen: bool,
     /// A video was requested and mpv hasn't started playing it yet.
     loading: bool,
@@ -659,6 +674,10 @@ impl Unbloated {
             preloaded: false,
             history_view: ChannelView::Videos,
             link_start: None,
+            subs_wanted: None,
+            subs_loading: None,
+            subs_pending: None,
+            subs_none: None,
             fullscreen: false,
             loading: false,
             hide_while_loading: false,
@@ -1838,6 +1857,8 @@ impl Unbloated {
             e.borrow().id()
         });
         let start = self.link_start.take().unwrap_or_else(|| self.history.position(&video.id));
+        self.subs_pending = None;
+        self.subs_wanted = self.settings.subtitles.then(|| video.id.clone());
         let options = player::options(&self.cfg, &self.settings, self.pip);
         // Hide the old video's last frame only when mpv keeps running: a freshly started mpv
         // (first video, or changed options) never shows its picture if ours is hidden then.
@@ -2535,25 +2556,87 @@ impl Unbloated {
         cx.notify();
     }
 
-    /// Subtitles on / off. mpv only has the language set in Settings: with none set, the first use
-    /// picks the system language (the video reloads, as for any player setting).
+    /// The subtitle languages to look for: the setting, or the system language ("en" if unknown).
+    fn sub_langs(&self) -> String {
+        let setting = self.settings.sub_lang.trim();
+        if !setting.is_empty() {
+            return setting.to_string();
+        }
+        std::env::var("LANG")
+            .ok()
+            .and_then(|l| l.split(['_', '.']).next().map(str::to_string))
+            .filter(|l| (2..=3).contains(&l.len()) && l.chars().all(|c| c.is_ascii_lowercase()))
+            .unwrap_or_else(|| "en".into())
+    }
+
+    /// Download the captions of video `id` (yt-dlp, cached); they are added to mpv by `poll_subtitles`.
+    fn fetch_subtitles(&mut self, id: String, cx: &mut Context<Self>) {
+        let (cfg, langs, auto) = (self.cfg.clone(), self.sub_langs(), self.settings.sub_auto);
+        let dir = store::cache_dir().join("captions");
+        // The first version cached the captions as YouTube writes them, in a "subs" folder.
+        let _ = std::fs::remove_dir_all(store::cache_dir().join("subs"));
+        self.subs_loading = Some(id.clone());
+        self.subs_none = None;
+        let task = {
+            let id = id.clone();
+            cx.background_executor().spawn(async move { yt::subtitles(&cfg, &id, &langs, auto, &dir) })
+        };
+        cx.spawn(async move |this, cx| {
+            let res = task.await;
+            this.update(cx, |this, cx| {
+                if this.subs_loading.as_deref() != Some(id.as_str()) {
+                    return;
+                }
+                this.subs_loading = None;
+                let current = this.current.as_ref().is_some_and(|v| v.id == id);
+                match res {
+                    Ok(Some(file)) if current => this.subs_pending = Some((id, file)),
+                    Ok(None) => this.subs_none = Some(id),
+                    Err(e) if current => this.notice = Some(format!("Subtitles: {e}")),
+                    _ => {}
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Start the caption download a new video asked for, and give downloaded captions to mpv
+    /// once it has that video open.
+    fn poll_subtitles(&mut self, state: Option<&player::State>, cx: &mut Context<Self>) {
+        if let Some(id) = self.subs_wanted.take() {
+            self.fetch_subtitles(id, cx);
+        }
+        let Some((id, file)) = self.subs_pending.clone() else { return };
+        let Some(video) = self.current.as_ref().filter(|v| v.id == id) else {
+            self.subs_pending = None;
+            return;
+        };
+        if state.is_some_and(|s| s.playing && s.path == video.url()) {
+            self.player.add_subtitle(&file);
+            self.subs_pending = None;
+        }
+    }
+
+    /// The CC button / V: subtitles on or off for the playing video. With none yet it turns the
+    /// setting on and fetches them.
     fn toggle_subtitles(&mut self, cx: &mut Context<Self>) {
-        let (tracks, on) = self.state.as_ref().map_or((0, false), |s| (s.sub_tracks, s.sub_on));
-        let lang = self.settings.sub_lang.trim().to_string();
+        let (tracks, on, track) = self.state.as_ref().map_or((0, false, None), |s| (s.sub_tracks, s.sub_on, s.sub_id));
+        let Some(id) = self.current.as_ref().map(|v| v.id.clone()) else { return };
         if tracks > 0 {
-            self.player.show_subtitles(!on);
-        } else if lang.is_empty() {
-            let lang = std::env::var("LANG")
-                .ok()
-                .and_then(|l| l.split(['_', '.']).next().map(str::to_string))
-                .filter(|l| (2..=3).contains(&l.len()) && l.chars().all(|c| c.is_ascii_lowercase()))
-                .unwrap_or_else(|| "en".into());
-            self.notice = Some(format!("Subtitles on ({lang}): reloading the video"));
-            self.settings.sub_lang = lang;
+            self.player.show_subtitles(!on, track);
+        } else if self.subs_loading.is_some() || self.subs_pending.is_some() {
+            self.notice = Some("The subtitles are still loading…".into());
+        } else if !self.settings.subtitles {
+            self.settings.subtitles = true;
             self.settings.save();
-            self.apply_player_settings(cx);
+            self.notice = Some("Subtitles on".into());
+            self.subs_wanted = Some(id);
+        } else if self.subs_none.as_deref() == Some(id.as_str()) {
+            self.notice = Some(format!("No \"{}\" subtitles for this video", self.sub_langs()));
         } else {
-            self.notice = Some(format!("This video has no \"{lang}\" subtitles"));
+            self.subs_wanted = Some(id);
         }
         cx.notify();
     }
@@ -3149,6 +3232,7 @@ impl Unbloated {
         self.expire_notices(cx);
         self.preload(cx);
         self.load_status(cx);
+        self.poll_subtitles(state.as_ref(), cx);
         let url = self.current.as_ref().map(|v| v.url());
         let was_loading = self.loading;
         if let Some(s) = &state {
@@ -4073,6 +4157,7 @@ impl Unbloated {
             ("SHOW", &TOGGLES[..]),
             ("PLAYER BUTTONS", &BUTTON_TOGGLES[..]),
             ("PLAYER", &PLAYER_TOGGLES[..]),
+            ("SUBTITLES", &SUB_TOGGLES[..]),
             ("NOTIFICATIONS", &NOTIFY_TOGGLES[..]),
             ("VIDEO INFO", &INFO_TOGGLES[..]),
         ] {
@@ -4111,11 +4196,25 @@ impl Unbloated {
                 .into_any_element(),
             );
         }
+        let mut sub_rows: Vec<AnyElement> = Vec::new();
         for (i, (label, hint, _)) in TEXT_FIELDS.iter().enumerate() {
             if matches(label, hint) {
-                player.push(self.text_field(i, window, cx).into_any_element());
+                let row = self.text_field(i, window, cx).into_any_element();
+                if *label == "Subtitle language" { sub_rows.push(row) } else { player.push(row) }
             }
         }
+        if matches("Subtitle size", "subtitles captions text size") {
+            sub_rows.push(
+                self.choice_row(
+                    "Subtitle size",
+                    SUB_SCALES.iter().map(|(name, v)| (name.to_string(), *v == self.settings.sub_scale)).collect(),
+                    |s, i| s.sub_scale = SUB_SCALES[i].1,
+                    cx,
+                )
+                .into_any_element(),
+            );
+        }
+        sections[3].1.extend(sub_rows);
         if self.settings.notifications && matches("Check every", "notifications minutes interval") {
             let row = self.choice_row(
                 "Check every",
@@ -4123,7 +4222,7 @@ impl Unbloated {
                 |s, i| s.notify_minutes = NOTIFY_MINUTES[i],
                 cx,
             );
-            sections[3].1.push(row.into_any_element());
+            sections[4].1.push(row.into_any_element());
         }
         let show_account = matches("Connect YouTube", "account login logged in sign in browser connect cookies import");
         let nothing = sections.iter().all(|(_, rows)| rows.is_empty())
