@@ -239,8 +239,14 @@ pub struct Settings {
     /// SponsorBlock segment categories to skip (its API names, e.g. "sponsor", "selfpromo").
     pub skip_segments: Vec<String>,
     pub audio_only: bool,
-    /// Subtitle language code (e.g. "en"); empty = no subtitles.
+    /// Show subtitles on videos (the CC button turns them on and off for one video).
+    pub subtitles: bool,
+    /// Subtitle language code(s), e.g. "en" or "en,ru"; empty = the system language.
     pub sub_lang: String,
+    /// Also use YouTube's automatic (and translated) captions when a video has none of its own.
+    pub sub_auto: bool,
+    /// Subtitle size, as mpv's `sub-scale` (1 = normal).
+    pub sub_scale: f32,
     /// Extra mpv command-line options, space separated.
     pub mpv_args: String,
     /// Where downloads go; empty = the system Downloads folder. `~/` is expanded.
@@ -301,7 +307,10 @@ impl Default for Settings {
             sponsorblock: false,
             skip_segments: ["sponsor", "selfpromo", "interaction"].map(String::from).to_vec(),
             audio_only: false,
+            subtitles: false,
             sub_lang: String::new(),
+            sub_auto: true,
+            sub_scale: 1.0,
             mpv_args: String::new(),
             download_dir: String::new(),
             split: 0.5,
@@ -319,7 +328,17 @@ impl Settings {
     }
 
     pub fn load() -> Self {
-        std::fs::read(Self::path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+        let bytes = std::fs::read(Self::path()).ok();
+        let mut s: Self = bytes.as_deref().and_then(|b| serde_json::from_slice(b).ok()).unwrap_or_default();
+        // Before the on/off switch existed, a subtitle language meant subtitles on.
+        let has_switch = bytes
+            .as_deref()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok())
+            .is_some_and(|v| v.get("subtitles").is_some());
+        if !has_switch && !s.sub_lang.trim().is_empty() {
+            s.subtitles = true;
+        }
+        s
     }
 
     pub fn save(&self) {

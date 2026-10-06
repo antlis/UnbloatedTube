@@ -4,6 +4,27 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Added
+- **Settings → Subtitles**: a switch, the language (or several, `en,ru`; empty uses the system
+  language), whether auto-generated and auto-translated captions count, and the size. Settings
+  that had a subtitle language keep subtitles on. The CC button's first click turns the
+  switch on.
+
+### Fixed
+- **Subtitles were missing for many videos**, such as the ones with only auto-generated captions
+  or those YouTube serves only to browser-like requests: it answers mpv's own request for the
+  caption file with HTTP 429. The app now downloads the captions with yt-dlp (cached for two
+  weeks) and gives mpv the file. Without a login YouTube still refuses some videos; the
+  subtitle notice says so.
+- **Auto-generated captions were out of sync and hard to read.** YouTube writes them as "rolling"
+  captions: two scrolling lines, with each new line showing before its words are spoken. They
+  are now rewritten from the word times into short two-line phrases, each shown while it is
+  spoken.
+- Subtitles turned off with the CC button (or V) stayed off for every later video, though the
+  language setting was still on. Each new video now starts with subtitles on again.
+
 ## 0.12.0 - 2026-10-06
 
 ### Added
