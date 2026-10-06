@@ -279,11 +279,17 @@ playlists, history, Watch later) stay hidden until you connect.
 
 ### Cast targets
 
-The **Cast** button sends the playing video's page link and position to another device. The app
-knows nothing about any receiver: each target in `config.toml` is a command, and the receiver's
-side lives in the receiver's own project. The button shows only when at least one target exists
+The **Cast** button sends the playing video's page link and position to another device. Each target in
+`config.toml` is either a command (the app knows nothing about the receiver, whose side lives in
+its own project) or the `url` of a receiver with a remote API. The button shows only when at least one target exists
 (one button per target; **T** casts to the first, in name order), and Settings → Player buttons →
 Cast hides it.
+
+For a quick setup without editing files, **Settings → Cast command** takes the same kind of
+command as one line, e.g. `catt -d "Living Room" cast {url}` (arguments split at spaces; quote the
+ones that contain spaces; no shell). When it is filled it wins: the app then has one target, named
+"device", and ignores the `[cast.*]` tables of config.toml until the field is emptied. It only
+sends the video; controlling the receiver (below) needs a `url` target in config.toml.
 
 ```toml
 # A TV box running tg-mpv-bot with its remote play API on (see that project's README):
@@ -292,6 +298,11 @@ command = ["curl", "-sS", "--fail-with-body", "--max-time", "30",
            "-H", "Authorization: Bearer YOUR-TOKEN",
            "--json", "{\"url\":\"{url}\",\"start\":{start}}",
            "http://tv-box:8085/play"]
+
+# Or let the app talk to it: it then shows what the TV plays and controls it (see below).
+[cast.bedroom]
+url = "http://tv-box:8085"
+token = "YOUR-TOKEN"
 
 # Anything else that takes a link works the same way:
 [cast.living-room]
@@ -305,6 +316,16 @@ command = ["catt", "-d", "Living Room", "cast", "{url}"]
 - It runs in the background with a 60 second limit. On success the notice says "Sent to tv" and
   the local video pauses, so it doesn't play twice; on failure the notice shows the receiver's own
   reason (the `error` of a JSON answer, else the first line it printed) and the video keeps playing.
+- **Controlling the receiver.** With `url` and `token` (the receiver speaks tg-mpv-bot's remote API:
+  `POST /play`, `GET /status`, `POST /ctl`) the app sends the video itself and then keeps
+  asking the receiver how it is doing. The video area shows "Casting to <name>" with the real
+  position, and the usual controls drive the receiver: Space, J/L and the arrow keys, the progress
+  bar and the play, back and forward buttons. **Stop** stops the receiver; **Back to this screen**
+  only closes the view. The view also closes by itself when the receiver stops (the video
+  finished, or someone pressed stop on the TV). Closing the window (or the app's close button) while
+  the cast view is open asks whether to stop the receiver, keep it playing, or cancel; "stop"
+  waits at most 2 seconds for the receiver. A crash or kill can't ask, so the receiver keeps
+  playing. Playing another video here leaves the cast view too and does not touch the receiver. A `command` target has none of this: it is fire and forget.
 - The page link, not a stream link, is sent on purpose: the receiver's own yt-dlp resolves it at
   full quality, but it needs its own login for videos that need one. One video per cast: playlists
   and the Up next queue aren't sent yet.
@@ -452,9 +473,8 @@ command = ["catt", "-d", "Living Room", "cast", "{url}"]
   - *Playlists and Up next*: send a playlist link, or the queue, so the receiver plays them in
     order. The bot needs an endpoint that lists a playlist with yt-dlp and queues it, and a rule
     for replace or append.
-  - *Remote control*: pause, seek and "what's playing" on the receiver. The bot would need
-    `GET /status`, `/pause` and `/seek`, and the app a now-playing indicator; today casting is
-    fire and forget.
+  - *Remote control beyond tg-mpv-bot*: only receivers with its API are controlled, and volume,
+    subtitles and next/previous aren't wired to the app's controls yet.
   - *A target picker* instead of one button per target, once there are many.
   - *Other receivers with a built-in client*: Chromecast (Default Media Receiver, or the YouTube
     receiver through the Lounge protocol), DLNA/UPnP and AirPlay. `catt` already covers
