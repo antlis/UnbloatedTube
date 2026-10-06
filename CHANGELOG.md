@@ -4,6 +4,25 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Added
+- **Cast a whole list**: to a receiver with a `url` target (tg-mpv-bot 1.14 or newer) you can send
+  an open playlist (the Cast icon in its header), the Up next queue (**Cast all** on the Up next
+  tab), or any video and the ones after it in its list (right-click, **Cast from here**). The
+  receiver plays them one after another by itself; the cast view shows "3 of 12" and the current
+  title, with Previous / Next (also N and P) driving its queue. A playlist can also be cast
+  without opening it: right-click it in the Playlists list, then Cast.
+- **Right-click a playlist** in the Playlists list: **Play** plays the whole playlist here as the
+  queue (no need to open it), **Cast** casts it. An open playlist's header has the same two as
+  icons, next to "Add all to Up next". Playing a playlist this way empties Up next first, so Next
+  follows the playlist instead of jumping to something queued earlier.
+- **Casts go to your YouTube history** (logged in): each video that starts on the receiver is marked
+  watched, like watching it here; before, a cast left no trace.
+- While casting a list, the **main video area follows the receiver**: picture, title, channel and
+  details switch to the video playing on the TV. Stopping the cast leaves that video ready to play here. Up to 200 videos at once. A
+  `command` target casts the first video only.
+
 ## 0.15.0 - 2026-10-06
 
 ### Added
