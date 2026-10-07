@@ -1,0 +1,8 @@
+#!/bin/sh
+# Starts the app inside the AppImage. The programs it runs (mpv, yt-dlp, deno) are looked up on
+# PATH: yours come first, and the copies bundled here (yt-dlp, deno) are only a fallback for when
+# you have none. mpv is not bundled. The libraries are found through the binary's own RPATH, not
+# LD_LIBRARY_PATH, so they don't leak into the mpv and yt-dlp it starts.
+HERE="$(dirname "$(readlink -f "$0")")"
+export PATH="$PATH:$HERE/usr/helpers"
+exec "$HERE/usr/bin/unbloated-youtube" "$@"
