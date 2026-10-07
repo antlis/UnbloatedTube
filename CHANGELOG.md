@@ -4,7 +4,7 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
-## Unreleased
+## 0.21.3 - 2026-10-08
 
 ### Fixed
 - Playlists failing to load in the right-click menu ("No playlists"), and adding to a playlist
