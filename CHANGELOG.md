@@ -4,6 +4,15 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Changed
+- Vim mode: click hints moved from `f` to `Shift+F`, so `f` is fullscreen in every mode (Vim mode used `Shift+F` for it before). The in-app key list and the README say so.
+
+### Fixed
+- Starting with a link (`unbloated-youtube <link>`) no longer loads the last-watched video first.
+- The group buttons in a channel's header show their channel counts, like the group bar of the list.
+
 ## 0.19.0 - 2026-10-07
 
 ### Added
