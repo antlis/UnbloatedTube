@@ -390,6 +390,9 @@ struct Unbloated {
     search: Load<Video>,
     search_focus: FocusHandle,
     save_filter: String,
+    /// Ids of the playlists the open Save list may offer (YouTube's own list of ones you can add to):
+    /// None while it loads, Some(None) when YouTube didn't say (then every playlist is shown).
+    save_editable: Option<Option<HashSet<String>>>,
     save_focus: FocusHandle,
     /// Focused when no text field is, so keyboard shortcuts work.
     root_focus: FocusHandle,
@@ -688,6 +691,7 @@ impl Unbloated {
             search: Load::Idle,
             search_focus: cx.focus_handle(),
             save_filter: String::new(),
+            save_editable: None,
             save_focus: cx.focus_handle(),
             root_focus,
             up_next: store::load_data("up_next").unwrap_or_default(),
@@ -1132,6 +1136,19 @@ impl Unbloated {
     fn open_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.saving = true;
         self.save_filter.clear();
+        self.save_editable = None;
+        if let Some(video) = self.current.as_ref().map(|v| v.id.clone()) {
+            let id = video.clone();
+            self.with_account(cx, move |a| a.save_options(&id), move |this, res, cx| {
+                // Ignore an answer for a video the list has moved on from.
+                if this.saving && this.current.as_ref().is_some_and(|c| c.id == video) {
+                    this.save_editable = Some(res.ok().map(|o| o.into_iter().map(|o| o.id).collect()));
+                    cx.notify();
+                }
+            });
+        } else {
+            self.save_editable = Some(None);
+        }
         window.focus(&self.save_focus);
         if matches!(self.playlists.groups, Load::Idle) {
             self.fetch(cx, "playlists", |s| &mut s.playlists.groups, Some("playlists".into()), |cfg, on| yt::playlists(cfg, on));
@@ -1153,8 +1170,14 @@ impl Unbloated {
             .groups
             .items()
             .iter()
-            // "Liked videos" isn't a playlist you can add to.
+            // "Liked videos" isn't a playlist you can add to, nor are ones you only saved from others
+            // (Watch later is not in YouTube's list, and always works).
             .filter(|g| g.id != "LL" && g.title.to_lowercase().contains(&filter))
+            .filter(|g| match &self.save_editable {
+                Some(Some(editable)) => g.id == "WL" || editable.contains(&g.id),
+                Some(None) => true,
+                None => false,
+            })
             .cloned()
             .collect()
     }
@@ -6242,7 +6265,7 @@ impl Unbloated {
         let focused = self.save_focus.is_focused(window);
         let lists: Arc<[Group]> = self.save_targets().into();
         let body = if lists.is_empty() {
-            if self.playlists.groups.items().is_empty() {
+            if self.playlists.groups.items().is_empty() || self.save_editable.is_none() {
                 skeleton(Rows::Groups)
             } else {
                 self.status("No matching playlists.")
