@@ -2559,16 +2559,25 @@ impl Unbloated {
     fn with_account<R: Send + 'static>(
         &mut self,
         cx: &mut Context<Self>,
-        f: impl FnOnce(&Account) -> Result<R, String> + Send + 'static,
+        f: impl Fn(&Account) -> Result<R, String> + Send + 'static,
         done: impl FnOnce(&mut Self, Result<R, String>, &mut Context<Self>) + 'static,
     ) {
         let (cfg, account) = (self.cfg.clone(), self.account.clone());
         let task = cx.background_executor().spawn(async move {
-            let account = match account {
+            let cached = account.is_some();
+            let mut account = match account {
                 Some(a) => a,
                 None => Arc::new(Account::load(&cfg)?),
             };
-            let res = f(&account);
+            let mut res = f(&account);
+            // A login kept for long enough stops being accepted (YouTube rotates its cookies):
+            // try once more with the cookies as the browser has them now.
+            if res.is_err() && cached {
+                if let Ok(fresh) = Account::load(&cfg) {
+                    account = Arc::new(fresh);
+                    res = f(&account);
+                }
+            }
             Ok::<_, String>((account, res))
         });
         cx.spawn(async move |this, cx| {
