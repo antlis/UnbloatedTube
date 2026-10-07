@@ -4,7 +4,7 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
-## Unreleased
+## 0.18.0 - 2026-10-07
 
 ### Added
 - **AppImage**: each release also has an `.AppImage` (with a checksum): one file with yt-dlp
