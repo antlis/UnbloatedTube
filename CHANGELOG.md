@@ -4,6 +4,14 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Added
+- **Command line**: `unbloated-youtube <link>` plays a link, in the running app if there is one
+  (a small socket in `$XDG_RUNTIME_DIR`, no second window) or in a new one. Commands control the
+  running app: `open`, `queue`, `pause`, `play`, `toggle`, `next`, `prev`, `seek`, `status`,
+  `raise`, `quit`; `--help` and `--version` too.
+
 ## 0.18.0 - 2026-10-07
 
 ### Added
