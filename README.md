@@ -311,6 +311,33 @@ cookies_from_browser = "brave+gnomekeyring"   # yt-dlp syntax: "firefox", "chrom
 Without a login, search and playback still work; the account lists (subscriptions,
 playlists, history, Watch later) stay hidden until you connect.
 
+### Command line
+
+```
+unbloated-youtube                 start the app
+unbloated-youtube <link>          play a YouTube link (video, channel or playlist)
+unbloated-youtube <command> ...   control the running app
+```
+
+The running app listens on a socket in `$XDG_RUNTIME_DIR`, so a link or command reaches it
+instead of opening a second window; if it isn't running, a link starts it (and plays). A bare
+`unbloated-youtube` always starts a window, as before.
+
+| Command | |
+|---|---|
+| `open <link>` | play a link (starts the app if needed) |
+| `queue <link>` | add a video to Up next |
+| `pause`, `play`, `toggle` | pause, resume, or flip; while casting they drive the receiver |
+| `next`, `prev` | next or previous video |
+| `seek <secs>` | jump to a time; `+10` / `-10` move from the current one |
+| `status` | what is playing (state, title, position, cast target, Up next count) |
+| `raise` | bring the window to the front |
+| `quit` | close the app (a cast keeps playing) |
+
+`-h` / `--help` and `-V` / `--version` work without the app. A command prints its answer and exits
+0, or prints why it failed to stderr and exits 1 (2 for a mistake in the command line). Handy for
+key bindings, e.g. `bindsym XF86AudioPlay exec unbloated-youtube toggle`.
+
 ### Cast targets
 
 The **Cast** button (or **T**) sends the playing video's page link and position to another device,
@@ -452,13 +479,9 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   counts as playing, so a video that is only shown in the player is never preloaded.
 
 ## TODO
-- **Open YouTube links in the app** (instead of the browser). Pasting a video link into search or
-  pressing Ctrl+V plays it already (videos, channels and playlists); what's left is links from
-  other programs, in two parts:
-  - In the app: `unbloated-youtube <url>` opens the link (the same parser as pasting). It
-    needs a single instance: a second launch passes the link to the running window over a small socket (like
-    mpv's IPC) and exits, otherwise every link opens a new window. The app takes no arguments today.
-  - In the system: a `.desktop` file can only claim a whole URL scheme, not one domain, so a small
+- **Open YouTube links in the app** (instead of the browser). `unbloated-youtube <url>` works
+  now (see [Command line](#command-line)); what's left is links from other programs:
+  - A `.desktop` file can only claim a whole URL scheme, not one domain, so a small
     router is set as the default browser: `youtube.com` / `youtu.be` go to the app, everything
     else to the real browser. Links clicked inside the browser itself don't go through it (needs
     an extension or the browser's "open in external app"). In a NixOS setup it would live in the

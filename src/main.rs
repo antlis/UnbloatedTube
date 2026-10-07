@@ -1,6 +1,7 @@
 mod account;
 mod auth;
 mod cast;
+mod cli;
 mod embed;
 mod icons;
 mod player;
@@ -3211,6 +3212,94 @@ impl Unbloated {
             .detach();
     }
 
+    /// A command from the command line (see cli.rs); the answer it prints.
+    fn run_command(&mut self, command: cli::Command, window: &mut Window, cx: &mut Context<Self>) -> cli::Reply {
+        use cli::Command::*;
+        let paused = self.casting.as_ref().map_or_else(
+            || self.state.as_ref().filter(|s| s.playing).map(|s| s.paused),
+            |c| c.status.as_ref().filter(|s| s.playing).map(|s| s.paused),
+        );
+        let nothing = || Err("nothing is playing".to_string());
+        match command {
+            Open { url } => {
+                let link = yt::parse_link(&url).ok_or_else(|| format!("not a YouTube link: {url}"))?;
+                self.open_link(link, cx);
+                window.activate_window();
+                Ok("Opening".into())
+            }
+            Queue { url } => {
+                let link = yt::parse_video_link(&url).ok_or_else(|| format!("not a YouTube video link: {url}"))?;
+                let (cfg, id) = (self.cfg.clone(), link.id);
+                let task = cx.background_executor().spawn(async move { yt::video(&cfg, &id) });
+                cx.spawn(async move |this, cx| {
+                    let res = task.await;
+                    this.update(cx, |this, cx| match res {
+                        Ok(video) => this.enqueue(video, cx),
+                        Err(e) => {
+                            this.notice = Some(format!("Couldn't add the link to Up next: {e}"));
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+                })
+                .detach();
+                Ok("Adding to Up next".into())
+            }
+            Pause | Play | Toggle => {
+                let Some(now) = paused else { return nothing() };
+                if matches!((&command, now), (Pause, false) | (Play, true) | (Toggle, _)) {
+                    self.pause_toggle(cx);
+                }
+                Ok(if matches!((&command, now), (Pause, _) | (Toggle, false)) { "Paused" } else { "Playing" }.into())
+            }
+            Next | Prev => {
+                if paused.is_none() && self.current.is_none() {
+                    return nothing();
+                }
+                self.next_prev(matches!(command, Next), cx);
+                Ok("OK".into())
+            }
+            Seek { secs, relative } => {
+                if paused.is_none() {
+                    return nothing();
+                }
+                if relative { self.seek_by(secs, cx) } else { self.seek_to(secs.max(0.), cx) }
+                Ok("OK".into())
+            }
+            Status => Ok(self.status_line()),
+            Raise => {
+                window.activate_window();
+                Ok("OK".into())
+            }
+            Quit => {
+                self.quit_cast(false, window);
+                Ok("Closing".into())
+            }
+        }
+    }
+
+    /// What `unbloated-youtube status` prints.
+    fn status_line(&self) -> String {
+        let (title, state, position, duration, target) = match &self.casting {
+            Some(c) => match c.status.as_ref().filter(|s| s.playing) {
+                Some(s) => (Some(s.title.clone()), if s.paused { "paused" } else { "playing" }, s.position, s.duration, Some(c.name.clone())),
+                None => (None, "idle", 0., 0., Some(c.name.clone())),
+            },
+            None => match self.state.as_ref().filter(|s| s.playing) {
+                Some(s) => (self.current.as_ref().map(|v| v.title.clone()), if s.paused { "paused" } else { "playing" }, s.position, s.duration, None),
+                None => (None, "idle", 0., 0., None),
+            },
+        };
+        let mut lines = vec![format!("state: {state}")];
+        lines.extend(title.map(|t| format!("title: {t}")));
+        if state != "idle" {
+            lines.push(format!("position: {} / {}", fmt_duration(position), fmt_duration(duration)));
+        }
+        lines.extend(target.map(|t| format!("casting to: {t}")));
+        lines.push(format!("up next: {}", self.up_next.len()));
+        lines.join("\n")
+    }
+
     /// Next or previous: the receiver's queue while casting a list, else the list here.
     fn next_prev(&mut self, forward: bool, cx: &mut Context<Self>) {
         if self.casting.as_ref().is_some_and(|c| c.listed) {
@@ -3399,6 +3488,9 @@ impl Unbloated {
             cx.notify();
         } else if self.casting.is_none() {
             self.player.toggle_pause();
+            if let Some(st) = self.state.as_mut() {
+                st.paused = !st.paused;
+            }
         }
     }
 
@@ -7230,9 +7322,51 @@ impl Render for Unbloated {
     }
 }
 
+/// Print a command's answer and exit with its status.
+fn finish(reply: cli::Reply) -> ! {
+    match reply {
+        Ok(message) => {
+            println!("{message}");
+            std::process::exit(0)
+        }
+        Err(error) => {
+            eprintln!("unbloated-youtube: {error}");
+            std::process::exit(1)
+        }
+    }
+}
+
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let start = match cli::parse(&args) {
+        Ok(cli::Parsed::Print(text)) => return println!("{text}"),
+        Ok(cli::Parsed::Run(command)) => match cli::send(&command) {
+            Ok(reply) => finish(reply),
+            Err(_) => {
+                eprintln!("unbloated-youtube: not running");
+                std::process::exit(1);
+            }
+        },
+        // A link goes to the running app; only without one does it start the app.
+        Ok(cli::Parsed::Launch(Some(command))) => match cli::send(&command) {
+            Ok(reply) => finish(reply),
+            Err(_) => {
+                if let cli::Command::Open { url } = &command {
+                    if yt::parse_link(url).is_none() {
+                        finish(Err(format!("not a YouTube link: {url}")));
+                    }
+                }
+                Some(command)
+            }
+        },
+        Ok(cli::Parsed::Launch(None)) => None,
+        Err(message) => {
+            eprintln!("unbloated-youtube: {message}");
+            std::process::exit(2);
+        }
+    };
     store::migrate_old_dirs();
-    Application::new().with_assets(icons::Assets).run(|cx: &mut App| {
+    Application::new().with_assets(icons::Assets).run(move |cx: &mut App| {
         // At 1280x800, but no bigger than the screen: with display scaling that can be larger than it,
         // and the bottom of the window (and anything there) would be off-screen.
         let want = size(px(1280.), px(800.));
@@ -7241,7 +7375,7 @@ fn main() {
             size(px(f32::from(want.width).min(f32::from(screen.width) - 40.)), px(f32::from(want.height).min(f32::from(screen.height) - 80.)))
         });
         let bounds = Bounds::centered(None, fit, cx);
-        cx.open_window(
+        let window = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 app_id: Some("unbloated-youtube".into()),
@@ -7251,6 +7385,26 @@ fn main() {
             |window, cx| cx.new(|cx| Unbloated::new(window, cx)),
         )
         .unwrap();
+        // The link or command the app was started with.
+        if let Some(command) = start {
+            window.update(cx, |this, window, cx| this.run_command(command, window, cx)).ok();
+        }
+        // Commands from other command lines; the socket is only kept while this window lives.
+        if let Some(requests) = cli::listen() {
+            cx.spawn(async move |cx| {
+                loop {
+                    cx.background_executor().timer(Duration::from_millis(100)).await;
+                    while let Ok(request) = requests.try_recv() {
+                        let reply = window
+                            .update(cx, |this, window, cx| this.run_command(request.command, window, cx))
+                            .unwrap_or_else(|_| Err("the window is closed".into()));
+                        let _ = request.reply.send(reply);
+                    }
+                }
+            })
+            .detach();
+            cx.on_app_quit(|_| async { cli::cleanup() }).detach();
+        }
         cx.on_window_closed(|cx| cx.quit()).detach();
     });
 }
