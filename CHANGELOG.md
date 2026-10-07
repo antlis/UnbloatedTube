@@ -4,7 +4,7 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
-## Unreleased
+## 0.19.1 - 2026-10-07
 
 ### Changed
 - Vim mode: click hints moved from `f` to `Shift+F`, so `f` is fullscreen in every mode (Vim mode used `Shift+F` for it before). The in-app key list and the README say so.
