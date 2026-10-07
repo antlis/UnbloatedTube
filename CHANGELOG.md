@@ -4,6 +4,13 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Fixed
+- The Save button's playlist list no longer offers playlists you only saved from other people,
+  which YouTube refuses to add to ("You did not add it"). It shows what YouTube's own Save menu
+  does: your playlists, and Watch later.
+
 ## 0.21.0 - 2026-10-07
 
 ### Changed

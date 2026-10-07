@@ -80,7 +80,8 @@ list, your playlists, your history, search and a player.
 ### Playlists done right
 
 - **Save to playlist** opens a full-height picker **with search**: type a few letters, press
-  Enter.
+  Enter. It lists the playlists you can add to (what YouTube's own Save menu offers) and Watch
+  later, not the ones you only saved from other people; those stay in the Playlists tab.
 - **Remove from playlist**: hover a video in an open playlist and click the trash icon (in
   Liked videos this unlikes it).
 - **Add a whole playlist to Up next** with one button in the playlist header.
