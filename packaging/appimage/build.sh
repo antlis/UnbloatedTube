@@ -37,9 +37,11 @@ echo "$(curl -fsSL --retry 3 "$base/deno-x86_64-unknown-linux-gnu.zip.sha256sum"
 unzip -q deno.zip -d helpers
 chmod +x helpers/yt-dlp helpers/deno
 
-# AppDir: the binary with the libraries it links against (not glibc, the GPU or the Vulkan loader:
-# those come from the system), found through RPATH.
+# AppDir: the binary with the libraries it links against, found through its RUNPATH. Not bundled:
+# glibc, the GPU and the Vulkan loader (they come from the system), and libxkbcommon, whose
+# compose tables are the system's: a bundled older copy prints errors about newer ones.
 ./linuxdeploy --appimage-extract-and-run --appdir AppDir \
+  --exclude-library 'libxkbcommon*' \
   --executable "$dir/unbloated-youtube" \
   --desktop-file "$dir/unbloated-youtube.desktop" \
   --icon-file "$dir/unbloated-youtube.svg" \

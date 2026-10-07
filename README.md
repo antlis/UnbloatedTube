@@ -226,6 +226,24 @@ newer: Ubuntu 22.04+, Debian 12+, Fedora, Arch). Unpack it and run `unbloated-yo
 
 Check the download with the `.sha256` file next to it (`sha256sum -c`).
 
+### AppImage
+
+Releases also have an `unbloated-youtube-X.Y.Z-x86_64.AppImage` (with a `.sha256`): one file that
+runs on most Linux distros, with no unpacking. Make it executable and run it:
+
+```sh
+chmod +x unbloated-youtube-*-x86_64.AppImage
+./unbloated-youtube-*-x86_64.AppImage
+```
+
+It carries `yt-dlp` and `deno` as a fallback: it looks for those on your `PATH` first, so a
+yt-dlp you keep up to date wins over the bundled one (which is the version from the day of the
+release, and YouTube breaks old ones). What it does not carry: **`mpv`**, which you install
+yourself (`apt install mpv`, `pacman -S mpv`, ...), `libxkbcommon` and `libxkbcommon-x11` (any
+desktop with X11 has them), the Vulkan loader and a GPU driver, and glibc, so it needs a distro
+with glibc 2.35 or newer (the same as the prebuilt binary). The file is large (around 100 MB) because of the bundled yt-dlp and deno. On
+distros without FUSE 2, run it with `--appimage-extract-and-run`. Not on NixOS: use the flake.
+
 ### NixOS
 
 To install it with Nix, the repository is a flake. Its package (`package.nix`) puts mpv, yt-dlp
@@ -248,8 +266,9 @@ home.packages = [ inputs.unbloated-youtube.packages.${pkgs.system}.default ];
 
 Without flakes, `nix-build` (or `nix-env -f . -i`) builds the same package through `default.nix`.
 
-This compiles all ~730 crates (about 25 minutes on 2 cores, with several GB of disk); see the TODO
-on prebuilt binaries. For development, `shell.nix` provides the same tools:
+The first build compiles all ~730 crates (about 25 minutes on 2 cores, with several GB of disk);
+the flake builds them as a separate derivation (crane), so after that an update recompiles only
+the app, in about a minute and a half. See the TODO on prebuilt binaries. For development, `shell.nix` provides the same tools:
 
 ```sh
 nix-shell --run 'cargo build --release'
