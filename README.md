@@ -1,5 +1,8 @@
 # unbloated-youtube
 
+[![Latest release](https://img.shields.io/github/v/release/antlis/unbloated-youtube)](https://github.com/antlis/unbloated-youtube/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/antlis/unbloated-youtube/total)](https://github.com/antlis/unbloated-youtube/releases)
+
 A lightweight, configurable YouTube desktop client, written in Rust with
 [GPUI](https://crates.io/crates/gpui) (the UI framework behind the Zed editor), with
 [mpv](https://mpv.io) for playback and [yt-dlp](https://github.com/yt-dlp/yt-dlp) for data.
