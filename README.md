@@ -198,15 +198,16 @@ Text fields support Home/End, arrows (Ctrl: by word), Shift to select, Ctrl+A/C/
 Turn it on in Settings. It adds `j`/`k`, `gg`/`G`, `Ctrl-d`/`Ctrl-u` to move through lists,
 `Enter`/`l` to open, `h` to go back, `H`/`L` to switch tabs, `x` to queue a video, `yy` to copy
 the link (`yt` at the current time), and the rest of the keys marked "Vim mode" above.
+`f` stays fullscreen, as without Vim mode; `Shift+F` shows the click hints.
 
-**Hint mode.** Press `f` and every clickable thing on screen (tabs, rows, buttons, chips, switches)
+**Hint mode.** Press `Shift+F` and every clickable thing on screen (tabs, rows, buttons, chips, switches)
 gets a short letter label; type the label to click it, `Esc` to cancel. It is the same idea as
 the link hints in browser extensions like [Vimium](https://github.com/philc/vimium),
 [Tridactyl](https://github.com/tridactyl/tridactyl) and
 [Surfingkeys](https://github.com/brookhong/Surfingkeys): you never need the mouse, even for
 things that have no shortcut of their own. See
 [Vimium's description of link hints](https://github.com/philc/vimium#keyboard-bindings)
-(the `f` command) if you haven't used one.
+(the `f` command there) if you haven't used one.
 
 ## Running
 

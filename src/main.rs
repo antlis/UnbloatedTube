@@ -113,7 +113,7 @@ const TOGGLES: [Toggle; 11] = [
     ("Comments", "Comments tab under the player, loaded when you open it", |s| &mut s.comments),
     ("Watch later tab", "Your Watch later list under the player (needs your login), loaded when you open it", |s| &mut s.watch_later_tab),
     ("Shorts", "Shorts tab on channels, and Shorts in feeds and search", |s| &mut s.shorts),
-    ("Vim mode", "j/k move, Enter opens, h goes back, f shows click hints; ? lists all keys", |s| &mut s.vim),
+    ("Vim mode", "j/k move, Enter opens, h goes back, ⇧F shows click hints; ? lists all keys", |s| &mut s.vim),
     ("Window buttons", "Minimize, maximize and close, top right", |s| &mut s.window_buttons),
     ("Light theme", "Light colors instead of dark", |s| &mut s.light_theme),
 ];
@@ -272,7 +272,7 @@ const VIM_SHORTCUTS: [(&str, &str); 35] = [
     ("Space", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     (", / .", "Back / forward 10 seconds"),
-    ("⇧F", "Fullscreen (Esc or f to leave)"),
+    ("f", "Fullscreen (Esc or f to leave)"),
     ("m", "Mute"),
     ("v", "Subtitles on / off"),
     ("t", "Cast the video to the first cast target (config.toml)"),
@@ -290,7 +290,7 @@ const VIM_SHORTCUTS: [(&str, &str); 35] = [
     ("h / Backspace", "Back"),
     ("⇧H / ⇧L", "Previous / next tab"),
     ("x", "Add the selected video to Up next"),
-    ("f", "Click hints: type the label to click"),
+    ("⇧F", "Click hints: type the label to click"),
     ("e", "Lower pane full height, and back"),
     ("⇧E", "Player full height (hide the lower pane), and back"),
     ("[ / ]", "Previous / next tab (header tabs, then the lower pane's)"),
@@ -1631,6 +1631,8 @@ impl Unbloated {
             let (name, ch) = (g.name.clone(), channel.to_string());
             row = row.child(
                 self.chip(("member", i), g.name.clone(), member)
+                    // Channel count, as in the group bar of the list.
+                    .child(div().ml(px(6.)).opacity(0.6).child(g.channels.len().to_string()))
                     .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.toggle_membership(&name, &ch, cx)),
             );
         }
@@ -3223,6 +3225,8 @@ impl Unbloated {
         match command {
             Open { url } => {
                 let link = yt::parse_link(&url).ok_or_else(|| format!("not a YouTube link: {url}"))?;
+                // The link replaces the last-watched video, so loading that first would only flash it.
+                self.preloaded = true;
                 self.open_link(link, cx);
                 window.activate_window();
                 Ok("Opening".into())
@@ -3825,7 +3829,7 @@ impl Unbloated {
             }
             "H" => self.vim_tab(-1, cx),
             "L" => self.vim_tab(1, cx),
-            "f" => {
+            "F" => {
                 let window_size = window.viewport_size();
                 // Only what's on screen (the list may have laid out rows below the fold).
                 let targets: Vec<_> = self
@@ -3852,7 +3856,6 @@ impl Unbloated {
             "right" if active => self.seek_by(5., cx),
             "," if active => self.seek_by(-10., cx),
             "." if active => self.seek_by(10., cx),
-            "F" if active && self.casting.is_none() => self.player.set_fullscreen(!self.fullscreen),
             "m" => self.player.toggle_mute(),
             "v" => self.toggle_subtitles(cx),
             "t" => self.cast_to(None, cx),
