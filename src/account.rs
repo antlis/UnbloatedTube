@@ -20,7 +20,7 @@ pub struct Account {
 }
 
 /// The signed-in account as far as YouTube's guide endpoint shows it: handle like
-/// "@anton", and the avatar the guide draws next to it.
+/// "@username", and the avatar the guide draws next to it.
 #[derive(Clone, Debug, Default)]
 pub struct Me {
     pub handle: Option<String>,
