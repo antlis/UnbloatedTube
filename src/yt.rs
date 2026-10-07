@@ -103,7 +103,7 @@ struct Entry {
 /// PYCRYPTODOME_DISABLE_GMP: pycryptodome otherwise hunts for libgmp via ctypes' find_library,
 /// which on NixOS shells out to the C compiler and adds ~1.7s to every yt-dlp start.
 fn stream(cfg: &Config, targets: &[String], limit: usize, mut on: impl FnMut(Entry)) -> Result<(), String> {
-    let mut child = Command::new("yt-dlp")
+    let mut child = crate::prefetch::ytdlp()
         .env("PYCRYPTODOME_DISABLE_GMP", "1")
         .args(["--no-update", "--flat-playlist", "-j", "--no-warnings"])
         .args(["--playlist-end", &limit.to_string()])
@@ -152,7 +152,7 @@ pub fn comments(cfg: &Config, video_id: &str, limit: usize, on: &mut dyn FnMut(C
         #[serde(default)]
         is_pinned: bool,
     }
-    let out = Command::new("yt-dlp")
+    let out = crate::prefetch::ytdlp()
         .env("PYCRYPTODOME_DISABLE_GMP", "1")
         .args(["--no-update", "--no-warnings", "--skip-download", "--write-comments", "-j", "--no-playlist"])
         .args(["--extractor-args", &format!("youtube:max_comments={limit},{limit},0,0;comment_sort=top")])
@@ -459,7 +459,7 @@ pub fn subtitles(cfg: &Config, id: &str, langs: &str, auto: bool, dir: &std::pat
             let _ = std::fs::remove_file(entry.path());
         }
     }
-    let out = Command::new("yt-dlp")
+    let out = crate::prefetch::ytdlp()
         .env("PYCRYPTODOME_DISABLE_GMP", "1")
         .args(["--no-update", "--no-warnings", "--skip-download", "--no-playlist", "--write-subs"])
         .args(auto.then_some("--write-auto-subs"))
@@ -591,7 +591,7 @@ pub fn group_videos(cfg: &Config, url: &str, on: &mut dyn FnMut(Video)) -> Resul
 /// Put a video in the account's YouTube history, as watching it does (yt-dlp's `--mark-watched`
 /// sends the same playback ping the site does). Needs the login; no download happens.
 pub fn mark_watched(cfg: &Config, id: &str) -> Result<(), String> {
-    let out = Command::new("yt-dlp")
+    let out = crate::prefetch::ytdlp()
         .env("PYCRYPTODOME_DISABLE_GMP", "1")
         .args(["--no-update", "--no-warnings", "--skip-download", "--no-playlist", "--mark-watched"])
         .args(cfg.cookie_args())

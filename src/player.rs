@@ -114,7 +114,7 @@ impl Player {
                 .args(wid.map(|_| "--gpu-context=x11egl"))
                 // mpv's yt-dlp is this program, which answers from what was resolved ahead of time.
                 .args(std::env::current_exe().ok().map(|exe| format!("--script-opts-append=ytdl_hook-ytdl_path={}", exe.display())))
-                .env(crate::prefetch::ENV, "1")
+                .envs(crate::prefetch::environment())
                 .args(options)
                 .args(["--volume-max=100".to_string(), format!("--volume={}", self.volume)])
                 .arg(format!("--speed={speed}"))

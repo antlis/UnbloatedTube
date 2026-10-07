@@ -4,6 +4,18 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Changed
+- **Videos start sooner, again**: besides the row under the pointer, the app now looks up the
+  first rows of the list on screen, the head of Up next and the next video, and reacts to the
+  pointer after 0.15 s instead of 0.35 s.
+- **yt-dlp stays running**: when it is a Python script (Nix, pip, pipx, distro packages), one
+  helper process keeps it loaded and serves lists, search, comments, subtitles and mpv, saving
+  about a second per request. Without that (the standalone binary, the AppImage) nothing changes.
+- **A faster lookup for ordinary videos** (the manifests it doesn't need are skipped). Live
+  streams, premieres and anything unusual always get the full lookup, and are never kept.
+
 ## 0.20.0 - 2026-10-07
 
 ### Changed

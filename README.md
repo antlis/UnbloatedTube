@@ -473,12 +473,24 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   (pycryptodome otherwise invokes the C compiler looking for libgmp).
 - **Videos are resolved ahead of time.** Finding a video's streams costs yt-dlp about 3 s. The app
   runs that lookup (mpv's own yt-dlp command, minus the watched ping) for the row the pointer
-  rests on for a moment, for the Vim cursor, and for the video Next would play, and keeps the
-  answer for an hour in the cache folder (`ytdl/`). mpv is told to use this program as its yt-dlp
-  (`ytdl_hook-ytdl_path`, with `UNBLOATED_YTDL_SHIM` set in its environment); it prints the kept
-  answer, sends the watched ping in the background, or, with no answer, becomes the real yt-dlp.
-  Chapters, titles, subtitles and SponsorBlock go through mpv as before. Settings → Player →
-  "Load videos ahead" turns it off.
+  rests on for a moment, for the Vim cursor, for the first rows of the list on screen, for the
+  head of Up next and for the video Next would play, and keeps the answer for an hour in the
+  cache folder (`ytdl/`). mpv is told to use this program as its yt-dlp (`ytdl_hook-ytdl_path`,
+  with `UNBLOATED_YTDL_SHIM` set in its environment), and so are the app's own list, search,
+  comment and subtitle requests. It prints the kept answer, sends the watched ping in the
+  background, or runs the request. Chapters, titles, subtitles and SponsorBlock go through mpv as
+  before. Settings → Player → "Load videos ahead" turns the lookups off.
+- **A yt-dlp that stays running.** Starting yt-dlp takes about a second before it does anything.
+  When the installed yt-dlp is a Python script (Nix, pip, pipx, most distro packages) the app
+  starts one Python process that has yt-dlp loaded (`src/ytdl_helper.py`) and forks it for each
+  request, handing it the caller's stdout and stderr, so a request starts in milliseconds. The
+  helper ends with the app. With the standalone yt-dlp binary (or the AppImage's copy) there is
+  nothing to load, and every request starts yt-dlp as before.
+- **Faster lookup for ordinary videos, never for live ones.** A single video is looked up first
+  with the HLS and DASH manifests skipped, which saves half a second. That answer is used only if
+  yt-dlp says `live_status` is `not_live` and it has a length and streams; a live stream, a
+  premiere, anything unusual and any failure is simply run again exactly as asked, and such
+  answers are never kept.
 - **mpv dies with the app.** It's started with `PR_SET_PDEATHSIG`, so closing the window never
   leaves audio playing.
 - **SponsorBlock** runs inside mpv as the `sponsorblock_minimal` script, with the categories

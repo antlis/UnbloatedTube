@@ -124,7 +124,7 @@ const PLAYER_TOGGLES: [Toggle; 8] = [
     ("Audio only", "Don't fetch or show video, e.g. for music and podcasts", |s| &mut s.audio_only),
     ("Prefer hardware-friendly codecs", "Skip AV1, which many GPUs can't decode, for lower CPU use", |s| &mut s.prefer_hw_codecs),
     ("Hardware decoding", "Decode video on the GPU (mpv --hwdec=auto-safe)", |s| &mut s.hwdec),
-    ("Load videos ahead", "Look up a video's streams when the pointer rests on it, and the next one, so it starts sooner; off: nothing is requested until you play", |s| &mut s.prefetch),
+    ("Load videos ahead", "Look up the streams of the video under the pointer, the first rows of a list, the head of Up next and the next video, so they start sooner; off: nothing is requested until you play", |s| &mut s.prefetch),
     ("Hover controls on the video", "A bar with play, seek, volume and fullscreen when the pointer is over the video", |s| &mut s.video_controls),
     ("mpv controls and hotkeys", "mpv's own on-screen controls and key bindings over the video; off: only this app's", |s| &mut s.native_controls),
     ("Block in-video ads (SponsorBlock)", "Skip sponsor reads and other segments marked by the community", |s| &mut s.sponsorblock),
@@ -2403,7 +2403,7 @@ impl Unbloated {
         self.hover_video = Some(id.to_string());
         let id = id.to_string();
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(Duration::from_millis(350)).await;
+            cx.background_executor().timer(Duration::from_millis(150)).await;
             this.update(cx, |this, cx| {
                 if this.hover_video.as_deref() == Some(id.as_str()) {
                     this.prefetch(&id, cx);
@@ -2414,11 +2414,23 @@ impl Unbloated {
         .detach();
     }
 
+    /// The first rows of the list on screen, and the head of Up next: what is most likely played.
+    fn prefetch_top(&mut self, cx: &mut Context<Self>) {
+        if !self.settings.prefetch {
+            return;
+        }
+        let mut ids: Vec<String> = self.up_next.first().map(|v| v.id.clone()).into_iter().collect();
+        ids.extend(self.left_items().into_iter().filter_map(|i| if let Item::Video(v, _) = i { Some(v.id) } else { None }).take(3));
+        for id in ids {
+            self.prefetch(&id, cx);
+        }
+    }
+
     /// Vim mode: the same for the video the cursor rests on.
     fn prefetch_cursor(&mut self, cx: &mut Context<Self>) {
         let cursor = self.vim_cursor;
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(Duration::from_millis(350)).await;
+            cx.background_executor().timer(Duration::from_millis(150)).await;
             this.update(cx, |this, cx| {
                 if this.vim_cursor == cursor && this.settings.vim {
                     if let Some(Item::Video(v, _)) = this.left_items().get(cursor) {
@@ -4284,6 +4296,9 @@ impl Unbloated {
             self.poll_cast(cx);
         }
         self.preload(cx);
+        if self.ticks % 8 == 0 {
+            self.prefetch_top(cx);
+        }
         self.load_status(cx);
         self.poll_subtitles(state.as_ref(), cx);
         let url = self.current.as_ref().map(|v| v.url());
@@ -7456,6 +7471,7 @@ fn main() {
     };
     store::migrate_old_dirs();
     std::thread::spawn(prefetch::sweep);
+    prefetch::start_helper();
     Application::new().with_assets(icons::Assets).run(move |cx: &mut App| {
         // At 1280x800, but no bigger than the screen: with display scaling that can be larger than it,
         // and the bottom of the window (and anything there) would be off-screen.
@@ -7495,6 +7511,7 @@ fn main() {
             .detach();
             cx.on_app_quit(|_| async { cli::cleanup() }).detach();
         }
+        cx.on_app_quit(|_| async { prefetch::cleanup() }).detach();
         cx.on_window_closed(|cx| cx.quit()).detach();
     });
 }
