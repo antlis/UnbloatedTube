@@ -5,6 +5,7 @@ mod cli;
 mod embed;
 mod icons;
 mod player;
+mod prefetch;
 mod store;
 mod thumbs;
 mod yt;
@@ -118,11 +119,12 @@ const TOGGLES: [Toggle; 11] = [
     ("Light theme", "Light colors instead of dark", |s| &mut s.light_theme),
 ];
 
-const PLAYER_TOGGLES: [Toggle; 7] = [
+const PLAYER_TOGGLES: [Toggle; 8] = [
     ("Autoplay next", "Play the next video of the list when one ends", |s| &mut s.autoplay),
     ("Audio only", "Don't fetch or show video, e.g. for music and podcasts", |s| &mut s.audio_only),
     ("Prefer hardware-friendly codecs", "Skip AV1, which many GPUs can't decode, for lower CPU use", |s| &mut s.prefer_hw_codecs),
     ("Hardware decoding", "Decode video on the GPU (mpv --hwdec=auto-safe)", |s| &mut s.hwdec),
+    ("Load videos ahead", "Look up a video's streams when the pointer rests on it, and the next one, so it starts sooner; off: nothing is requested until you play", |s| &mut s.prefetch),
     ("Hover controls on the video", "A bar with play, seek, volume and fullscreen when the pointer is over the video", |s| &mut s.video_controls),
     ("mpv controls and hotkeys", "mpv's own on-screen controls and key bindings over the video; off: only this app's", |s| &mut s.native_controls),
     ("Block in-video ads (SponsorBlock)", "Skip sponsor reads and other segments marked by the community", |s| &mut s.sponsorblock),
@@ -491,6 +493,10 @@ struct Unbloated {
     embed: Option<Rc<RefCell<Embed>>>,
     /// The last-watched video has been loaded (paused) into mpv at startup.
     preloaded: bool,
+    /// The video the pointer rests on, and when each video was last resolved ahead of time.
+    hover_video: Option<String>,
+    prefetched: HashMap<String, Instant>,
+    prefetching: usize,
     /// Videos or Shorts list of the History tab.
     history_view: ChannelView,
     /// Start time of a pasted link, taken by the next `start`.
@@ -738,6 +744,9 @@ impl Unbloated {
             volume_set: Instant::now(),
             embed: None,
             preloaded: false,
+            hover_video: None,
+            prefetched: HashMap::new(),
+            prefetching: 0,
             history_view: ChannelView::Videos,
             link_start: None,
             subs_wanted: None,
@@ -2350,7 +2359,77 @@ impl Unbloated {
         if !self.cfg.has_auth() && channel_changed {
             self.load_recs(cx);
         }
+        // What Next would play, so it starts at once.
+        if let Some(next) = self.next_video() {
+            self.prefetch(&next.id, cx);
+        }
         cx.notify();
+    }
+
+    /// Resolve a video in the background so playing it starts sooner (see prefetch.rs).
+    fn prefetch(&mut self, id: &str, cx: &mut Context<Self>) {
+        let recent = |t: &Instant| t.elapsed() < prefetch::TTL - Duration::from_secs(600);
+        if !self.settings.prefetch || self.current.as_ref().is_some_and(|c| c.id == id) || self.prefetching >= 2 || self.prefetched.get(id).is_some_and(recent) {
+            return;
+        }
+        self.prefetched.insert(id.to_string(), Instant::now());
+        self.prefetching += 1;
+        let (cfg, format, id) = (self.cfg.clone(), player::format(&self.settings), id.to_string());
+        let task = {
+            let id = id.clone();
+            cx.background_executor().spawn(async move { prefetch::fetch(&cfg, &id, &format) })
+        };
+        cx.spawn(async move |this, cx| {
+            let res = task.await;
+            this.update(cx, |this, _| {
+                this.prefetching -= 1;
+                if res.is_err() {
+                    this.prefetched.remove(&id);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The pointer entered or left a video row: resolve it once it has rested there a moment.
+    fn prefetch_hover(&mut self, id: &str, hovered: bool, cx: &mut Context<Self>) {
+        if !hovered {
+            if self.hover_video.as_deref() == Some(id) {
+                self.hover_video = None;
+            }
+            return;
+        }
+        self.hover_video = Some(id.to_string());
+        let id = id.to_string();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_millis(350)).await;
+            this.update(cx, |this, cx| {
+                if this.hover_video.as_deref() == Some(id.as_str()) {
+                    this.prefetch(&id, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Vim mode: the same for the video the cursor rests on.
+    fn prefetch_cursor(&mut self, cx: &mut Context<Self>) {
+        let cursor = self.vim_cursor;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_millis(350)).await;
+            this.update(cx, |this, cx| {
+                if this.vim_cursor == cursor && this.settings.vim {
+                    if let Some(Item::Video(v, _)) = this.left_items().get(cursor) {
+                        let id = v.id.clone();
+                        this.prefetch(&id, cx);
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Load `video` into mpv at its resume position.
@@ -3866,6 +3945,7 @@ impl Unbloated {
             "/" => self.open_search(window, cx),
             _ => return false,
         }
+        self.prefetch_cursor(cx);
         true
     }
 
@@ -4453,8 +4533,10 @@ impl Unbloated {
         let thumb = self.thumb_el(&video.id, Some(video.thumb_url()), 96., 54., px(4.), cx);
         let menu_video = video.clone();
         let menu_queue = queue.clone();
+        let hover_id = video.id.clone();
         div()
             .id(id)
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| this.prefetch_hover(&hover_id, *hovered, cx)))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, ev: &gpui::MouseDownEvent, window, cx| {
@@ -7340,6 +7422,10 @@ fn finish(reply: cli::Reply) -> ! {
 }
 
 fn main() {
+    // mpv runs this program as its yt-dlp (see prefetch.rs); nothing else of the app starts then.
+    if std::env::var_os(prefetch::ENV).is_some() {
+        prefetch::run_shim();
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     let start = match cli::parse(&args) {
         Ok(cli::Parsed::Print(text)) => return println!("{text}"),
@@ -7369,6 +7455,7 @@ fn main() {
         }
     };
     store::migrate_old_dirs();
+    std::thread::spawn(prefetch::sweep);
     Application::new().with_assets(icons::Assets).run(move |cx: &mut App| {
         // At 1280x800, but no bigger than the screen: with display scaling that can be larger than it,
         // and the bottom of the window (and anything there) would be off-screen.
