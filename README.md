@@ -471,6 +471,14 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   `request_size=10 MB` (FFmpeg 9), so it fetches in range requests at full speed.
 - **Fast yt-dlp starts.** `PYCRYPTODOME_DISABLE_GMP=1` saves ~1.7 s per yt-dlp run on NixOS
   (pycryptodome otherwise invokes the C compiler looking for libgmp).
+- **Videos are resolved ahead of time.** Finding a video's streams costs yt-dlp about 3 s. The app
+  runs that lookup (mpv's own yt-dlp command, minus the watched ping) for the row the pointer
+  rests on for a moment, for the Vim cursor, and for the video Next would play, and keeps the
+  answer for an hour in the cache folder (`ytdl/`). mpv is told to use this program as its yt-dlp
+  (`ytdl_hook-ytdl_path`, with `UNBLOATED_YTDL_SHIM` set in its environment); it prints the kept
+  answer, sends the watched ping in the background, or, with no answer, becomes the real yt-dlp.
+  Chapters, titles, subtitles and SponsorBlock go through mpv as before. Settings → Player →
+  "Load videos ahead" turns it off.
 - **mpv dies with the app.** It's started with `PR_SET_PDEATHSIG`, so closing the window never
   leaves audio playing.
 - **SponsorBlock** runs inside mpv as the `sponsorblock_minimal` script, with the categories

@@ -4,6 +4,14 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Changed
+- **Videos start sooner**: the app looks a video's streams up ahead of time, for the row the
+  pointer rests on (or the Vim cursor) and for the video Next would play, and mpv uses that answer
+  instead of waiting for yt-dlp (about 3 s saved per video). Settings → Player → "Load videos
+  ahead" turns it off.
+
 ## 0.19.1 - 2026-10-07
 
 ### Changed

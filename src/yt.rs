@@ -177,7 +177,7 @@ pub fn comments(cfg: &Config, video_id: &str, limit: usize, on: &mut dyn FnMut(C
     Ok(())
 }
 
-fn short_error(stderr: &str) -> String {
+pub fn short_error(stderr: &str) -> String {
     let line = stderr.lines().rev().find(|l| l.starts_with("ERROR")).unwrap_or(stderr.trim());
     let line = line.trim_start_matches("ERROR: ");
     // Drop the "[extractor] " prefix and yt-dlp's long help text after the first sentence.
