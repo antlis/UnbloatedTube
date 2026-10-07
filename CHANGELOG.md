@@ -4,6 +4,14 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Fixed
+- Removing a video from a playlist removes that one entry. It used to remove every copy of the
+  video, so deleting one of three duplicates deleted all three.
+- When YouTube refuses to add or remove a video, the notice says what YouTube answered (its
+  status and message) instead of always blaming playlists that aren't yours.
+
 ## 0.21.1 - 2026-10-07
 
 ### Fixed
