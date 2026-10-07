@@ -120,6 +120,18 @@ pub fn run(args: &[String], timeout: Duration) -> Result<(), String> {
     Err(reason.map_or_else(|| status.to_string(), |r| r.chars().take(160).collect()))
 }
 
+/// A receiver takes this many links per request, and `MAX_LIST` in all.
+pub const CHUNK: usize = 200;
+pub const MAX_LIST: usize = 2000;
+/// The next chunk is sent when the receiver is this close to the end of what it has.
+const REFILL_AT: usize = 50;
+
+/// The next part of a long list to send: the receiver is at `pos` of the `sent` links it holds,
+/// out of `total`. None while it has plenty left, or everything went out.
+pub fn next_chunk(pos: usize, sent: usize, total: usize) -> Option<std::ops::Range<usize>> {
+    (sent < total && pos + REFILL_AT >= sent).then(|| sent..(sent + CHUNK).min(total))
+}
+
 /// A receiver that speaks the remote API (`POST /play`, `GET /status`, `POST /ctl`, bearer token),
 /// so the app can show and control what it plays.
 #[derive(Clone)]
@@ -178,6 +190,11 @@ impl Remote {
         self.call("POST", "/play", Some(serde_json::json!({ "urls": urls, "index": index, "start": start }))).map(drop)
     }
 
+    /// Add `urls` to the end of the queue the receiver is playing (the rest of a long list).
+    pub fn queue_add(&self, urls: &[String]) -> Result<(), String> {
+        self.call("POST", "/queue", Some(serde_json::json!({ "urls": urls }))).map(drop)
+    }
+
     pub fn ctl(&self, body: serde_json::Value) -> Result<(), String> {
         self.call("POST", "/ctl", Some(body)).map(drop)
     }
@@ -202,7 +219,7 @@ impl Remote {
 
 #[cfg(test)]
 mod tests {
-    use super::split_command;
+    use super::{next_chunk, split_command};
 
     fn split(text: &str) -> Vec<String> {
         split_command(text)
@@ -214,6 +231,16 @@ mod tests {
         assert_eq!(split("  a   'b c'  d\\ e "), ["a", "b c", "d e"]);
         assert_eq!(split("say '' x"), ["say", "", "x"]);
         assert_eq!(split("a\"b c\"d"), ["ab cd"]);
+    }
+
+    #[test]
+    fn the_rest_of_a_long_list_follows_when_the_receiver_runs_low() {
+        assert_eq!(next_chunk(0, 200, 450), None); // plenty left
+        assert_eq!(next_chunk(149, 200, 450), None);
+        assert_eq!(next_chunk(150, 200, 450), Some(200..400)); // 50 from the end
+        assert_eq!(next_chunk(399, 400, 450), Some(400..450)); // the last, shorter chunk
+        assert_eq!(next_chunk(430, 450, 450), None); // everything is sent
+        assert_eq!(next_chunk(5, 120, 120), None); // a short list never refills
     }
 
     #[test]

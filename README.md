@@ -98,7 +98,8 @@ list, your playlists, your history, search and a player.
 - Opens on **the last video you watched, at the position you left it**; every video resumes
   where you stopped.
 - **Up next** queue (add with the `+` on any row); otherwise Next/autoplay continues through the
-  list you picked the video from.
+  list you picked the video from. When Next takes a video from Up next, a notice says so (and
+  the Next button's tooltip names it).
   Playing a whole playlist (the **Play** icon in its header, or right-click, **Play**) empties
   Up next first, so Next follows the playlist.
 - **Picture-in-picture**: move playback into a small always-on-top mpv window and keep
@@ -365,7 +366,9 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   - **right-click any video, then Cast from here**, sends that video and the ones after it in
     the list it is in (Recommended, History, a channel, search, ...).
 
-  At most 200 videos go out at once. The cast view then shows "3 of 12" and the receiver's current
+  Up to 2000 videos are cast: the first 200 go out at once and the rest follows in chunks as the
+  receiver's queue runs low (tg-mpv-bot 1.15 or newer; an older one plays the first 200 only). The
+  cast view then shows "3 of 12" and the receiver's current
   title, and the main video area (picture, title, channel, details) follows the receiver to the video
   playing there. **Previous** / **Next** (also **N** and **P**, and the player's own buttons) move
   through the receiver's queue. A `command` target casts only the first video of a list. T and
@@ -516,7 +519,6 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
     the browser's cookies from inside the sandbox need care
 - **Casting: what's left.** The button, the config targets and tg-mpv-bot's remote play API
   exist (see [Cast targets](#cast-targets)), also for lists. Still open:
-  - *Longer lists*: a list is cut at 200 videos; the receiver could ask for more as it plays.
   - *Remote control beyond tg-mpv-bot*: only receivers with its API are controlled, and volume,
     subtitles and next/previous aren't wired to the app's controls yet.
   - *A target picker* instead of one button per target, once there are many.

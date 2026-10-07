@@ -354,6 +354,9 @@ struct Casting {
     /// already put in the YouTube history.
     items: Vec<Video>,
     marked: std::collections::HashSet<usize>,
+    /// How many of `items` the receiver has been sent: it takes 200 at a time, the rest follows
+    /// when its queue runs low.
+    sent: usize,
 }
 
 struct Unbloated {
@@ -1741,7 +1744,7 @@ impl Unbloated {
         cx.notify();
     }
 
-    /// Cast a playlist without opening it: its first 200 videos are listed, then sent.
+    /// Cast a playlist without opening it: its first 2000 videos are listed, then sent in chunks.
     fn cast_playlist(&mut self, group: Group, target: String, cx: &mut Context<Self>) {
         self.playlist_menu = None;
         // The one that is open is already loaded.
@@ -1756,7 +1759,7 @@ impl Unbloated {
         let (cfg, url) = (self.cfg.clone(), group.url.clone());
         let task = cx.background_executor().spawn(async move {
             let mut out = Vec::new();
-            yt::playlist_head(&cfg, &url, 200, &mut |v| out.push(v)).map(|_| out)
+            yt::playlist_head(&cfg, &url, cast::MAX_LIST, &mut |v| out.push(v)).map(|_| out)
         });
         cx.spawn(async move |this, cx| {
             let res = task.await;
@@ -3116,14 +3119,17 @@ impl Unbloated {
         let title = video.title.clone();
         let remote = target.url.as_deref().map(|u| cast::Remote::new(u, target.token.as_deref().unwrap_or_default()));
         let command = cast::expand(&target.command, &cast::Playing { url: &video.url(), id: &video.id, title: &title, start });
-        let items: Vec<Video> = videos.iter().take(200).cloned().collect();
-        let urls: Vec<String> = items.iter().map(|v| v.url()).collect();
-        let listed = remote.is_some() && urls.len() > 1;
+        // The receiver holds 2000 at most, and takes 200 per request.
+        let items: Vec<Video> = videos.iter().take(cast::MAX_LIST).cloned().collect();
+        let urls: Vec<String> = items.iter().take(cast::CHUNK).map(|v| v.url()).collect();
+        let sent = urls.len();
+        let listed = remote.is_some() && items.len() > 1;
         self.notice = Some(format!("Casting to {name}…"));
         let task_remote = remote.clone();
+        let items_len = items.len();
         let task = cx.background_executor().spawn(async move {
             match task_remote {
-                Some(r) if urls.len() > 1 => r.play_list(&urls, 0, start),
+                Some(r) if items_len > 1 => r.play_list(&urls, 0, start),
                 Some(r) => r.play(&urls[0], start),
                 None => cast::run(&command, Duration::from_secs(60)),
             }
@@ -3146,6 +3152,7 @@ impl Unbloated {
                             listed,
                             items: items.clone(),
                             marked: Default::default(),
+                            sent,
                         });
                         // A command target can't be asked what plays: its one video counts now.
                         if this.casting.is_none() {
@@ -3161,6 +3168,32 @@ impl Unbloated {
         })
         .detach();
         cx.notify();
+    }
+
+    /// Send the next chunk of a long list when the receiver's queue is within 50 of its end.
+    fn refill_cast(&mut self, cx: &mut Context<Self>) {
+        let Some(c) = self.casting.as_mut().filter(|c| c.listed) else { return };
+        let Some((pos, _)) = c.status.as_ref().and_then(|s| s.queue) else { return };
+        let Some(range) = cast::next_chunk(pos, c.sent, c.items.len()) else { return };
+        let chunk: Vec<String> = c.items[range].iter().map(|v| v.url()).collect();
+        let (remote, before) = (c.remote.clone(), c.sent);
+        c.sent += chunk.len();
+        let task = cx.background_executor().spawn(async move { remote.queue_add(&chunk) });
+        cx.spawn(async move |this, cx| {
+            if let Err(e) = task.await {
+                this.update(cx, |this, cx| {
+                    // The rest isn't sent (an older bot has no /queue): the list ends where it was.
+                    if let Some(c) = this.casting.as_mut() {
+                        c.items.truncate(before);
+                        c.sent = before;
+                    }
+                    this.notice = Some(format!("Couldn't add more of the list: {e}"));
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     /// Record `id` in the account's YouTube history (a background yt-dlp call); only when logged in.
@@ -3182,8 +3215,23 @@ impl Unbloated {
     fn next_prev(&mut self, forward: bool, cx: &mut Context<Self>) {
         if self.casting.as_ref().is_some_and(|c| c.listed) {
             self.cast_ctl(serde_json::json!({ "action": if forward { "next" } else { "prev" } }), cx);
-        } else if let Some(v) = if forward { self.next_video() } else { self.neighbor(-1) } {
+        } else if forward {
+            self.play_next(cx);
+        } else if let Some(v) = self.neighbor(-1) {
             self.play(v, None, cx);
+        }
+    }
+
+    /// Play what Next plays here (Up next first, then the list), and say so when it came from Up
+    /// next: that is the part that looks like a bug when you were going through a playlist.
+    fn play_next(&mut self, cx: &mut Context<Self>) {
+        let from_queue = !self.up_next.is_empty();
+        let Some(v) = self.next_video() else { return };
+        let title = v.title.clone();
+        self.play(v, None, cx);
+        // After `play`, which clears notices.
+        if from_queue {
+            self.notice = Some(format!("Next from Up next: {title}"));
         }
     }
 
@@ -3222,6 +3270,7 @@ impl Unbloated {
                     this.current = Some(v);
                     cx.notify();
                 }
+                this.refill_cast(cx);
                 let Some(c) = this.casting.as_mut() else { return };
                 if (c.seen && !alive) || (!c.seen && c.started.elapsed() > Duration::from_secs(90)) {
                     this.end_cast("Cast ended", cx);
@@ -4091,11 +4140,7 @@ impl Unbloated {
         if let Some(action) = state.as_ref().map(|s| s.action.clone()).filter(|a| !a.is_empty()) {
             self.player.clear_action();
             match action.as_str() {
-                "next" => {
-                    if let Some(v) = self.next_video() {
-                        self.play(v, None, cx);
-                    }
-                }
+                "next" => self.play_next(cx),
                 "prev" => {
                     if let Some(v) = self.neighbor(-1) {
                         self.play(v, None, cx);
@@ -6201,7 +6246,9 @@ impl Unbloated {
                 .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.next_prev(step > 0, cx));
         }
         let target = if step > 0 { self.next_video() } else { self.neighbor(step) };
+        let queued = step > 0 && !self.up_next.is_empty();
         let tip = match &target {
+            Some(v) if queued => format!("{tip}, from Up next: {}", v.title),
             Some(v) => format!("{tip}: {}", v.title),
             None => tip.to_string(),
         };

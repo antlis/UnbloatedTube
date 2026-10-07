@@ -4,6 +4,16 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Added
+- **Long lists are cast in full** (up to 2000 videos, was 200): the first 200 go out at once and
+  the next chunk is sent when the receiver's queue is within 50 of its end. Needs tg-mpv-bot 1.15
+  (`POST /queue`); with an older bot the cast plays the first 200 and says it couldn't add more.
+- **Next says where it goes**: when Next (N, the buttons) takes a video from Up next, a notice
+  shows "Next from Up next: ..." and the button's tooltip names it, so a playlist that jumps to
+  something queued earlier is no longer a mystery.
+
 ## 0.16.0 - 2026-10-07
 
 ### Added
