@@ -6,6 +6,16 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Changed
+- **Faster Nix builds**: the flake builds the Rust dependencies as a derivation of their own
+  (crane), so a new release recompiles only this app, not all ~730 crates. The flake gains a
+  `crane` input.
+
+### Added
+- **Nix binary cache job**: the release workflow can build the package and push it to a Cachix
+  cache (needs the repository variable `CACHIX_CACHE` and the secret `CACHIX_AUTH_TOKEN`; without
+  them it only prints a notice). See the README's *Nix packaging*.
+
 ### Added
 - **Long lists are cast in full** (up to 2000 videos, was 200): the first 200 go out at once and
   the next chunk is sent when the receiver's queue is within 50 of its end. Needs tg-mpv-bot 1.15

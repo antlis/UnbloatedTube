@@ -475,16 +475,30 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   - build on an older distro image (not the newest) so the binary's glibc requirement stays low
     and it runs on more distros
   - the same build feeds the `.deb` and `.rpm` packages and an AUR `-bin` package (below)
-  - for Nix, a binary cache (e.g. Cachix, or a cache filled by CI) so `nix run` downloads the
-    package rather than compiling it; or get it into nixpkgs, where the build servers cache it
+  - for Nix: done in the repository, not switched on: the Rust dependencies build as a derivation
+    of their own (crane, see *Nix packaging*), and the release workflow's `nix-cache` job builds
+    the package and pushes it to a Cachix cache. It needs a cache that only you can create (see
+    *Nix binary cache* below); until then the job only prints a notice. Or get it into nixpkgs,
+    where the build servers cache it
   - a cache of the Cargo build in CI (e.g. `Swatinem/rust-cache`) keeps the CI builds themselves
     fast; arm64 and other targets later, if wanted
   - unchecked: the CI and cache details, free-tier limits, and how long the CI build takes
 - **Nix packaging.** `flake.nix` (also `default.nix`) and `package.nix` build and wrap the app
   (done, tested with `nix-build`: it starts from a clean environment with mpv, yt-dlp and deno
-  on its `PATH`; the flake exposes `packages.<system>.default` and an overlay). Still open: a
-  binary cache so users don't compile it (see *Prebuilt binaries*), and a `nixpkgs` submission.
-  A first build compiles every crate. The package pins its own nixpkgs for yt-dlp, deno and mpv
+  on its `PATH`; the flake exposes `packages.<system>.default` and an overlay). The flake
+  builds the Rust dependencies with [crane](https://github.com/ipetkov/crane) as a derivation of
+  their own, from the manifests with this app's version blanked out: a new release (or any source
+  change) compiles only this crate, and the ~730 dependency crates are reused from the Nix store
+  until `Cargo.lock` changes. `default.nix` (no flake) still builds in one go. Still open: a
+  `nixpkgs` submission. A first build compiles every crate.
+
+  **Nix binary cache** (so nobody compiles at all): the workflow's `nix-cache` job runs on every
+  version tag. To switch it on once: create a free cache at https://app.cachix.org (open-source
+  caches are free), put its name in the repository variable `CACHIX_CACHE` and a token in the
+  secret `CACHIX_AUTH_TOKEN`. Users then add the cache to their Nix config, e.g. on NixOS
+  `nix.settings.substituters = [ "https://NAME.cachix.org" ]` and
+  `nix.settings.trusted-public-keys = [ "NAME.cachix.org-1:<the key Cachix shows>" ]`; the next
+  `nixos-rebuild` downloads the app. Not tried: the cache doesn't exist yet. The package pins its own nixpkgs for yt-dlp, deno and mpv
   (`nix/unstable.nix` and the flake's input, which must be bumped together), which is fine for a
   profile but not what a nixpkgs package would do.
 - **AUR package** (Arch). Published as `unbloated-youtube-bin`
