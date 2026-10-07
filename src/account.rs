@@ -223,24 +223,53 @@ impl Account {
             "playlistId": playlist_id,
             "actions": [{ "action": "ACTION_ADD_VIDEO", "addedVideoId": video_id }],
         });
-        // YouTube answers 200 either way; the status says whether it really happened
-        // (it doesn't for playlists you saved from others).
+        // YouTube answers 200 either way; the status says whether it really happened.
         let resp = self.post("browse/edit_playlist", body)?;
         match resp["status"].as_str() {
             Some("STATUS_SUCCEEDED") => Ok(()),
-            _ => Err("YouTube didn't add it (you can only add to your own playlists)".into()),
+            _ => Err(format!("YouTube didn't add it ({})", refusal(&resp))),
         }
     }
 
+    /// The id of one entry of `playlist_id` holding `video_id` (the first, when it is in there
+    /// several times): what removing exactly one copy needs. Follows the playlist's pages.
+    fn playlist_entry(&self, playlist_id: &str, video_id: &str) -> Result<Option<String>, String> {
+        let mut body = json!({ "browseId": format!("VL{playlist_id}") });
+        // Pages hold 100 entries; a playlist is at most 5000 long.
+        for _ in 0..60 {
+            let resp = self.post("browse", body)?;
+            let mut found = None;
+            let mut next = None;
+            walk(&resp, &mut |key, v| match key {
+                "playlistVideoRenderer" if found.is_none() && v["videoId"].as_str() == Some(video_id) => {
+                    found = v["setVideoId"].as_str().map(String::from);
+                }
+                "continuationCommand" if next.is_none() => next = v["token"].as_str().map(String::from),
+                _ => {}
+            });
+            if found.is_some() {
+                return Ok(found);
+            }
+            let Some(token) = next else { return Ok(None) };
+            body = json!({ "continuation": token });
+        }
+        Ok(None)
+    }
+
+    /// Remove one copy of `video_id` from `playlist_id`. (`ACTION_REMOVE_VIDEO_BY_VIDEO_ID` would
+    /// remove every copy of it.)
     pub fn remove_from_playlist(&self, playlist_id: &str, video_id: &str) -> Result<(), String> {
+        let Some(entry) = self.playlist_entry(playlist_id, video_id)? else {
+            return Err("It is not in that playlist (any more)".into());
+        };
         let body = json!({
             "playlistId": playlist_id,
-            "actions": [{ "action": "ACTION_REMOVE_VIDEO_BY_VIDEO_ID", "removedVideoId": video_id }],
+            "actions": [{ "action": "ACTION_REMOVE_VIDEO", "setVideoId": entry }],
         });
         let resp = self.post("browse/edit_playlist", body)?;
         match resp["status"].as_str() {
             Some("STATUS_SUCCEEDED") => Ok(()),
-            _ => Err("YouTube didn't remove it (you can only edit your own playlists)".into()),
+            _ => Err(format!("YouTube didn't remove it ({})", refusal(&resp))),
         }
     }
 }
@@ -340,6 +369,21 @@ fn parse_views(s: &str) -> Option<u64> {
 }
 
 /// Call `f` for every key/value pair in a JSON tree.
+/// What YouTube said when it did not do an edit: its status, and its message if it gave one.
+fn refusal(resp: &Value) -> String {
+    let status = resp["status"].as_str().unwrap_or("no status");
+    let mut message = None;
+    walk(resp, &mut |key, v| {
+        if message.is_none() && matches!(key, "errorMessage" | "message") {
+            message = renderer_text(v).or_else(|| v.as_str().map(String::from));
+        }
+    });
+    match message {
+        Some(m) => format!("{status}: {m}"),
+        None => status.to_string(),
+    }
+}
+
 fn walk(v: &Value, f: &mut impl FnMut(&str, &Value)) {
     match v {
         Value::Object(m) => m.iter().for_each(|(k, v)| {

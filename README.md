@@ -83,7 +83,8 @@ list, your playlists, your history, search and a player.
   Enter. It lists the playlists you can add to (what YouTube's own Save menu offers) and Watch
   later, not the ones you only saved from other people; those stay in the Playlists tab.
 - **Remove from playlist**: hover a video in an open playlist and click the trash icon (in
-  Liked videos this unlikes it).
+  Liked videos this unlikes it). It removes that one entry; if the video is in the playlist
+  several times, the first copy goes.
 - **Add a whole playlist to Up next** with one button in the playlist header.
 - **Right-click any video** (Recommended, History, a channel's videos, New uploads, Up next, Watch
   later, search results): **Copy link**, **Add to Up next** (or remove it), **Save to Watch later**,
