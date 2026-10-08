@@ -4,6 +4,12 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Changed
+- **License**: new releases are under the GNU AGPLv3 (`AGPL-3.0-only`) instead of MIT, in
+  `LICENSE`, `Cargo.toml`, the Nix package and the AUR package. Versions up to 0.21.3 stay MIT.
+
 ## 0.21.3 - 2026-10-08
 
 ### Fixed

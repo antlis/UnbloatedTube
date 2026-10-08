@@ -616,7 +616,7 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
     yt-dlp breaks every few weeks, so a bundled copy needs a self-update step.
   - mpv has no official Linux binary; a self-contained build means FFmpeg and the graphics and
     audio libraries, hardware decoding from a bundle is fragile, and mpv is GPL, so shipping it
-    in an MIT archive means providing its source and license.
+    in the archive means providing its source and license.
   - Options, easiest first: download yt-dlp and deno on first run into the data folder (keeps the
     archive small; mpv stays a system dependency); a "full" archive with yt-dlp and deno inside;
     an AppImage with all three; a Flatpak (solves mpv properly, but see the X11 and cookie notes
@@ -692,4 +692,7 @@ Folders from the app's old name (`jtube`) are moved over automatically on first 
 
 ## License
 
-[MIT](LICENSE). Contributions are welcome, and are licensed under the same terms.
+[GNU AGPLv3](LICENSE) (`AGPL-3.0-only`): you may use, change and share it, and anything you
+distribute (or run for others over a network) from this code must come with its source under the
+same license. Contributions are welcome, and are licensed under the same terms. Versions up to
+0.21.3 were released under the MIT license and stay available under it.
