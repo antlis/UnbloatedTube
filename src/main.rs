@@ -183,7 +183,8 @@ const TEXT_FIELDS: [(&str, &str, fn(&mut Settings) -> &mut String); 4] = [
     ("Download folder", "Empty for your Downloads folder; ~/ works", |s| &mut s.download_dir),
 ];
 
-const BUTTON_TOGGLES: [Toggle; 12] = [
+const BUTTON_TOGGLES: [Toggle; 13] = [
+    ("Back / forward", "Arrows to the video you played before, and back again (Alt+← / Alt+→); the player's own previous / next follow the list", |s| &mut s.history_buttons),
     ("Subscribe", "Subscribe / unsubscribe to the video's channel", |s| &mut s.subscribe_button),
     ("Save to playlist", "Add the video to Watch later or one of your playlists", |s| &mut s.save_button),
     ("Watch later", "Add the video to Watch later in one click (W)", |s| &mut s.watch_later_button),
@@ -234,7 +235,7 @@ enum Lower {
 
 /// Keyboard shortcuts (also listed in Settings). Keys reach mpv instead while the pointer is
 /// over the video; mpv's own defaults there are similar (Space, arrows, f).
-const SHORTCUTS: [(&str, &str); 29] = [
+const SHORTCUTS: [(&str, &str); 30] = [
     ("Space / K", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     ("J / L", "Back / forward 10 seconds"),
@@ -250,6 +251,7 @@ const SHORTCUTS: [(&str, &str); 29] = [
     ("Click / Double-click", "Pause / fullscreen (on the video)"),
     ("N", "Next (Up next first)"),
     ("P", "Previous"),
+    ("Alt+← / Alt+→", "Back / forward through the videos you played"),
     ("E", "Lower pane full height, and back"),
     ("⇧E", "Player full height (hide the lower pane), and back"),
     ("[ / ]", "Previous / next tab (header tabs, then the lower pane's)"),
@@ -270,7 +272,7 @@ const SHORTCUTS: [(&str, &str); 29] = [
 const SHEET_GROUPS: [(&str, usize, usize); 2] = [("Playback", 9, 0), ("Navigation", 15, 1)];
 
 /// Vim mode's keys (case matters: ⇧ means Shift).
-const VIM_SHORTCUTS: [(&str, &str); 35] = [
+const VIM_SHORTCUTS: [(&str, &str); 36] = [
     ("Space", "Play / pause"),
     ("← / →", "Back / forward 5 seconds"),
     (", / .", "Back / forward 10 seconds"),
@@ -293,6 +295,7 @@ const VIM_SHORTCUTS: [(&str, &str); 35] = [
     ("⇧H / ⇧L", "Previous / next tab"),
     ("x", "Add the selected video to Up next"),
     ("⇧F", "Click hints: type the label to click"),
+    ("Alt+← / Alt+→", "Back / forward through the videos you played"),
     ("e", "Lower pane full height, and back"),
     ("⇧E", "Player full height (hide the lower pane), and back"),
     ("[ / ]", "Previous / next tab (header tabs, then the lower pane's)"),
@@ -321,6 +324,8 @@ enum Item {
 enum ChannelView {
     Videos,
     Shorts,
+    /// A channel's live streams (its /streams page).
+    Live,
 }
 
 struct Browser {
@@ -498,6 +503,13 @@ struct Unbloated {
     preloaded: bool,
     /// The video the pointer rests on, and when each video was last resolved ahead of time.
     hover_video: Option<String>,
+    /// Subscriptions shows the streams live now (the Live tab) instead of the channel list.
+    subs_live: bool,
+    /// Videos played, oldest first (seeded from the watch history), and where the current one is:
+    /// what the back / forward buttons walk.
+    nav: Vec<Video>,
+    nav_pos: Option<usize>,
+    nav_moving: bool,
     prefetched: HashMap<String, Instant>,
     prefetching: usize,
     /// Videos or Shorts list of the History tab.
@@ -606,6 +618,9 @@ impl Connect {
 impl Unbloated {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let history = History::load();
+        // Back goes through what was watched before (the newest, the last played, is where we start).
+        let nav: Vec<Video> = history.items.iter().take(50).rev().map(|w| w.video.clone()).collect();
+        let nav_pos = nav.len().checked_sub(1);
         let settings = Settings::load();
         let cfg = Arc::new(Config::load());
         let volume = settings.volume;
@@ -749,6 +764,10 @@ impl Unbloated {
             embed: None,
             preloaded: false,
             hover_video: None,
+            subs_live: false,
+            nav,
+            nav_pos,
+            nav_moving: false,
             prefetched: HashMap::new(),
             prefetching: 0,
             history_view: ChannelView::Videos,
@@ -2294,10 +2313,14 @@ impl Unbloated {
     fn load_group_videos(&mut self, tab: Tab, cx: &mut Context<Self>) {
         let b = self.browser(tab);
         let Some(group) = b.open.clone() else { return };
-        let shorts = b.view == ChannelView::Shorts;
-        let url = if shorts { group.url.replace("/videos", "/shorts") } else { group.url.clone() };
+        let (page, suffix) = match b.view {
+            ChannelView::Shorts => ("/shorts", "-shorts"),
+            ChannelView::Live => ("/streams", "-live"),
+            ChannelView::Videos => ("/videos", ""),
+        };
+        let url = group.url.replace("/videos", page);
         // Revisiting a channel or playlist shows its last list instantly, then refreshes.
-        let cache = Some(format!("group-{}{}", group.id, if shorts { "-shorts" } else { "" }));
+        let cache = Some(format!("group-{}{suffix}", group.id));
         b.videos = Load::Idle;
         if tab == Tab::Subscriptions {
             self.fetch(cx, "subs.videos", |s| &mut s.subs.videos, cache, move |cfg, on| yt::group_videos(cfg, &url, on));
@@ -2371,6 +2394,16 @@ impl Unbloated {
         if let Some(queue) = queue {
             self.queue = queue;
         }
+        if !self.nav_moving {
+            // Playing something new drops what "forward" would have gone to, as in a browser.
+            let keep = self.nav_here().map_or(self.nav.len(), |p| p + 1);
+            self.nav.truncate(keep);
+            if self.nav.last().is_none_or(|v| v.id != video.id) {
+                self.nav.push(video.clone());
+            }
+            self.nav.drain(..self.nav.len().saturating_sub(100));
+            self.nav_pos = self.nav.len().checked_sub(1);
+        }
         if let Some(i) = self.up_next.iter().position(|v| v.id == video.id) {
             self.up_next.remove(i);
             store::save_data("up_next", &self.up_next);
@@ -2435,6 +2468,18 @@ impl Unbloated {
             .ok();
         })
         .detach();
+    }
+
+    /// The streams that are live now from your subscriptions (the feed's live rows, in the active
+    /// group and not muted); `filtered`: also by the text in the list filter.
+    fn live_videos(&self, filtered: bool) -> Vec<Video> {
+        self.feed
+            .items()
+            .iter()
+            .filter(|v| v.live && self.in_active_group(v) && !self.is_muted(v))
+            .filter(|v| !filtered || self.video_matches(v))
+            .cloned()
+            .collect()
     }
 
     /// The first rows of the list on screen, and the head of Up next: what is most likely played.
@@ -3841,6 +3886,12 @@ impl Unbloated {
             cx.notify();
             return;
         }
+        if k.modifiers.alt && !k.modifiers.control && !k.modifiers.platform && matches!(k.key.as_str(), "left" | "right") {
+            self.nav_go(k.key == "right", cx);
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         if k.modifiers.control || k.modifiers.alt || k.modifiers.platform {
             return;
         }
@@ -4102,7 +4153,7 @@ impl Unbloated {
         // History shows Continue watching rows above its scrolling list.
         let (offset, row_h) = match self.tab {
             Tab::History => (self.history_items().0.len(), ROW_H),
-            Tab::Subscriptions | Tab::Playlists if self.browser_ref(self.tab).open.is_none() => (0, 44.),
+            Tab::Subscriptions | Tab::Playlists if self.browser_ref(self.tab).open.is_none() && !(self.tab == Tab::Subscriptions && self.subs_live) => (0, 44.),
             _ => (0, ROW_H),
         };
         let Some(ix) = cursor.checked_sub(offset) else {
@@ -4252,6 +4303,7 @@ impl Unbloated {
                 Some(_) => videos(self.browser_videos(tab)),
                 // Logged out: the anonymous home list.
                 None if !self.cfg.has_auth() => videos(self.anon.items().to_vec()),
+                None if tab == Tab::Subscriptions && self.subs_live => videos(self.live_videos(true)),
                 None => self.group_items(tab, &self.unseen_counts()).into_iter().map(Item::Group).collect(),
             },
         }
@@ -4315,6 +4367,32 @@ impl Unbloated {
     }
 
     /// The video `step` places away from the current one in the queue.
+    /// Where the playing video is in `nav` (the entry we moved to, else its latest one).
+    fn nav_here(&self) -> Option<usize> {
+        let id = &self.current.as_ref()?.id;
+        self.nav_pos.filter(|&p| self.nav.get(p).is_some_and(|v| &v.id == id)).or_else(|| self.nav.iter().rposition(|v| &v.id == id))
+    }
+
+    /// The `nav` entries back and forward from the playing video.
+    fn nav_targets(&self) -> (Option<usize>, Option<usize>) {
+        match self.nav_here() {
+            Some(p) => (p.checked_sub(1), Some(p + 1).filter(|&n| n < self.nav.len())),
+            // The playing video isn't in the list (a link, say): back goes to the last one played.
+            None => (self.nav.len().checked_sub(1), None),
+        }
+    }
+
+    /// Back (`forward` false) or forward through the videos played.
+    fn nav_go(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let (back, next) = self.nav_targets();
+        let Some(i) = (if forward { next } else { back }) else { return };
+        let video = self.nav[i].clone();
+        self.nav_moving = true;
+        self.nav_pos = Some(i);
+        self.play(video, None, cx);
+        self.nav_moving = false;
+    }
+
     fn neighbor(&self, step: isize) -> Option<Video> {
         let current = self.current.as_ref()?;
         let i = self.queue.iter().position(|v| v.id == current.id)?;
@@ -4571,7 +4649,7 @@ impl Unbloated {
                     this.forget_video(&id, cx);
                 }))
         });
-        let views = video.views.filter(|_| self.settings.show_views).map(|v| format!("{} views", fmt_count(v)));
+        let views = video.views.filter(|_| self.settings.show_views).map(|v| format!("{} {}", fmt_count(v), if video.live { "watching" } else { "views" }));
         let meta = [video.channel.clone(), views, video.duration.map(fmt_duration), video.watched.clone()]
             .into_iter()
             .flatten()
@@ -4605,9 +4683,13 @@ impl Unbloated {
             .when(watched && !playing && !selected, |d| d.opacity(0.45))
             .hover(|d| d.bg(themed(HOVER)).opacity(1.))
             .child(
-                div().relative().child(thumb).when_some(progress, |d, p| {
-                    d.child(div().absolute().bottom_0().left_0().h(px(3.)).w(px(96. * p)).bg(themed(ACCENT)))
-                }),
+                div()
+                    .relative()
+                    .child(thumb)
+                    .when_some(progress.filter(|_| !video.live), |d, p| {
+                        d.child(div().absolute().bottom_0().left_0().h(px(3.)).w(px(96. * p)).bg(themed(ACCENT)))
+                    })
+                    .when(video.live, |d| d.child(div().absolute().bottom(px(3.)).right(px(3.)).child(live_badge(false)))),
             )
             .child(
                 div()
@@ -5580,10 +5662,15 @@ impl Unbloated {
             let group_editor = (is_channel && self.editing_groups).then(|| self.render_group_editor(&open.id, window, cx));
 
             let view = self.browser_ref(tab).view;
-            // Channels (not the New uploads feed or playlists) get Videos | Shorts tabs.
-            let channel_tabs = tab == Tab::Subscriptions && open.id != FEED_ID && self.settings.shorts;
+            // Channels (not the New uploads feed or playlists) get Videos | Shorts | Live tabs.
+            let channel_tabs = tab == Tab::Subscriptions && open.id != FEED_ID;
+            let shorts_tab = self.settings.shorts;
             let videos = &self.browser_ref(tab).videos;
-            let empty = if view == ChannelView::Shorts { "No Shorts." } else { "No videos." };
+            let empty = match view {
+                ChannelView::Shorts => "No Shorts.",
+                ChannelView::Live => "No live streams.",
+                ChannelView::Videos => "No videos.",
+            };
             let shown = self.browser_videos(tab);
             let body = match self.placeholder(videos, empty, Rows::Videos) {
                 Some(p) => p,
@@ -5633,9 +5720,15 @@ impl Unbloated {
                                 tab_button("Videos", view == ChannelView::Videos)
                                     .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.set_channel_view(ChannelView::Videos, cx)),
                             )
+                            .when(shorts_tab, |d| {
+                                d.child(
+                                    tab_button("Shorts", view == ChannelView::Shorts)
+                                        .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.set_channel_view(ChannelView::Shorts, cx)),
+                                )
+                            })
                             .child(
-                                tab_button("Shorts", view == ChannelView::Shorts)
-                                    .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.set_channel_view(ChannelView::Shorts, cx)),
+                                tab_button("Live", view == ChannelView::Live)
+                                    .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.set_channel_view(ChannelView::Live, cx)),
                             ),
                     )
                 })
@@ -5771,7 +5864,44 @@ impl Unbloated {
         )
         .track_scroll(self.vim_scroll.clone())
         .flex_1();
+        // Subscriptions: the channel list, or what is live now (one click from the top).
+        if tab == Tab::Subscriptions {
+            let live_count = self.live_videos(false).len();
+            let tabs = div()
+                .flex()
+                .px_2()
+                .border_b_1()
+                .border_color(themed(BORDER))
+                .child(
+                    tab_button("Channels", !self.subs_live)
+                        .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.set_subs_live(false, cx)),
+                )
+                .child(
+                    tab_button(if live_count > 0 { format!("Live ({live_count})") } else { "Live".to_string() }, self.subs_live)
+                        .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.set_subs_live(true, cx)),
+                );
+            let body = if self.subs_live {
+                let live = self.live_videos(true);
+                match self.placeholder(&self.feed, "No live streams right now.", Rows::Videos) {
+                    Some(p) => p,
+                    None if live.is_empty() && !self.live_videos(false).is_empty() => self.status("No matches."),
+                    None if live.is_empty() => self.status("No live streams right now."),
+                    None => self.video_list("live", &live, Some(0), cx),
+                }
+            } else {
+                list.into_any_element()
+            };
+            return div().flex().flex_col().flex_1().min_h_0().child(tabs).child(bar).child(body).into_any_element();
+        }
         div().flex().flex_col().flex_1().min_h_0().child(bar).child(list).into_any_element()
+    }
+
+    fn set_subs_live(&mut self, live: bool, cx: &mut Context<Self>) {
+        if self.subs_live != live {
+            self.subs_live = live;
+            self.vim_cursor = 0;
+            cx.notify();
+        }
     }
 
     /// The video area: thumbnail underneath, mpv's embedded window placed on top of it.
@@ -5955,8 +6085,10 @@ impl Unbloated {
                 .items_center()
                 .text_xs()
                 .text_color(themed(MUTED))
+                .when(video.live, |d| d.child(div().mr_2().child(live_badge(true))))
                 .child(parts.join("  ·  "))
-                .child(div().ml_auto().pl_2().flex_none().child(time))
+                // A live stream's position and length mean little: the badge says it.
+                .child(div().ml_auto().pl_2().flex_none().child(if video.live { String::new() } else { time }))
         };
 
         div()
@@ -6099,11 +6231,25 @@ impl Unbloated {
                     .when(self.settings.volume_control, |d| d.child(self.volume_bar(cx)))
             ))
             // Second row: what you can do with this video.
-            .when(self.account_buttons() || self.cast_available() || self.settings.subtitles_button || self.settings.share_button || self.settings.share_time_button || self.settings.browser_button || self.settings.download_button, |d| {
+            .when(self.account_buttons() || self.cast_available() || self.settings.subtitles_button || self.settings.share_button || self.settings.share_time_button || self.settings.browser_button || self.settings.download_button || self.settings.history_buttons, |d| {
                 d.child(
                     div()
                         .flex()
                         .items_center()
+                            .when(self.settings.history_buttons, |d| {
+                                let (back, next) = self.nav_targets();
+                                let idle = self.casting.is_none();
+                                let (can_back, can_next) = (idle && back.is_some(), idle && next.is_some());
+                                let title = |i: Option<usize>| i.and_then(|i| self.nav.get(i)).map(|v| v.title.clone());
+                                d.child(
+                                    icon_button("nav-back", "arrow-left", format!("Back: {} (Alt+←)", title(back).unwrap_or_else(|| "nothing earlier".into())), can_back)
+                                        .when(can_back, |d| d.on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.nav_go(false, cx))),
+                                )
+                                .child(
+                                    icon_button("nav-forward", "arrow-right", format!("Forward: {} (Alt+→)", title(next).unwrap_or_else(|| "nothing later".into())), can_next)
+                                        .when(can_next, |d| d.on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.nav_go(true, cx))),
+                                )
+                            })
                             .when(self.account_buttons(), |d| d.children(self.account_buttons_els(cx)))
                             .when(self.settings.download_button, |d| {
                                 let (tip_text, enabled) = match self.downloads.get(&video.id) {
@@ -7007,6 +7153,20 @@ fn tip_left(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> 
 }
 
 /// Square icon button with a hover tooltip; `enabled: false` greys it out (add clicks only when enabled).
+/// The red "LIVE" tag on live streams (small on thumbnails, `big` beside the playing video).
+fn live_badge(big: bool) -> gpui::Div {
+    div()
+        .flex_none()
+        .px(px(if big { 6. } else { 4. }))
+        .py(px(1.))
+        .rounded(px(3.))
+        .bg(themed(ACCENT))
+        .text_color(themed(ON_ACCENT))
+        .text_size(px(if big { 11. } else { 9. }))
+        .font_weight(gpui::FontWeight::BOLD)
+        .child("LIVE")
+}
+
 fn icon_button(
     id: impl Into<ElementId>,
     icon: &str,

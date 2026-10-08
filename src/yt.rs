@@ -27,6 +27,9 @@ pub struct Video {
     /// When it was watched ("Today", "Saturday", …) — only on YouTube history entries.
     #[serde(default)]
     pub watched: Option<String>,
+    /// A live stream that is on now (`views` then counts the people watching).
+    #[serde(default)]
+    pub live: bool,
 }
 
 impl Video {
@@ -88,6 +91,12 @@ struct Entry {
     duration: Option<f64>,
     #[serde(default)]
     view_count: Option<u64>,
+    #[serde(default)]
+    concurrent_view_count: Option<u64>,
+    #[serde(default)]
+    is_live: Option<bool>,
+    #[serde(default)]
+    live_status: Option<String>,
     #[serde(default)]
     channel_follower_count: Option<u64>,
     // Channel tabs list uploads without per-entry channel info; yt-dlp adds the listing's.
@@ -191,6 +200,7 @@ fn to_video(e: Entry) -> Option<Video> {
     if id.len() != 11 {
         return None;
     }
+    let live = e.is_live == Some(true) || e.live_status.as_deref() == Some("is_live");
     Some(Video {
         short: e.url.as_deref().is_some_and(|u| u.contains("/shorts/")),
         title: e.title.unwrap_or_else(|| id.clone()),
@@ -198,8 +208,9 @@ fn to_video(e: Entry) -> Option<Video> {
         channel: e.channel.or(e.uploader),
         channel_url: e.channel_url.or(e.uploader_url),
         duration: e.duration,
-        views: e.view_count,
+        views: if live { e.concurrent_view_count } else { e.view_count },
         watched: None,
+        live,
     })
 }
 

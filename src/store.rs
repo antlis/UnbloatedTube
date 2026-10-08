@@ -230,6 +230,8 @@ pub struct Settings {
     pub cast_button: bool,
     pub share_time_button: bool,
     pub browser_button: bool,
+    /// Back / forward buttons through the videos played (first in the row under the progress bar).
+    pub history_buttons: bool,
     pub download_button: bool,
     /// Video info: view counts, upload date, channel subscriber counts.
     pub show_views: bool,
@@ -309,6 +311,7 @@ impl Default for Settings {
             cast_button: true,
             share_time_button: true,
             browser_button: true,
+            history_buttons: true,
             download_button: true,
             watch_later_button: true,
             show_views: true,

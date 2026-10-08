@@ -332,6 +332,7 @@ fn history_video(v: &Value, day: &str) -> Option<Video> {
         short: false,
         views: parts[1]["text"]["content"].as_str().and_then(parse_views),
         watched: Some(day.to_string()).filter(|d| !d.is_empty()),
+        live: false,
         id,
     })
 }
@@ -347,6 +348,7 @@ fn history_short(v: &Value, day: &str) -> Option<Video> {
         short: true,
         views: meta["secondaryText"]["content"].as_str().and_then(parse_views),
         watched: Some(day.to_string()).filter(|d| !d.is_empty()),
+        live: false,
         id,
     })
 }
