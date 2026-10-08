@@ -38,7 +38,9 @@ list, your playlists, your history, search and a player.
 ### Browsing
 
 - **Subscriptions as a channel list**: avatars, A–Z, with channels that have new uploads on
-  top with an unseen count. Click a channel for its videos (**Videos | Shorts** tabs).
+  top with an unseen count. Click a channel for its videos (**Videos | Shorts | Live** tabs).
+- **Live tab in Subscriptions**: **Channels | Live (N)** at the top; Live lists the streams that are
+  on now from your subscriptions (the group chips narrow it), each with a red LIVE badge.
 - **Unsubscribe from the list**: right-click a channel, then confirm with a second click.
 - **New uploads**: one feed of the latest videos from all your subscriptions.
 - **Channel groups**: put channels into groups (e.g. *Music*, *Tech*) and filter the channel
@@ -149,7 +151,7 @@ Everything is a toggle or a field on the Settings page, which has its own search
 | --- | --- |
 | Account | **Connect YouTube**: pick a browser and test its session, or import a `cookies.txt` (see [Login](#login)) |
 | Tabs & lists | Subscriptions, Playlists, History, Recommendations, Chapters, Comments and Watch later tabs (both off by default), **Shorts** (everywhere) |
-| Buttons | Subscribe, Save to playlist, Watch later, Like, Dislike, Volume, Subtitles, Cast, Share, Share at current time, Open in browser, Download |
+| Buttons | Back / forward, Subscribe, Save to playlist, Watch later, Like, Dislike, Volume, Subtitles, Cast, Share, Share at current time, Open in browser, Download |
 | Subtitles | On/off, language(s), auto-generated captions, size |
 | Player | Max quality (480p–4K), autoplay, **audio only**, prefer hardware-friendly codecs (skip AV1), hardware decoding, hover controls on the video, mpv's own controls and hotkeys, speed |
 | SponsorBlock | **Skip sponsored segments**, choosing which: sponsor, self-promotion, like/subscribe reminders, intro, credits, preview, filler, non-music |
@@ -174,7 +176,8 @@ remembered.
 | M | Mute |
 | V | Subtitles on / off (`v` in Vim mode) |
 | ↑ / ↓ | Volume up / down 5% (`+` / `-` in Vim mode) |
-| N / P | Next / previous |
+| N / P | Next / previous (in the list, Up next first) |
+| Alt+← / Alt+→ | Back / forward through the videos you played (also the arrows at the start of the button row) |
 | C | Copy the video's link |
 | ⇧C | Copy the link at the current time (`y t` in Vim mode) |
 | O | Open the video in your browser (`o` in Vim mode) |

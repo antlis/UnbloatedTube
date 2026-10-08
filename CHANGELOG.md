@@ -4,6 +4,18 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Added
+- **Live indicator**: live streams get a red LIVE badge on their thumbnail in every list and a LIVE
+  chip beside the playing video, and show "N watching" instead of a view count.
+- **Live tab**: Subscriptions has **Channels | Live (N)** at the top; Live lists the streams that
+  are on now from all your subscriptions (the group chips narrow it). Channels also get a **Live**
+  tab (their streams) next to Videos and Shorts.
+- **Back / forward buttons** first in the row under the progress bar (and Alt+← / Alt+→): go to
+  the video you played before, and return, like a browser's. The player's own previous / next
+  still follow the list. They can be turned off in Settings → Player buttons ("Back / forward").
+
 ## 0.22.0 - 2026-10-08
 
 ### Changed
