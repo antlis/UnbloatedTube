@@ -73,6 +73,7 @@ let
       description = "Lightweight, configurable YouTube desktop client: GPUI, embedded mpv, yt-dlp";
       homepage = "https://github.com/antlis/unbloated-youtube";
       mainProgram = "unbloated-youtube";
+      license = lib.licenses.agpl3Only;
       platforms = lib.platforms.linux;
     };
   };
