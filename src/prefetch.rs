@@ -66,9 +66,18 @@ pub fn environment() -> [(&'static str, String); 2] {
     [(ENV, "1".into()), (SOCK_ENV, socket_path().display().to_string())]
 }
 
+/// This program, to run again as yt-dlp. On Linux through `/proc/<pid>/exe`, which reaches the
+/// running binary even after a rebuild replaced the file (`current_exe()` then names a path that
+/// is gone, and every yt-dlp run would fail until a restart). mpv can use it too: it is the app's
+/// pid, not mpv's.
+pub fn self_exe() -> Option<PathBuf> {
+    let proc = PathBuf::from(format!("/proc/{}/exe", std::process::id()));
+    if proc.exists() { Some(proc) } else { std::env::current_exe().ok() }
+}
+
 /// yt-dlp for the app's own requests: this program as the shim, so they get the helper too.
 pub fn ytdlp() -> Command {
-    let Ok(exe) = std::env::current_exe() else { return Command::new("yt-dlp") };
+    let Some(exe) = self_exe() else { return Command::new("yt-dlp") };
     let mut cmd = Command::new(exe);
     cmd.envs(environment());
     cmd

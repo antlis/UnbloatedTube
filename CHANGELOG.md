@@ -6,6 +6,12 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Fixed
+- **Rebuilding while the app is open** no longer breaks it: subtitles, comments, the description,
+  marking watched and pasted links failed with "cannot run yt-dlp: No such file or directory"
+  until a restart, because the app runs itself as yt-dlp and the file was replaced. It now runs
+  the copy that is running (`/proc/<pid>/exe`), and so does mpv.
+
 ## 0.27.0 - 2026-10-10
 
 ### Added

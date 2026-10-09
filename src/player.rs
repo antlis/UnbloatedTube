@@ -113,7 +113,7 @@ impl Player {
                 // Before `options`, so a --gpu-context in the user's extra options still wins.
                 .args(wid.map(|_| "--gpu-context=x11egl"))
                 // mpv's yt-dlp is this program, which answers from what was resolved ahead of time.
-                .args(std::env::current_exe().ok().map(|exe| format!("--script-opts-append=ytdl_hook-ytdl_path={}", exe.display())))
+                .args(crate::prefetch::self_exe().map(|exe| format!("--script-opts-append=ytdl_hook-ytdl_path={}", exe.display())))
                 .envs(crate::prefetch::environment())
                 .args(options)
                 .args(["--volume-max=100".to_string(), format!("--volume={}", self.volume)])
