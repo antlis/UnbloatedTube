@@ -533,6 +533,20 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   - subtitle style beyond size (position, background)
   - videos YouTube refuses to give captions to without a login (HTTP 429): a clearer hint, or a
     way to get them (yt-dlp's PO token plugins)
+- **Feature ideas** (none started; roughly smallest first):
+  - *Clickable timestamps and links* in the Description tab (`12:34` seeks there, links open in
+    the browser), and the same in comments
+  - *Media keys and the desktop's player widget* (MPRIS over D-Bus): play/pause and next keys,
+    the desktop's media controls and `playerctl` drive the app without focusing it
+  - *Hide videos by keyword*: like muting a channel, but for title words you pick, in feeds,
+    recommendations and search
+  - *DeArrow*: community titles and thumbnails instead of clickbait ones (from the SponsorBlock
+    authors; same free, keyless kind of API)
+  - *Search inside a video*: search the captions the app already downloads and jump to a match
+  - *Dislike counts* next to the Dislike button (Return YouTube Dislike API)
+  - *A daily watch-time limit*: a budget, a quiet counter and a soft stop when it runs out,
+    optionally only at certain hours or for certain groups
+  - *Downloads as a local library*: downloaded videos in a tab of their own, played offline
 - **History: channel links on Shorts.** History's Shorts entries carry no channel, so they have
   no channel button; the Videos entries do.
 - **Test the Connect flow on more setups.** Verified with Brave (keyring) and a failing
