@@ -357,6 +357,15 @@ instead of opening a second window; if it isn't running, a link starts it (and p
 0, or prints why it failed to stderr and exits 1 (2 for a mistake in the command line). Handy for
 key bindings, e.g. `bindsym XF86AudioPlay exec unbloated-youtube toggle`.
 
+### Media keys (MPRIS)
+
+The app is a media player on the session D-Bus (`org.mpris.MediaPlayer2.unbloated_youtube`), so
+with no setup the keyboard's media keys, the desktop's player widget (GNOME, KDE, waybar and the
+like, with title, channel and thumbnail), Bluetooth headphone buttons, KDE Connect / GSConnect and
+`playerctl` show what plays and control it: play/pause, next and previous, seeking, and bringing
+the window up. While casting they drive the receiver. Stop only pauses. Linux only; without a
+session bus the app runs as before.
+
 ### Cast targets
 
 The **Cast** button (or **T**) sends the playing video's page link and position to another device,
@@ -536,8 +545,6 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   - videos YouTube refuses to give captions to without a login (HTTP 429): a clearer hint, or a
     way to get them (yt-dlp's PO token plugins)
 - **Feature ideas** (none started; roughly smallest first):
-  - *Media keys and the desktop's player widget* (MPRIS over D-Bus): play/pause and next keys,
-    the desktop's media controls and `playerctl` drive the app without focusing it
   - *Hide videos by keyword*: like muting a channel, but for title words you pick, in feeds,
     recommendations and search
   - *DeArrow*: community titles and thumbnails instead of clickbait ones (from the SponsorBlock

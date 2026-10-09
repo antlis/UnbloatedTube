@@ -5,6 +5,7 @@ mod cli;
 mod embed;
 mod icons;
 mod links;
+mod mpris;
 mod player;
 mod prefetch;
 mod store;
@@ -3569,6 +3570,40 @@ impl Unbloated {
                 Ok("Closing".into())
             }
         }
+    }
+
+    /// A media key or the desktop's player widget (MPRIS): like the command line, except that
+    /// play on a video that isn't loaded starts it.
+    fn run_mpris(&mut self, command: cli::Command, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(command, cli::Command::Play | cli::Command::Toggle) && self.mpris_snapshot().0.status == "Stopped" {
+            if let Some(v) = self.current.clone() {
+                return self.play(v, None, cx);
+            }
+        }
+        let _ = self.run_command(command, window, cx);
+    }
+
+    /// What plays, for MPRIS (the receiver's video while casting), and the position.
+    fn mpris_snapshot(&self) -> (mpris::Snapshot, f64) {
+        let Some(v) = &self.current else { return (mpris::Snapshot { status: "Stopped", ..Default::default() }, 0.) };
+        let playing = match &self.casting {
+            Some(c) => c.status.as_ref().filter(|s| s.playing).map(|s| (s.paused, s.position, s.duration)),
+            None => self.state.as_ref().filter(|s| s.playing && s.path == self.media_path(v)).map(|s| (s.paused, s.position, s.duration)),
+        };
+        let (status, position, duration) = match playing {
+            Some((paused, position, duration)) => (if paused { "Paused" } else { "Playing" }, position, duration),
+            None => ("Stopped", 0., 0.),
+        };
+        let now = mpris::Snapshot {
+            status,
+            id: v.id.clone(),
+            title: v.title.clone(),
+            channel: v.channel.clone().unwrap_or_default(),
+            url: v.url(),
+            art: v.thumb_url(),
+            duration: if duration > 0. { duration } else { v.duration.unwrap_or(0.) },
+        };
+        (now, position)
     }
 
     /// What `unbloated-youtube status` prints.
@@ -7970,6 +8005,24 @@ fn main() {
             .detach();
             cx.on_app_quit(|_| async { cli::cleanup() }).detach();
         }
+        // Media keys, the desktop's player widget and playerctl (MPRIS, see mpris.rs).
+        let mpris = mpris::Mpris::start();
+        cx.spawn(async move |cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_millis(100)).await;
+                let alive = window.update(cx, |this, window, cx| {
+                    for command in mpris.commands() {
+                        this.run_mpris(command, window, cx);
+                    }
+                    let (now, position) = this.mpris_snapshot();
+                    mpris.update(now, position);
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
         cx.on_app_quit(|_| async { prefetch::cleanup() }).detach();
         cx.on_window_closed(|cx| cx.quit()).detach();
     });
