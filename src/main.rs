@@ -100,6 +100,20 @@ fn channel_group(v: &Video) -> Option<Group> {
     Some(Group { id, title, url: format!("{}/videos", url.trim_end_matches('/')), thumb: None, subscribers: None })
 }
 
+/// Whether `title` says one of `words` (lower-case) as a word of its own: "art" hides "Art
+/// school" but not "start".
+fn says_any(title: &str, words: &[String]) -> bool {
+    let title = title.to_lowercase();
+    let edge = |c: Option<char>| c.is_none_or(|c| !c.is_alphanumeric());
+    words.iter().any(|w| {
+        title.match_indices(w.as_str()).any(|(i, _)| {
+            let (before, after) = (title[..i].chars().next_back(), title[i + w.len()..].chars().next());
+            // A word that itself starts or ends with a symbol (#shorts) needs no edge there.
+            (edge(before) || !w.starts_with(char::is_alphanumeric)) && (edge(after) || !w.ends_with(char::is_alphanumeric))
+        })
+    })
+}
+
 /// Channel id (UC…) of a video, from its channel URL.
 fn channel_of(v: &Video) -> Option<&str> {
     v.channel_url.as_deref()?.split("/channel/").nth(1).map(|id| id.trim_end_matches('/'))
@@ -182,11 +196,12 @@ const REPO_URL: &str = "https://github.com/antlis/unbloated-youtube";
 const SPEEDS: [f32; 6] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
 
 /// Settings text fields: label, hint, field.
-const TEXT_FIELDS: [(&str, &str, fn(&mut Settings) -> &mut String); 4] = [
+const TEXT_FIELDS: [(&str, &str, fn(&mut Settings) -> &mut String); 5] = [
     ("Cast command", "catt -d \"Living Room\" cast {url}", |s| &mut s.cast_command),
     ("Subtitle language", "Code, e.g. en or ru, or several (en,ru); empty uses your system language", |s| &mut s.sub_lang),
     ("Extra mpv options", "e.g. --volume=70 --deband", |s| &mut s.mpv_args),
     ("Download folder", "Empty for your Downloads folder; ~/ works", |s| &mut s.download_dir),
+    ("Hide videos with words", "Comma-separated, e.g. reaction, prank, #shorts: hidden from feeds, channels, recommendations and search", |s| &mut s.hide_words),
 ];
 
 const BUTTON_TOGGLES: [Toggle; 13] = [
@@ -1296,9 +1311,10 @@ impl Unbloated {
     /// One pass over the feed, so it's cheap enough to compute on every render.
     fn unseen_counts(&self) -> HashMap<String, usize> {
         let played: HashSet<&str> = self.history.items.iter().map(|w| w.video.id.as_str()).collect();
+        let words = self.hide_words();
         let mut counts = HashMap::new();
         for v in self.feed.items() {
-            if self.seen.ids.contains(&v.id) || played.contains(v.id.as_str()) || !self.in_active_group(v) || self.is_muted(v) {
+            if self.seen.ids.contains(&v.id) || played.contains(v.id.as_str()) || !self.in_active_group(v) || self.is_muted(v) || says_any(&v.title, &words) {
                 continue;
             }
             *counts.entry(FEED_ID.to_string()).or_default() += 1;
@@ -1344,12 +1360,14 @@ impl Unbloated {
 
     /// Desktop notifications for feed videos of channels with the bell on, not notified yet.
     fn notify_uploads(&mut self) {
+        let words = self.hide_words();
         let fresh: Vec<Video> = self
             .feed
             .items()
             .iter()
             .filter(|v| channel_of(v).is_some_and(|c| self.flags.notify.contains(c)))
             .filter(|v| !self.flags.notified.contains(&v.id) && !self.seen.ids.contains(&v.id))
+            .filter(|v| !says_any(&v.title, &words))
             .cloned()
             .collect();
         // Forget ids that left the feed, so the set stays small.
@@ -4478,7 +4496,7 @@ impl Unbloated {
         };
         match self.tab {
             Tab::Settings => Vec::new(),
-            Tab::Search => videos(self.search.items().to_vec()),
+            Tab::Search => videos(self.wanted(self.search.items().to_vec())),
             Tab::Downloads => videos(self.library_videos()),
             Tab::History if self.cfg.has_auth() => {
                 let (partial, all) = self.history_items();
@@ -4487,13 +4505,28 @@ impl Unbloated {
                 items
             }
             tab => match &self.browser_ref(tab).open {
-                Some(_) => videos(self.browser_videos(tab)),
+                Some(_) if tab == Tab::Playlists => videos(self.browser_videos(tab)),
+                Some(_) => videos(self.wanted(self.browser_videos(tab))),
                 // Logged out: the anonymous home list.
-                None if !self.cfg.has_auth() => videos(self.anon.items().to_vec()),
-                None if tab == Tab::Subscriptions && self.subs_live => videos(self.live_videos(true)),
+                None if !self.cfg.has_auth() => videos(self.wanted(self.anon.items().to_vec())),
+                None if tab == Tab::Subscriptions && self.subs_live => videos(self.wanted(self.live_videos(true))),
                 None => self.group_items(tab, &self.unseen_counts()).into_iter().map(Item::Group).collect(),
             },
         }
+    }
+
+    /// Settings → Hide videos with words, lower-cased.
+    fn hide_words(&self) -> Vec<String> {
+        self.settings.hide_words.split(',').map(|w| w.trim().to_lowercase()).filter(|w| !w.is_empty()).collect()
+    }
+
+    /// `videos` without the ones whose title says a hidden word.
+    fn wanted(&self, videos: Vec<Video>) -> Vec<Video> {
+        let words = self.hide_words();
+        if words.is_empty() {
+            return videos;
+        }
+        videos.into_iter().filter(|v| !says_any(&v.title, &words)).collect()
     }
 
     /// Videos as lists show them (Shorts hidden when turned off).
@@ -4906,8 +4939,10 @@ impl Unbloated {
 
     /// `left`: this is the left column's list, whose rows start at that index for Vim selection.
     fn video_list(&self, list_id: &'static str, videos: &[Video], left: Option<usize>, cx: &mut Context<Self>) -> AnyElement {
-        // With Shorts turned off, they're hidden from every list.
-        let videos: Arc<[Video]> = self.visible(videos).into();
+        // With Shorts turned off, they're hidden from every list; hidden words from all but
+        // your own lists (what you put there stays).
+        let own = matches!(list_id, "history" | "up-next" | "watch-later" | "downloads") || (list_id == "group" && self.tab == Tab::Playlists);
+        let videos: Arc<[Video]> = if own { self.visible(videos) } else { self.visible(&self.wanted(videos.to_vec())) }.into();
         let in_up_next = list_id == "up-next";
         let in_history = list_id == "history";
         let playlist = if list_id == "group" && self.tab == Tab::Playlists {

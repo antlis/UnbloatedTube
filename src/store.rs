@@ -279,6 +279,9 @@ pub struct Settings {
     pub mpv_args: String,
     /// Where downloads go; empty = the system Downloads folder. `~/` is expanded.
     pub download_dir: String,
+    /// Comma-separated words: videos whose title says one are hidden from feeds, channels,
+    /// recommendations and search (not from your own lists).
+    pub hide_words: String,
     /// Left column width, as a fraction of the window.
     pub split: f32,
     /// Player height in the right column, as a fraction of the window.
@@ -348,6 +351,7 @@ impl Default for Settings {
             sub_scale: 1.0,
             mpv_args: String::new(),
             download_dir: String::new(),
+            hide_words: String::new(),
             split: 0.5,
             player: 0.62,
             continue_height: 4. * crate::ROW_H,
