@@ -6,6 +6,11 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Added
+- **Clickable timestamps and links** in the Description tab and in comments: `12:34` (or
+  `1:02:03`) jumps the video there, also while casting, and starts it if it is paused or not
+  loaded; links open in the browser.
+
 ## 0.25.0 - 2026-10-10
 
 ### Added
