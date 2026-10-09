@@ -413,7 +413,9 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   finished, or someone pressed stop on the TV). Closing the window (or the app's close button) while
   the cast view is open asks whether to stop the receiver, keep it playing, or cancel; "stop"
   waits at most 2 seconds for the receiver. A crash or kill can't ask, so the receiver keeps
-  playing. Playing another video here leaves the cast view too and does not touch the receiver. A `command` target has none of this: it is fire and forget.
+  playing. Picking another video while the cast view is open sends it to the receiver too, which
+  resolves it with its own login (age-restricted videos included); after **Back to this screen**
+  videos play here again. A `command` target has none of this: it is fire and forget.
 - The page link, not a stream link, is sent on purpose: the receiver's own yt-dlp resolves it at
   full quality, but it needs its own login for videos that need one. 
 - **Casting a list.** With a `url` target (tg-mpv-bot 1.14 or newer) you can send more than one

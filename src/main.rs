@@ -2411,7 +2411,19 @@ impl Unbloated {
         self.history.touch(&video);
         self.history.save();
         let channel_changed = self.current.as_ref().map(|c| &c.channel_url) != Some(&video.channel_url);
-        self.start(video, false);
+        if let Some(c) = self.casting.as_mut() {
+            // While casting, a picked video goes to the receiver (which resolves it with its own
+            // login) and the cast view stays. After "Back to this screen" videos play here again.
+            // The cast starts over now: until the receiver plays the new video, the old one (or
+            // nothing, while it loads) must neither be shown nor end the cast.
+            // No polls (`polling`) until the receiver has taken it; see cast_list.
+            let name = c.name.clone();
+            *c = Casting { name: name.clone(), remote: c.remote.clone(), status: None, seen: false, started: Instant::now(), polling: true, listed: false, items: vec![video.clone()], marked: Default::default(), sent: 1 };
+            self.cast_list(Some(name), vec![video.clone()], cx);
+            self.current = Some(video);
+        } else {
+            self.start(video, false);
+        }
         if !self.cfg.has_auth() && channel_changed {
             self.load_recs(cx);
         }
@@ -3331,6 +3343,11 @@ impl Unbloated {
                         }
                         this.sync_embed();
                     }
+                    // A video picked in the cast view didn't go out: the receiver still plays
+                    // the old one, which the view no longer describes.
+                    Err(e) if this.casting.as_ref().is_some_and(|c| c.polling && c.status.is_none()) => {
+                        this.end_cast(&format!("Cast to {name} failed: {e}"), cx)
+                    }
                     Err(e) => this.notice = Some(format!("Cast to {name} failed: {e}")),
                 }
                 cx.notify();
@@ -3501,12 +3518,13 @@ impl Unbloated {
     fn poll_cast(&mut self, cx: &mut Context<Self>) {
         let Some(c) = self.casting.as_mut().filter(|c| !c.polling) else { return };
         c.polling = true;
-        let remote = c.remote.clone();
+        let (remote, started) = (c.remote.clone(), c.started);
         let task = cx.background_executor().spawn(async move { remote.status() });
         cx.spawn(async move |this, cx| {
             let res = task.await;
             this.update(cx, |this, cx| {
-                let Some(c) = this.casting.as_mut() else { return };
+                // Gone, or another video was cast meanwhile: this answer is about the old one.
+                let Some(c) = this.casting.as_mut().filter(|c| c.started == started) else { return };
                 c.polling = false;
                 let alive = matches!(&res, Ok(s) if s.playing || s.queue.is_some());
                 if let Ok(s) = res {
