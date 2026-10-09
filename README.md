@@ -546,6 +546,13 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   - *Dislike counts* next to the Dislike button (Return YouTube Dislike API)
   - *A daily watch-time limit*: a budget, a quiet counter and a soft stop when it runs out,
     optionally only at certain hours or for certain groups
+  - *Open in a new window*, depending on what it is for:
+    - a second video: right-click → "Play in separate window" starts an independent mpv window
+      for it while the main player keeps its own (small, and the same on every OS: no embedding)
+    - several lists open at once: switchable left-column views, like browser tabs (no extra player)
+    - a real second app window, with its own embedded player, would mean per-window player state
+      and a second X11 embed (`embed.rs`, already the main obstacle to Windows and macOS): not
+      worth it before cross-platform embedding exists
 - **History: channel links on Shorts.** History's Shorts entries carry no channel, so they have
   no channel button; the Videos entries do.
 - **Test the Connect flow on more setups.** Verified with Brave (keyring) and a failing
