@@ -6,6 +6,10 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Added
+- **Description tab** under the player, next to Recommended: the video's description, fetched
+  (with yt-dlp, so no login needed) when you open the tab. Settings → Description turns it off.
+
 ### Changed
 - The README marks the project as **alpha**: a status badge and a short note at the top.
 

@@ -206,6 +206,8 @@ pub struct Settings {
     pub recommendations: bool,
     /// Chapters tab under the player, for videos that have chapters.
     pub chapters: bool,
+    /// Description tab under the player; the description is fetched when the tab is opened.
+    pub description: bool,
     /// Comments tab under the player; comments are fetched only when the tab is opened.
     pub comments: bool,
     /// Watch later tab under the player; the list is fetched when the tab is first opened.
@@ -294,6 +296,7 @@ impl Default for Settings {
             history: true,
             recommendations: true,
             chapters: true,
+            description: true,
             comments: false,
             watch_later_tab: false,
             shorts: true,

@@ -120,6 +120,8 @@ list, your playlists, your history, search and a player.
   mode), also while the pointer is over the video. Remembered between runs.
 - **Chapters tab** under the player for videos that have chapters: click one to jump there; the
   current chapter is highlighted and kept in view.
+- **Description tab** under the player (Settings → Description turns it off): the video's
+  description, fetched when you open the tab.
 - **Comments tab** under the player, off by default (Settings → Comments): the top 40 comments are
   fetched only when you open the tab, and "Load more comments" at the bottom gets 40 more.
 - **Resizable player**: drag the divider between the video and the lower pane anywhere, up to
@@ -155,7 +157,7 @@ Everything is a toggle or a field on the Settings page, which has its own search
 | Group | Options |
 | --- | --- |
 | Account | **Connect YouTube**: pick a browser and test its session, or import a `cookies.txt` (see [Login](#login)) |
-| Tabs & lists | Subscriptions, Playlists, History, Recommendations, Chapters, Comments and Watch later tabs (both off by default), **Shorts** (everywhere) |
+| Tabs & lists | Subscriptions, Playlists, History, Recommendations, Description, Chapters, Comments and Watch later tabs (the last two off by default), **Shorts** (everywhere) |
 | Buttons | Back / forward, Subscribe, Save to playlist, Watch later, Like, Dislike, Volume, Subtitles, Cast, Share, Share at current time, Open in browser, Download |
 | Subtitles | On/off, language(s), auto-generated captions, size |
 | Player | Max quality (480p–4K), autoplay, **audio only**, prefer hardware-friendly codecs (skip AV1), hardware decoding, hover controls on the video, mpv's own controls and hotkeys, speed |
@@ -187,11 +189,11 @@ remembered.
 | ⇧C | Copy the link at the current time (`y t` in Vim mode) |
 | O | Open the video in your browser (`o` in Vim mode) |
 | W | Add the video to Watch later (`w` in Vim mode) |
-| E | Lower pane (Recommended, Chapters, Watch later, Comments, Up next) full height, and back (`e` in Vim mode) |
+| E | Lower pane (Recommended, Description, Chapters, Watch later, Comments, Up next) full height, and back (`e` in Vim mode) |
 | ⇧E | Player full height (hide the lower pane), and back |
 | Tab / ⇧Tab | Move a focus ring through every clickable thing (tabs, rows, buttons, switches); Enter or Space presses it, Esc clears it |
 | 1 – 4 | Switch tab: Subscriptions, Playlists, History, Settings |
-| 5 – 9 | Switch lower pane tab: Recommended, Chapters, Watch later, Comments, Up next (as shown) |
+| 5 – 9 | Switch lower pane tab: Recommended, Description, Chapters, Watch later, Comments, Up next (as shown; the first five) |
 | [ / ] | Previous / next tab: through 1–4, then 5–9, wrapping around |
 | B | Hide or show the left column (`b` in Vim mode) |
 | ⇧B | Hide or show the right column |
@@ -683,8 +685,7 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
     toggle and picker (see *Subtitles* above); a quality picker
     for the playing video (today only a max quality); a loop or repeat button; a sleep timer
   - *Browsing*: a Watch later button on every row (today via the save picker); hide watched
-    videos in the New uploads feed; a description tab under the player, next to Comments and
-    Chapters; search filters for duration, upload date and type
+    videos in the New uploads feed; search filters for duration, upload date and type
   - *Maintenance*: export and import settings, groups and channel flags. Groups live in one file
     on one machine (`groups.json`, with no sync and no backup), so this is also how they would
     move between computers; a setting for the data folder (point it at a synced folder) would do
