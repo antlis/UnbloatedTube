@@ -6,6 +6,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.27.0 - 2026-10-10
+
 ### Added
 - **Media keys (MPRIS)**: the app shows up as a media player on D-Bus, so media keys, the
   desktop's player widget, headphone buttons, KDE Connect and `playerctl` show the playing video
