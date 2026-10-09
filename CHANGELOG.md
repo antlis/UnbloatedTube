@@ -6,6 +6,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.27.1 - 2026-10-10
+
 ### Fixed
 - **Rebuilding while the app is open** no longer breaks it: subtitles, comments, the description,
   marking watched and pasted links failed with "cannot run yt-dlp: No such file or directory"
