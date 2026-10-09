@@ -208,6 +208,8 @@ pub struct Settings {
     pub chapters: bool,
     /// Description tab under the player; the description is fetched when the tab is opened.
     pub description: bool,
+    /// Transcript tab under the player: the captions as text, searchable, a click jumps there.
+    pub transcript: bool,
     /// Comments tab under the player; comments are fetched only when the tab is opened.
     pub comments: bool,
     /// Downloads tab on the left: the videos saved with Download, played from the file.
@@ -299,6 +301,7 @@ impl Default for Settings {
             recommendations: true,
             chapters: true,
             description: true,
+            transcript: true,
             comments: false,
             downloads_tab: true,
             watch_later_tab: false,

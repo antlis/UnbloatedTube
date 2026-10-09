@@ -108,13 +108,14 @@ fn channel_of(v: &Video) -> Option<&str> {
 /// Settings page toggles: label, hint, field.
 type Toggle = (&'static str, &'static str, fn(&mut Settings) -> &mut bool);
 
-const TOGGLES: [Toggle; 13] = [
+const TOGGLES: [Toggle; 14] = [
     ("Subscriptions", "Your subscribed channels", |s| &mut s.subscriptions),
     ("Playlists", "Watch later, Liked and your playlists", |s| &mut s.playlists),
     ("History", "What you watched, here and on YouTube", |s| &mut s.history),
     ("Recommendations", "Your YouTube home feed under the player", |s| &mut s.recommendations),
     ("Chapters", "Chapters tab under the player, for videos that have them", |s| &mut s.chapters),
     ("Description", "Description tab under the player, loaded when you open it", |s| &mut s.description),
+    ("Transcript", "Transcript tab under the player: the captions as text, searchable; click a line to jump there", |s| &mut s.transcript),
     ("Comments", "Comments tab under the player, loaded when you open it", |s| &mut s.comments),
     ("Downloads tab", "Videos you downloaded, played from the file (also offline); shows once there is one", |s| &mut s.downloads_tab),
     ("Watch later tab", "Your Watch later list under the player (needs your login), loaded when you open it", |s| &mut s.watch_later_tab),
@@ -233,6 +234,7 @@ impl<T> Load<T> {
 enum Lower {
     Recommended,
     Description,
+    Transcript,
     UpNext,
     Chapters,
     Comments,
@@ -262,7 +264,7 @@ const SHORTCUTS: [(&str, &str); 30] = [
     ("⇧E", "Player full height (hide the lower pane), and back"),
     ("[ / ]", "Previous / next tab (header tabs, then the lower pane's)"),
     ("1 - 4", "Switch tab: Subscriptions, Playlists, History, (Downloads,) Settings"),
-    ("5 - 9", "Switch lower tab: Recommended, Description, Chapters, Watch later, Comments, Up next"),
+    ("5 - 9", "Switch lower tab: Recommended, Description, Transcript, Chapters, Watch later, Comments, Up next"),
     ("Tab / ⇧Tab", "Move the focus ring (Enter or Space presses, Esc clears)"),
     ("B", "Hide or show the left column"),
     ("⇧B", "Hide or show the right column"),
@@ -306,7 +308,7 @@ const VIM_SHORTCUTS: [(&str, &str); 36] = [
     ("⇧E", "Player full height (hide the lower pane), and back"),
     ("[ / ]", "Previous / next tab (header tabs, then the lower pane's)"),
     ("1 - 4", "Switch tab: Subscriptions, Playlists, History, (Downloads,) Settings"),
-    ("5 - 9", "Switch lower tab: Recommended, Description, Chapters, Watch later, Comments, Up next"),
+    ("5 - 9", "Switch lower tab: Recommended, Description, Transcript, Chapters, Watch later, Comments, Up next"),
     ("Tab / ⇧Tab", "Move the focus ring (Enter or Space presses, Esc clears)"),
     ("b", "Hide or show the left column"),
     ("⇧B", "Hide or show the right column"),
@@ -390,6 +392,15 @@ struct Unbloated {
     /// Description of the video `description_for` (one item); fetched when its tab is first shown.
     description: Load<String>,
     description_for: Option<String>,
+    /// Caption lines (start, text) of the video `transcript_for`; fetched when the Transcript tab
+    /// is first shown. `transcript_query` searches them; `transcript_shown` is the line scrolled
+    /// to when the list appeared (it follows the video only then, not while you read).
+    transcript: Load<(f64, String)>,
+    transcript_for: Option<String>,
+    transcript_query: String,
+    transcript_focus: FocusHandle,
+    transcript_scroll: UniformListScrollHandle,
+    transcript_shown: Option<usize>,
     /// Comments of the video `comments_for`; fetched when the Comments tab is first shown.
     comments: Load<Comment>,
     comments_for: Option<String>,
@@ -709,6 +720,12 @@ impl Unbloated {
             watch_later: Load::Idle,
             description: Load::Idle,
             description_for: None,
+            transcript: Load::Idle,
+            transcript_for: None,
+            transcript_query: String::new(),
+            transcript_focus: cx.focus_handle(),
+            transcript_scroll: UniformListScrollHandle::new(),
+            transcript_shown: None,
             comments: Load::Idle,
             comments_for: None,
             comments_limit: COMMENTS_PAGE,
@@ -4355,6 +4372,9 @@ impl Unbloated {
         if self.description_on() {
             tabs.push(Lower::Description);
         }
+        if self.transcript_on() {
+            tabs.push(Lower::Transcript);
+        }
         if !self.chapter_list().is_empty() {
             tabs.push(Lower::Chapters);
         }
@@ -4371,7 +4391,7 @@ impl Unbloated {
     /// The lower pane tab shown now (see the lower pane in `render`).
     fn shown_lower(&self, tabs: &[Lower]) -> Lower {
         match self.lower {
-            Lower::Chapters | Lower::Comments | Lower::WatchLater | Lower::Recommended | Lower::Description if !tabs.contains(&self.lower) => tabs[0],
+            Lower::Chapters | Lower::Comments | Lower::WatchLater | Lower::Recommended | Lower::Description | Lower::Transcript if !tabs.contains(&self.lower) => tabs[0],
             tab => tab,
         }
     }
@@ -6898,6 +6918,164 @@ impl Unbloated {
         }
     }
 
+    /// Transcript tab is on and there is a video to show it for.
+    fn transcript_on(&self) -> bool {
+        self.settings.transcript && self.current.is_some()
+    }
+
+    /// The current video's captions as a list of lines, fetched on first view (and again after
+    /// the video changes): a search field narrows them, a click jumps there.
+    fn render_transcript(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let id = self.current.as_ref().map(|v| v.id.clone());
+        if self.transcript_for != id {
+            self.transcript_for = id.clone();
+            // Not the previous video's lines while these load.
+            self.transcript = Load::Idle;
+            self.transcript_shown = None;
+            self.transcript_query.clear();
+            let (langs, auto, dir) = (self.sub_langs(), self.settings.sub_auto, store::cache_dir().join("captions"));
+            let id = id.unwrap_or_default();
+            self.fetch(cx, "transcript", |s| &mut s.transcript, None, move |cfg, on| yt::transcript(cfg, &id, &langs, auto, &dir, on));
+        }
+        let q = self.transcript_query.trim().to_lowercase();
+        let all = self.transcript.items();
+        let lines: Arc<[(f64, String)]> = all.iter().filter(|(_, t)| q.is_empty() || t.to_lowercase().contains(&q)).cloned().collect();
+        let count = (!q.is_empty() && !all.is_empty()).then(|| match lines.len() {
+            1 => "1 match".to_string(),
+            n => format!("{n} matches"),
+        });
+        let body = match &self.transcript {
+            Load::Failed(e) => self.failed(e),
+            Load::Ready(v) if v.is_empty() => self.status("No captions in your subtitle languages (Settings → Subtitles)."),
+            Load::Ready(_) if lines.is_empty() => self.status("Not said in this video."),
+            Load::Ready(_) => self.transcript_list(lines, &q, cx),
+            _ => skeleton(Rows::Comments),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .px_3()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(themed(BORDER))
+                    .child(self.transcript_field(window, cx).flex_1())
+                    .children(count.map(|c| div().flex_none().text_xs().text_color(themed(MUTED)).child(c))),
+            )
+            .child(div().flex().flex_col().flex_1().min_h_0().child(body))
+            .into_any_element()
+    }
+
+    /// The lines, the playing one highlighted, matches of `q` marked; a click jumps there.
+    fn transcript_list(&mut self, lines: Arc<[(f64, String)]>, q: &str, cx: &mut Context<Self>) -> AnyElement {
+        let position = match &self.casting {
+            Some(c) => c.status.as_ref().map_or(0., |s| s.position),
+            None => self.state.as_ref().map_or(0., |s| s.position),
+        };
+        let current = lines.iter().rposition(|(t, _)| *t <= position);
+        // Scrolled to the playing line when the list appears, then left where you read.
+        if self.transcript_shown.is_none() {
+            self.transcript_shown = Some(current.unwrap_or(0));
+            self.transcript_scroll.scroll_to_item(current.unwrap_or(0), ScrollStrategy::Center);
+        }
+        let q = q.to_string();
+        uniform_list(
+            "transcript",
+            lines.len(),
+            cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+                range
+                    .map(|i| {
+                        let (start, text) = &lines[i];
+                        let (start, is_current) = (*start, Some(i) == current);
+                        // The match, where lower-casing kept the text's byte offsets.
+                        let lower = text.to_lowercase();
+                        let found = (!q.is_empty() && lower.len() == text.len()).then(|| lower.find(&q)).flatten().map(|at| at..at + q.len());
+                        let mark = HighlightStyle { background_color: Some(gpui::rgba((ACCENT << 8) | 0x66).into()), ..Default::default() };
+                        let line = StyledText::new(text.clone()).with_highlights(found.map(|r| (r, mark)));
+                        div()
+                            .id(i)
+                            .w_full()
+                            .h(px(32.))
+                            .px_3()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .cursor_pointer()
+                            .when(is_current, |d| d.bg(themed(HOVER)))
+                            .hover(|d| d.bg(themed(HOVER)))
+                            .child(
+                                div()
+                                    .w(px(64.))
+                                    .flex_none()
+                                    .text_xs()
+                                    .text_color(if is_current { themed(ACCENT) } else { themed(MUTED) })
+                                    .child(fmt_duration(start)),
+                            )
+                            .child(div().flex_1().min_w_0().truncate().text_sm().text_color(themed(TEXT)).child(line))
+                            .on_click_hinted(&this.hint_reg(), cx, move |this, _, _, cx| this.seek_link(start, cx))
+                    })
+                    .collect()
+            }),
+        )
+        .track_scroll(self.transcript_scroll.clone())
+        .flex_1()
+        .into_any_element()
+    }
+
+    /// The Transcript tab's search field: filters the lines as you type; Esc clears.
+    fn transcript_field(&self, window: &Window, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
+        let focused = self.transcript_focus.is_focused(window);
+        let empty = self.transcript_query.is_empty();
+        div()
+            .id("transcript-search")
+            .track_focus(&self.transcript_focus)
+            .flex()
+            .items_center()
+            .gap_2()
+            .min_w(px(160.))
+            .px_2()
+            .py(px(3.))
+            .rounded_md()
+            .bg(themed(HOVER))
+            .border_1()
+            .border_color(if focused { themed(MUTED) } else { themed(BORDER) })
+            .text_xs()
+            .cursor_text()
+            .child(svg().path(icons::path("search")).size(px(12.)).flex_none().text_color(themed(MUTED)))
+            .child(div().flex_1().min_w_0().truncate().text_color(if empty { themed(MUTED) } else { themed(TEXT) }).map(|d| match (empty, focused) {
+                (_, true) => d.text_color(themed(TEXT)).child(self.caret_text("transcript", &self.transcript_query, "Search in this video")),
+                (true, false) => d.child("Search in this video"),
+                (false, false) => d.child(self.transcript_query.clone()),
+            }))
+            .on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| {
+                window.focus(&this.transcript_focus);
+                cx.notify();
+            })
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                match edit_text(&mut this.caret, "transcript", &mut this.transcript_query, ev, cx) {
+                    Edit::Submit => window.blur(),
+                    Edit::Cancel => {
+                        this.transcript_query.clear();
+                        this.transcript_shown = None;
+                        window.blur();
+                    }
+                    // A new list: start at its top (or, emptied, at the playing line again).
+                    Edit::Changed => {
+                        this.transcript_shown = if this.transcript_query.trim().is_empty() { None } else { Some(0) };
+                        this.transcript_scroll.scroll_to_item(0, ScrollStrategy::Top);
+                    }
+                    Edit::Moved | Edit::Ignored => {}
+                }
+                cx.stop_propagation();
+                cx.notify();
+            }))
+    }
+
     /// Comments tab is on and there is a video to show them for.
     fn comments_on(&self) -> bool {
         self.settings.comments && self.current.is_some()
@@ -7712,19 +7890,22 @@ impl Render for Unbloated {
         let chapters = self.chapter_list();
         let show_comments = self.comments_on();
         let show_desc = self.description_on();
+        let show_transcript = self.transcript_on();
         let show_later = self.watch_later_on();
-        let right = if (show_recs || !self.up_next.is_empty() || !chapters.is_empty() || show_comments || show_desc || show_later) && !self.player_full {
+        let right = if (show_recs || !self.up_next.is_empty() || !chapters.is_empty() || show_comments || show_desc || show_transcript || show_later) && !self.player_full {
             let lower = match self.lower {
                 Lower::Description if show_desc => Lower::Description,
+                Lower::Transcript if show_transcript => Lower::Transcript,
                 Lower::Comments if show_comments => Lower::Comments,
                 Lower::WatchLater if show_later => Lower::WatchLater,
                 Lower::Chapters if !chapters.is_empty() => Lower::Chapters,
-                Lower::Chapters | Lower::Comments | Lower::WatchLater | Lower::Recommended | Lower::Description if show_recs => Lower::Recommended,
+                Lower::Chapters | Lower::Comments | Lower::WatchLater | Lower::Recommended | Lower::Description | Lower::Transcript if show_recs => Lower::Recommended,
                 _ => Lower::UpNext,
             };
             let body = match lower {
                 Lower::Chapters => self.render_chapters(chapters.clone(), cx),
                 Lower::Description => self.render_description(cx),
+                Lower::Transcript => self.render_transcript(window, cx),
                 Lower::Comments => self.render_comments(cx),
                 Lower::WatchLater => self.render_watch_later(cx),
                 Lower::Recommended => self.render_recs(cx),
@@ -7771,6 +7952,11 @@ impl Render for Unbloated {
                         .when(show_desc, |d| {
                             d.child(tab_button("Description", lower == Lower::Description).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
                                 this.show_lower(Lower::Description, cx);
+                            }))
+                        })
+                        .when(show_transcript, |d| {
+                            d.child(tab_button("Transcript", lower == Lower::Transcript).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                                this.show_lower(Lower::Transcript, cx);
                             }))
                         })
                         .when(!chapters.is_empty(), |d| {

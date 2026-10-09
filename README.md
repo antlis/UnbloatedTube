@@ -124,6 +124,11 @@ list, your playlists, your history, search and a player.
   description, fetched when you open the tab. Timestamps in it (`12:34`, `1:02:03`) jump the
   video there, `#tags` are searched for, `@handles` and YouTube links open in the app, and other
   links in the browser; the same works in comments.
+- **Transcript tab** under the player: the video's captions as a list of lines with their times,
+  the one being said highlighted. Type a word in its search field to see every moment it is
+  said (the word is marked, with a count); click a line to jump there. It uses the same captions
+  as the subtitles (Settings → Subtitles: languages, auto-generated captions) and the same
+  cache, so it is instant for a video whose subtitles you had on. Settings → Transcript hides it.
 - **Downloads tab**: videos saved with the Download button, newest first, with a filter. They
   play from the file, so also offline (and logged out). Right-click → "Delete downloaded file"
   deletes it; a file deleted or moved outside the app drops off the list. The tab shows once
@@ -163,7 +168,7 @@ Everything is a toggle or a field on the Settings page, which has its own search
 | Group | Options |
 | --- | --- |
 | Account | **Connect YouTube**: pick a browser and test its session, or import a `cookies.txt` (see [Login](#login)) |
-| Tabs & lists | Subscriptions, Playlists, History, Downloads, Recommendations, Description, Chapters, Comments and Watch later tabs (the last two off by default), **Shorts** (everywhere) |
+| Tabs & lists | Subscriptions, Playlists, History, Downloads, Recommendations, Description, Transcript, Chapters, Comments and Watch later tabs (the last two off by default), **Shorts** (everywhere) |
 | Buttons | Back / forward, Subscribe, Save to playlist, Watch later, Like, Dislike, Volume, Subtitles, Cast, Share, Share at current time, Open in browser, Download |
 | Subtitles | On/off, language(s), auto-generated captions, size |
 | Player | Max quality (480p–4K), autoplay, **audio only**, prefer hardware-friendly codecs (skip AV1), hardware decoding, hover controls on the video, mpv's own controls and hotkeys, speed |
@@ -195,11 +200,11 @@ remembered.
 | ⇧C | Copy the link at the current time (`y t` in Vim mode) |
 | O | Open the video in your browser (`o` in Vim mode) |
 | W | Add the video to Watch later (`w` in Vim mode) |
-| E | Lower pane (Recommended, Description, Chapters, Watch later, Comments, Up next) full height, and back (`e` in Vim mode) |
+| E | Lower pane (Recommended, Description, Transcript, Chapters, Watch later, Comments, Up next) full height, and back (`e` in Vim mode) |
 | ⇧E | Player full height (hide the lower pane), and back |
 | Tab / ⇧Tab | Move a focus ring through every clickable thing (tabs, rows, buttons, switches); Enter or Space presses it, Esc clears it |
 | 1 – 4 | Switch tab: Subscriptions, Playlists, History, Settings (with the Downloads tab: 1 – 5, and the lower pane's tabs start at 6) |
-| 5 – 9 | Switch lower pane tab: Recommended, Description, Chapters, Watch later, Comments, Up next (as shown; the first five) |
+| 5 – 9 | Switch lower pane tab: Recommended, Description, Transcript, Chapters, Watch later, Comments, Up next (as shown; the first five) |
 | [ / ] | Previous / next tab: through 1–4, then 5–9, wrapping around |
 | B | Hide or show the left column (`b` in Vim mode) |
 | ⇧B | Hide or show the right column |
@@ -549,7 +554,6 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
     recommendations and search
   - *DeArrow*: community titles and thumbnails instead of clickbait ones (from the SponsorBlock
     authors; same free, keyless kind of API)
-  - *Search inside a video*: search the captions the app already downloads and jump to a match
   - *Dislike counts* next to the Dislike button (Return YouTube Dislike API)
   - *A daily watch-time limit*: a budget, a quiet counter and a soft stop when it runs out,
     optionally only at certain hours or for certain groups

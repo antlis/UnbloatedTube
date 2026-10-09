@@ -517,6 +517,50 @@ pub fn subtitles(cfg: &Config, id: &str, langs: &str, auto: bool, dir: &std::pat
     }
 }
 
+/// A video's captions as (start in seconds, text) lines, for the Transcript tab. The same file the
+/// subtitles use (`subtitles`), so it is often there already. No lines: no captions.
+pub fn transcript(cfg: &Config, id: &str, langs: &str, auto: bool, dir: &std::path::Path, on: &mut dyn FnMut((f64, String))) -> Result<(), String> {
+    let Some(file) = subtitles(cfg, id, langs, auto, dir)? else { return Ok(()) };
+    let vtt = std::fs::read_to_string(&file).map_err(|e| e.to_string())?;
+    let mut last = String::new();
+    for (start, text) in vtt_cues(&vtt) {
+        // Rolling captions repeat a line in the next cue.
+        if text != last {
+            on((start, text.clone()));
+            last = text;
+        }
+    }
+    Ok(())
+}
+
+/// Each cue's start and its text on one line, without tags (`<i>`, `<c>`, word times) or entities.
+fn vtt_cues(vtt: &str) -> Vec<(f64, String)> {
+    let mut out = Vec::new();
+    for block in vtt.replace("\r\n", "\n").split("\n\n") {
+        let mut lines = block.lines().skip_while(|l| !l.contains("-->"));
+        let Some(start) = lines.next().and_then(|t| t.split_once("-->")).and_then(|(from, _)| vtt_time(from)) else { continue };
+        let mut text = String::new();
+        for line in lines {
+            let mut in_tag = false;
+            for c in line.chars() {
+                match c {
+                    '<' => in_tag = true,
+                    '>' if in_tag => in_tag = false,
+                    c if !in_tag => text.push(c),
+                    _ => {}
+                }
+            }
+            text.push(' ');
+        }
+        let text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&nbsp;", " ");
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !text.is_empty() {
+            out.push((start, text));
+        }
+    }
+    out
+}
+
 /// Seconds of a WebVTT timestamp, "00:01:02.345" or "01:02.345".
 fn vtt_time(s: &str) -> Option<f64> {
     let parts: Vec<f64> = s.trim().split(':').map(|p| p.parse().ok()).collect::<Option<_>>()?;
