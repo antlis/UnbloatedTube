@@ -6805,8 +6805,7 @@ impl Unbloated {
             .into_any_element()
     }
 
-    /// `text` with its links and timestamps clickable: a link opens in the browser, a time
-    /// seeks the current video there.
+    /// `text` with its links, timestamps, #tags and @handles clickable (see `open_text_link`).
     fn linked_text(&self, id: impl Into<ElementId>, text: String, cx: &mut Context<Self>) -> AnyElement {
         let (ranges, targets): (Vec<_>, Vec<_>) = links::find(&text).into_iter().unzip();
         if ranges.is_empty() {
@@ -6822,13 +6821,28 @@ impl Unbloated {
         InteractiveText::new(id, styled)
             .on_click(ranges, move |i, _, cx| {
                 let target = targets[i].clone();
-                this.update(cx, |this, cx| match target {
-                    links::Link::Url(url) => this.open_url(&url, cx),
-                    links::Link::Time(secs) => this.seek_link(secs, cx),
-                })
-                .ok();
+                this.update(cx, |this, cx| this.open_text_link(target, cx)).ok();
             })
             .into_any_element()
+    }
+
+    /// A link clicked in the description or a comment: a YouTube link (and an @handle) opens in
+    /// the app, any other in the browser; a time seeks there; a #tag is searched for.
+    fn open_text_link(&mut self, link: links::Link, cx: &mut Context<Self>) {
+        match link {
+            links::Link::Url(url) => match yt::parse_link(&url) {
+                Some(link) => self.open_link(link, cx),
+                None => self.open_url(&url, cx),
+            },
+            links::Link::Time(secs) => self.seek_link(secs, cx),
+            links::Link::Tag(tag) => {
+                self.query = tag;
+                self.left_collapsed = false;
+                self.run_search(cx);
+            }
+            links::Link::Handle(handle) => self.open_link(yt::YtLink::Channel { url: format!("https://www.youtube.com/{handle}") }, cx),
+        }
+        cx.notify();
     }
 
     /// A timestamp clicked in the description or a comment: play from there (starting the

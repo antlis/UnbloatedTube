@@ -122,7 +122,8 @@ list, your playlists, your history, search and a player.
   current chapter is highlighted and kept in view.
 - **Description tab** under the player (Settings → Description turns it off): the video's
   description, fetched when you open the tab. Timestamps in it (`12:34`, `1:02:03`) jump the
-  video there and links open in the browser; the same works in comments.
+  video there, `#tags` are searched for, `@handles` and YouTube links open in the app, and other
+  links in the browser; the same works in comments.
 - **Downloads tab**: videos saved with the Download button, newest first, with a filter. They
   play from the file, so also offline (and logged out). Right-click → "Delete downloaded file"
   deletes it; a file deleted or moved outside the app drops off the list. The tab shows once

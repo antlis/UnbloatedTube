@@ -1,4 +1,5 @@
-//! Clickable parts of plain text (descriptions, comments): web links and timestamps.
+//! Clickable parts of plain text (descriptions, comments): web links, timestamps, #hashtags
+//! and @handles.
 
 use std::ops::Range;
 
@@ -7,6 +8,10 @@ pub enum Link {
     Url(String),
     /// A position in the video, in seconds.
     Time(f64),
+    /// `#tag`, with the `#`.
+    Tag(String),
+    /// `@handle` of a channel, with the `@`.
+    Handle(String),
 }
 
 /// The links in `text`, in order, with their byte ranges.
@@ -21,10 +26,23 @@ pub fn find(text: &str) -> Vec<(Range<usize>, Link)> {
             i += len;
             continue;
         }
-        let after_boundary = text[..i].chars().next_back().is_none_or(|c| !c.is_alphanumeric() && c != ':' && c != '.');
-        if after_boundary {
+        let before = text[..i].chars().next_back();
+        if before.is_none_or(|c| !c.is_alphanumeric() && c != ':' && c != '.') {
             if let Some((len, secs)) = timestamp(rest) {
                 out.push((i..i + len, Link::Time(secs)));
+                i += len;
+                continue;
+            }
+        }
+        // Not inside a word, an e-mail address or an HTML entity (`&#39;`).
+        if before.is_none_or(|c| !c.is_alphanumeric() && !"&/_@#".contains(c)) {
+            if let Some(len) = tag(rest) {
+                out.push((i..i + len, Link::Tag(rest[..len].to_string())));
+                i += len;
+                continue;
+            }
+            if let Some(len) = handle(rest) {
+                out.push((i..i + len, Link::Handle(rest[..len].to_string())));
                 i += len;
                 continue;
             }
@@ -49,6 +67,24 @@ fn url_len(s: &str) -> usize {
         }
     }
     end
+}
+
+/// `#` and letters, digits or `_`, not only digits (`#1` is no hashtag): its length.
+fn tag(s: &str) -> Option<usize> {
+    let body = s.strip_prefix('#')?;
+    let len: usize = body.chars().take_while(|c| c.is_alphanumeric() || *c == '_').map(char::len_utf8).sum();
+    body[..len].chars().any(|c| !c.is_ascii_digit()).then_some(1 + len)
+}
+
+/// `@` and a YouTube handle (3–30 of letters, digits, `.`, `_`, `-`; not ending in `.` or `-`):
+/// its length.
+fn handle(s: &str) -> Option<usize> {
+    let body = s.strip_prefix('@')?;
+    let mut len = body.chars().take_while(|c| c.is_ascii_alphanumeric() || "._-".contains(*c)).count();
+    while len > 0 && ".-".contains(&body[len - 1..len]) {
+        len -= 1;
+    }
+    ((3..=30).contains(&len) && !body[len..].starts_with('@')).then_some(1 + len)
 }
 
 /// `M:SS`, `MM:SS` or `H:MM:SS` at the start of `s`, not followed by more digits, letters or
@@ -112,6 +148,17 @@ mod tests {
         assert_eq!(links("(http://x.org/wiki/A_(b))"), [("http://x.org/wiki/A_(b)", Link::Url("http://x.org/wiki/A_(b)".into()))]);
         // A time inside a link is part of the link.
         assert_eq!(links("https://youtu.be/x?t=1:23 ok").len(), 1);
+    }
+
+    #[test]
+    fn tags_and_handles() {
+        assert_eq!(
+            links("New video #rust #GameDev_2 by @SomeOne-x."),
+            [("#rust", Link::Tag("#rust".into())), ("#GameDev_2", Link::Tag("#GameDev_2".into())), ("@SomeOne-x", Link::Handle("@SomeOne-x".into()))]
+        );
+        assert_eq!(links("#игры"), [("#игры", Link::Tag("#игры".into()))]);
+        // Not tags or handles: numbers, the middle of a word, an entity, an e-mail, a link's anchor.
+        assert!(links("#1 a#b &#39; me@mail.com @ab https://x.org/p#top").iter().all(|(_, l)| matches!(l, Link::Url(_))));
     }
 
     #[test]
