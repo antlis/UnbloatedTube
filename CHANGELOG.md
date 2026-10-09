@@ -6,6 +6,12 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Added
+- **Transcript tab**: the video's captions as a list of timed lines, the current one highlighted.
+  Its search field finds every moment a word is said (marked, with a count); a click jumps
+  there, also while casting. It shares the subtitles' captions and cache; Settings → Transcript
+  hides it.
+
 ## 0.27.1 - 2026-10-10
 
 ### Fixed
