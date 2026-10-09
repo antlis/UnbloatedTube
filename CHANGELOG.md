@@ -6,6 +6,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.29.0 - 2026-10-10
+
 ### Added
 - **Hide videos by keyword**: Settings → Hide videos with words (comma-separated, e.g.
   `reaction, prank, #shorts`). Videos whose title says one, as a whole word, disappear from
