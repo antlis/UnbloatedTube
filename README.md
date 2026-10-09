@@ -560,6 +560,8 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
     - a real second app window, with its own embedded player, would mean per-window player state
       and a second X11 embed (`embed.rs`, already the main obstacle to Windows and macOS): not
       worth it before cross-platform embedding exists
+- **Downloads tab: older downloads.** Videos downloaded before the tab existed (0.25.0) aren't
+  listed; they could be found in the download folder by their `title [id].ext` names.
 - **History: channel links on Shorts.** History's Shorts entries carry no channel, so they have
   no channel button; the Videos entries do.
 - **Test the Connect flow on more setups.** Verified with Brave (keyring) and a failing
