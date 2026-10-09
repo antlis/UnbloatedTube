@@ -5,6 +5,7 @@ Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a mi
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
+## 0.23.1 - 2026-10-10
 
 ### Changed
 - The README marks the project as **alpha**: a status badge and a short note at the top.
