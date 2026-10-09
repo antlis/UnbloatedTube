@@ -5776,6 +5776,7 @@ dependencies = [
  "toml 0.8.23",
  "ureq",
  "x11rb",
+ "zbus",
 ]
 
 [[package]]

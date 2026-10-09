@@ -18,6 +18,8 @@ sha1_smol = "1"
 anyhow = "1"
 libc = "0.2"
 notify-rust = "4"
+# MPRIS (media keys): already a dependency of gpui and notify-rust.
+zbus = "5"
 
 # Fast edit-compile loop: gpui's debuginfo makes every link slow, and optimized
 # deps (built once) keep `cargo run` snappy without needing --release.
