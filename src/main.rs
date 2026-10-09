@@ -517,6 +517,11 @@ struct Unbloated {
     menu_lists: Option<(String, Option<Vec<account::SaveOption>>)>,
     /// That menu was opened by right-clicking the playing video, so it also has the player rows.
     player_menu: bool,
+    /// A quality picked for one video (its id, and a height or 0 for audio only) instead of the
+    /// settings' maximum; dropped when another video starts.
+    quality: Option<(String, u32)>,
+    /// The player menu's quality list is open.
+    quality_menu: bool,
     /// The pointer is over the menu (it closes 2 seconds after the pointer is away).
     menu_hovered: bool,
     /// The keyboard shortcuts card (opened with ?).
@@ -767,6 +772,8 @@ impl Unbloated {
             playlist_menu: None,
             menu_queue: None,
             player_menu: false,
+            quality: None,
+            quality_menu: false,
             menu_lists: None,
             menu_hovered: false,
             pip: false,
@@ -1293,7 +1300,8 @@ impl Unbloated {
             // The connect screen is a GPUI overlay; the X11 child window would float above it.
             && !self.welcome_visible()
             // Audio only: keep showing the thumbnail.
-            && !self.settings.audio_only;
+            && !self.settings.audio_only
+            && self.picked_quality() != Some(0);
         if let Some(e) = &self.embed {
             e.borrow_mut().set_visible(visible);
         }
@@ -1791,6 +1799,7 @@ impl Unbloated {
     fn close_video_menu(&mut self, cx: &mut Context<Self>) {
         self.video_menu = None;
         self.player_menu = false;
+        self.quality_menu = false;
         self.sync_embed();
         cx.notify();
     }
@@ -2018,7 +2027,7 @@ impl Unbloated {
         const MENU_W: f32 = 240.;
         const ROW_H: f32 = 36.;
         const EDGE: f32 = 48.;
-        let fixed_h = 28. + ROW_H * if downloaded { 3. } else { 2. } + if self.menu_queue.is_some() && self.cast_available() { ROW_H * self.cast_targets().len() as f32 } else { 0. } + if auth { ROW_H + 9. + 24. } else { 0. } + if self.player_menu { ROW_H * 6. + 9. } else { 0. };
+        let fixed_h = 28. + ROW_H * if downloaded { 3. } else { 2. } + if self.menu_queue.is_some() && self.cast_available() { ROW_H * self.cast_targets().len() as f32 } else { 0. } + if auth { ROW_H + 9. + 24. } else { 0. } + if self.player_menu { ROW_H * if self.quality_menu { 17. } else { 7. } + 9. } else { 0. };
         let win = window.viewport_size();
         let (win_w, mut win_h) = (f32::from(win.width), f32::from(win.height));
         if let Some(display) = window.display(cx) {
@@ -2036,6 +2045,45 @@ impl Unbloated {
         let (v_copy, v_queue, v_later) = (video.clone(), video.clone(), video.clone());
         let player_menu = self.player_menu;
         let speed = self.settings.speed;
+        // Quality: only for a video streaming here (not a downloaded file, not while casting).
+        let streaming = self.casting.is_none() && self.current.as_ref().is_some_and(|v| self.media_path(v) == v.url());
+        let picked = self.picked_quality();
+        let quality_label = match (picked, self.state.as_ref().and_then(|s| s.height)) {
+            (Some(0), _) => "audio only".to_string(),
+            (_, Some(h)) => format!("{h}p"),
+            _ => "…".to_string(),
+        };
+        // The list: the settings' maximum, the usual heights, audio only; ticked: in use.
+        let quality_rows: Vec<_> = [None, Some(2160), Some(1440), Some(1080), Some(720), Some(480), Some(360), Some(240), Some(144), Some(0)]
+            .into_iter()
+            .filter(|_| self.quality_menu)
+            .enumerate()
+            .map(|(i, q)| {
+                let label = match q {
+                    None => format!("Auto (up to {}p)", self.settings.max_quality),
+                    Some(0) => "Audio only".to_string(),
+                    Some(h) => format!("{h}p"),
+                };
+                div()
+                    .id(("video-menu-quality-option", i))
+                    .pl_6()
+                    .pr_3()
+                    .py_2()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_sm()
+                    .cursor_pointer()
+                    .text_color(themed(TEXT))
+                    .hover(|d| d.bg(themed(BORDER)))
+                    .child(div().w(px(14.)).flex_none().when(q == picked, |d| d.child(svg().path(icons::path("check")).size(px(14.)).text_color(themed(ACCENT)))))
+                    .child(label)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.close_video_menu(cx);
+                        this.pick_quality(q, cx);
+                    }))
+            })
+            .collect();
         // One row per cast target: this video and the ones after it in its list.
         let rest: Option<Vec<Video>> = self
             .menu_queue
@@ -2123,6 +2171,13 @@ impl Unbloated {
                                 this.close_video_menu(cx);
                                 this.cycle_speed(cx);
                             })))
+                            .when(streaming, |d| {
+                                d.child(row("video-menu-quality").child(format!("Quality: {quality_label} ›")).on_click(cx.listener(|this, _, _, cx| {
+                                    this.quality_menu = !this.quality_menu;
+                                    cx.notify();
+                                })))
+                                .children(quality_rows)
+                            })
                             .child(row("video-menu-subs").child("Subtitles on / off").on_click(cx.listener(|this, _, _, cx| {
                                 this.close_video_menu(cx);
                                 this.toggle_subtitles(cx);
@@ -2611,6 +2666,14 @@ impl Unbloated {
             // Show the new thumbnail right away instead of the old video's last frame.
             e.borrow_mut().set_visible(false);
         }
+        // A quality picked for another video is over; the running mpv gets this one's format (a
+        // restarted mpv starts with the settings' one from `options`).
+        if self.quality.as_ref().is_some_and(|(id, _)| *id != video.id) {
+            self.quality = None;
+        }
+        if !restarts {
+            self.player.set_format(&player::format_at(&self.settings, self.quality.as_ref().map(|(_, h)| *h)));
+        }
         if let Err(e) = self.player.play(&options, &self.media_path(&video), start, self.settings.speed, wid, paused) {
             eprintln!("{e}");
         }
@@ -2618,6 +2681,30 @@ impl Unbloated {
         self.notice = None;
         self.current = Some(video);
         self.loading = true;
+    }
+
+    /// The quality picked for the current video (a height, or 0 for audio only), if any.
+    fn picked_quality(&self) -> Option<u32> {
+        let id = &self.current.as_ref()?.id;
+        self.quality.as_ref().filter(|(q, _)| q == id).map(|(_, h)| *h)
+    }
+
+    /// Play the current video again at another quality (None: the settings' maximum again), from
+    /// where it is and paused or not as it was. Only for a video streaming here.
+    fn pick_quality(&mut self, pick: Option<u32>, cx: &mut Context<Self>) {
+        let Some(video) = self.current.clone() else { return };
+        let Some((position, paused)) = self.state.as_ref().filter(|s| s.playing).map(|s| (s.position, s.paused)) else { return };
+        self.quality = pick.map(|h| (video.id.clone(), h));
+        self.link_start = Some(position);
+        self.start(video, paused);
+        // After `start`, which clears notices.
+        self.notice = Some(match pick {
+            None => format!("Quality: up to {}p (Settings)", self.settings.max_quality),
+            Some(0) => "Quality: audio only".into(),
+            Some(h) => format!("Quality: up to {h}p"),
+        });
+        self.sync_embed();
+        cx.notify();
     }
 
     /// Save `video` with yt-dlp in the background, using the player's quality settings.

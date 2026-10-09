@@ -129,6 +129,10 @@ list, your playlists, your history, search and a player.
   description, fetched when you open the tab. Timestamps in it (`12:34`, `1:02:03`) jump the
   video there, `#tags` are searched for, `@handles` and YouTube links open in the app, and other
   links in the browser; the same works in comments.
+- **Quality picker**: right-click the video → Quality: 1080p shows the playing quality and a
+  list (Auto, 2160p … 144p, Audio only); a pick reloads the video at once from where it was, for
+  this video only (the next one plays at Settings → Max quality again). A height is a maximum:
+  a video without it plays the best below. Not for downloaded files or while casting.
 - **Transcript tab** under the player: the video's captions as a list of lines with their times,
   the one being said highlighted. Type a word in its search field to see every moment it is
   said (the word is marked, with a count); click a line to jump there. It uses the same captions
@@ -724,8 +728,7 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
     creating one; move or copy a video between playlists; remove all watched videos from Watch
     later in one click
   - *Playback*: save the Up next queue as a playlist, and reorder it by dragging; a subtitles
-    toggle and picker (see *Subtitles* above); a quality picker
-    for the playing video (today only a max quality); a loop or repeat button; a sleep timer
+    toggle and picker (see *Subtitles* above); a loop or repeat button; a sleep timer
   - *Browsing*: a Watch later button on every row (today via the save picker); hide watched
     videos in the New uploads feed; search filters for duration, upload date and type
   - *Maintenance*: export and import settings, groups and channel flags. Groups live in one file
