@@ -10,8 +10,17 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 - **Description tab** under the player, next to Recommended: the video's description, fetched
   (with yt-dlp, so no login needed) when you open the tab. Settings → Description turns it off.
 
+## 0.23.1 - 2026-10-10
+
 ### Changed
 - The README marks the project as **alpha**: a status badge and a short note at the top.
+
+### Fixed
+- **Switching videos while casting**: picking another video in the cast view played it here and
+  dropped the cast controls (and an age-restricted video asked for cookies). It now goes to the
+  receiver, which plays it with its own login, and the cast view stays.
+  While the receiver loads it, the view no longer flips back to the old video or closes as
+  "Cast ended".
 
 ## 0.23.0 - 2026-10-09
 
