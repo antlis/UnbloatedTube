@@ -2,6 +2,11 @@
 
 [![Latest release](https://img.shields.io/github/v/release/antlis/unbloated-youtube)](https://github.com/antlis/unbloated-youtube/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/antlis/unbloated-youtube/total)](https://github.com/antlis/unbloated-youtube/releases)
+![Status: alpha](https://img.shields.io/badge/status-alpha-orange)
+
+> **Alpha software.** It works day to day for its author, but it is young: expect rough edges, bugs
+> and changes between versions (settings, shortcuts and files may change). Linux/X11 only for now.
+> Bug reports and feedback are welcome.
 
 A lightweight, configurable YouTube desktop client, written in Rust with
 [GPUI](https://crates.io/crates/gpui) (the UI framework behind the Zed editor), with
