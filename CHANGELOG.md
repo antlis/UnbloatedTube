@@ -9,6 +9,11 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 ### Changed
 - The README marks the project as **alpha**: a status badge and a short note at the top.
 
+### Fixed
+- **Switching videos while casting**: picking another video in the cast view played it here and
+  dropped the cast controls (and an age-restricted video asked for cookies). It now goes to the
+  receiver, which plays it with its own login, and the cast view stays.
+
 ## 0.23.0 - 2026-10-09
 
 ### Added

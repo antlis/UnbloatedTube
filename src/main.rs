@@ -2411,7 +2411,14 @@ impl Unbloated {
         self.history.touch(&video);
         self.history.save();
         let channel_changed = self.current.as_ref().map(|c| &c.channel_url) != Some(&video.channel_url);
-        self.start(video, false);
+        if let Some(name) = self.casting.as_ref().map(|c| c.name.clone()) {
+            // While casting, a picked video goes to the receiver (which resolves it with its own
+            // login) and the cast view stays. After "Back to this screen" videos play here again.
+            self.cast_list(Some(name), vec![video.clone()], cx);
+            self.current = Some(video);
+        } else {
+            self.start(video, false);
+        }
         if !self.cfg.has_auth() && channel_changed {
             self.load_recs(cx);
         }
