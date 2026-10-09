@@ -6,6 +6,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.25.0 - 2026-10-10
+
 ### Added
 - **Downloads tab**: the videos you saved with the Download button, newest first, with a filter.
   They play from the file, so also offline and logged out; right-click → "Delete downloaded file"
