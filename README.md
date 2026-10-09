@@ -560,11 +560,6 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
     - a real second app window, with its own embedded player, would mean per-window player state
       and a second X11 embed (`embed.rs`, already the main obstacle to Windows and macOS): not
       worth it before cross-platform embedding exists
-- **Keep working after a rebuild.** The app runs itself as yt-dlp (`prefetch::ytdlp`, found
-  through `current_exe()`); a `cargo build` or `nixos-rebuild` while it is open replaces that file,
-  and every yt-dlp run (subtitles, comments, marking watched, pasted links) then fails with "No
-  such file or directory" until a restart. On Linux `/proc/self/exe` still reaches the running
-  binary.
 - **Downloads tab: older downloads.** Videos downloaded before the tab existed (0.25.0) aren't
   listed; they could be found in the download folder by their `title [id].ext` names.
 - **History: channel links on Shorts.** History's Shorts entries carry no channel, so they have
