@@ -121,7 +121,9 @@ list, your playlists, your history, search and a player.
 - **Chapters tab** under the player for videos that have chapters: click one to jump there; the
   current chapter is highlighted and kept in view.
 - **Description tab** under the player (Settings → Description turns it off): the video's
-  description, fetched when you open the tab.
+  description, fetched when you open the tab. Timestamps in it (`12:34`, `1:02:03`) jump the
+  video there, `#tags` are searched for, `@handles` and YouTube links open in the app, and other
+  links in the browser; the same works in comments.
 - **Downloads tab**: videos saved with the Download button, newest first, with a filter. They
   play from the file, so also offline (and logged out). Right-click → "Delete downloaded file"
   deletes it; a file deleted or moved outside the app drops off the list. The tab shows once
@@ -534,8 +536,6 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   - videos YouTube refuses to give captions to without a login (HTTP 429): a clearer hint, or a
     way to get them (yt-dlp's PO token plugins)
 - **Feature ideas** (none started; roughly smallest first):
-  - *Clickable timestamps and links* in the Description tab (`12:34` seeks there, links open in
-    the browser), and the same in comments
   - *Media keys and the desktop's player widget* (MPRIS over D-Bus): play/pause and next keys,
     the desktop's media controls and `playerctl` drive the app without focusing it
   - *Hide videos by keyword*: like muting a channel, but for title words you pick, in feeds,

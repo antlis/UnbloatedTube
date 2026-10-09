@@ -4,6 +4,7 @@ mod cast;
 mod cli;
 mod embed;
 mod icons;
+mod links;
 mod player;
 mod prefetch;
 mod store;
@@ -14,7 +15,7 @@ use account::{Account, Me, VideoStatus};
 use auth::{Auth, BROWSERS};
 use embed::Embed;
 use gpui::{
-    Animation, AnimationExt, Pixels, AnyElement, App, Application, ClipboardItem, Bounds, Context, CursorStyle, ElementId, FocusHandle, Hsla, KeyDownEvent, MouseButton,
+    Animation, AnimationExt, HighlightStyle, InteractiveText, StyledText, UnderlineStyle, Pixels, AnyElement, App, Application, ClipboardItem, Bounds, Context, CursorStyle, ElementId, FocusHandle, Hsla, KeyDownEvent, MouseButton,
     MouseMoveEvent, ObjectFit, SharedString, Stateful, Task,
     Transformation, TitlebarOptions, Window, WindowBounds, WindowOptions, canvas, div, img, prelude::*, px, radians, relative, rgb, size, svg,
     uniform_list, ScrollStrategy, UniformListScrollHandle, Bounds as GBounds, Pixels as GPixels,
@@ -6798,8 +6799,68 @@ impl Unbloated {
             .flex_col()
             .gap_2()
             // One element per paragraph: GPUI keeps single line breaks, blank lines separate them.
-            .children(text.split("\n\n").map(|p| div().text_sm().text_color(themed(TEXT)).child(p.trim().to_string())))
+            .children(text.split("\n\n").enumerate().map(|(i, p)| {
+                div().text_sm().text_color(themed(TEXT)).child(self.linked_text(("description-text", i), p.trim().to_string(), cx))
+            }))
             .into_any_element()
+    }
+
+    /// `text` with its links, timestamps, #tags and @handles clickable (see `open_text_link`).
+    fn linked_text(&self, id: impl Into<ElementId>, text: String, cx: &mut Context<Self>) -> AnyElement {
+        let (ranges, targets): (Vec<_>, Vec<_>) = links::find(&text).into_iter().unzip();
+        if ranges.is_empty() {
+            return div().child(text).into_any_element();
+        }
+        let style = HighlightStyle {
+            color: Some(themed(ACCENT).into()),
+            underline: Some(UnderlineStyle { thickness: px(1.), ..Default::default() }),
+            ..Default::default()
+        };
+        let styled = StyledText::new(text).with_highlights(ranges.iter().map(|r| (r.clone(), style)));
+        let this = cx.entity().downgrade();
+        InteractiveText::new(id, styled)
+            .on_click(ranges, move |i, _, cx| {
+                let target = targets[i].clone();
+                this.update(cx, |this, cx| this.open_text_link(target, cx)).ok();
+            })
+            .into_any_element()
+    }
+
+    /// A link clicked in the description or a comment: a YouTube link (and an @handle) opens in
+    /// the app, any other in the browser; a time seeks there; a #tag is searched for.
+    fn open_text_link(&mut self, link: links::Link, cx: &mut Context<Self>) {
+        match link {
+            links::Link::Url(url) => match yt::parse_link(&url) {
+                Some(link) => self.open_link(link, cx),
+                None => self.open_url(&url, cx),
+            },
+            links::Link::Time(secs) => self.seek_link(secs, cx),
+            links::Link::Tag(tag) => {
+                self.query = tag;
+                self.left_collapsed = false;
+                self.run_search(cx);
+            }
+            links::Link::Handle(handle) => self.open_link(yt::YtLink::Channel { url: format!("https://www.youtube.com/{handle}") }, cx),
+        }
+        cx.notify();
+    }
+
+    /// A timestamp clicked in the description or a comment: play from there (starting the
+    /// video first when it isn't loaded).
+    fn seek_link(&mut self, secs: f64, cx: &mut Context<Self>) {
+        let Some(video) = self.current.clone() else { return };
+        let loaded = self.state.as_ref().filter(|s| s.path == self.media_path(&video));
+        if self.casting.is_some() {
+            self.seek_to(secs, cx);
+        } else if let Some(paused) = loaded.map(|s| s.paused) {
+            self.seek_to(secs, cx);
+            if paused {
+                self.player.toggle_pause();
+            }
+        } else {
+            self.link_start = Some(secs);
+            self.play(video, None, cx);
+        }
     }
 
     /// Comments tab is on and there is a video to show them for.
@@ -6846,7 +6907,7 @@ impl Unbloated {
                     .border_b_1()
                     .border_color(themed(BORDER))
                     .child(div().text_xs().text_color(themed(MUTED)).child(meta))
-                    .child(div().text_sm().text_color(themed(TEXT)).child(c.text.clone()))
+                    .child(div().text_sm().text_color(themed(TEXT)).child(self.linked_text(("comment-text", i), c.text.clone(), cx)))
             }))
             .when(more, |d| {
                 d.child(
