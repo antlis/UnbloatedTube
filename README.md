@@ -546,7 +546,6 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   - *Dislike counts* next to the Dislike button (Return YouTube Dislike API)
   - *A daily watch-time limit*: a budget, a quiet counter and a soft stop when it runs out,
     optionally only at certain hours or for certain groups
-  - *Downloads as a local library*: downloaded videos in a tab of their own, played offline
 - **History: channel links on Shorts.** History's Shorts entries carry no channel, so they have
   no channel button; the Videos entries do.
 - **Test the Connect flow on more setups.** Verified with Brave (keyring) and a failing
