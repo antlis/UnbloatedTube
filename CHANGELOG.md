@@ -6,6 +6,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.24.0 - 2026-10-10
+
 ### Added
 - **Description tab** under the player, next to Recommended: the video's description, fetched
   (with yt-dlp, so no login needed) when you open the tab. Settings → Description turns it off.

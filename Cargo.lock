@@ -5763,7 +5763,7 @@ dependencies = [
 
 [[package]]
 name = "unbloated-youtube"
-version = "0.23.1"
+version = "0.24.0"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
