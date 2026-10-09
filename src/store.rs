@@ -210,6 +210,8 @@ pub struct Settings {
     pub description: bool,
     /// Comments tab under the player; comments are fetched only when the tab is opened.
     pub comments: bool,
+    /// Downloads tab on the left: the videos saved with Download, played from the file.
+    pub downloads_tab: bool,
     /// Watch later tab under the player; the list is fetched when the tab is first opened.
     pub watch_later_tab: bool,
     pub shorts: bool,
@@ -298,6 +300,7 @@ impl Default for Settings {
             chapters: true,
             description: true,
             comments: false,
+            downloads_tab: true,
             watch_later_tab: false,
             shorts: true,
             vim: false,

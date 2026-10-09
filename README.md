@@ -122,6 +122,10 @@ list, your playlists, your history, search and a player.
   current chapter is highlighted and kept in view.
 - **Description tab** under the player (Settings → Description turns it off): the video's
   description, fetched when you open the tab.
+- **Downloads tab**: videos saved with the Download button, newest first, with a filter. They
+  play from the file, so also offline (and logged out). Right-click → "Delete downloaded file"
+  deletes it; a file deleted or moved outside the app drops off the list. The tab shows once
+  something is downloaded (Settings → Downloads tab hides it).
 - **Comments tab** under the player, off by default (Settings → Comments): the top 40 comments are
   fetched only when you open the tab, and "Load more comments" at the bottom gets 40 more.
 - **Resizable player**: drag the divider between the video and the lower pane anywhere, up to
@@ -157,7 +161,7 @@ Everything is a toggle or a field on the Settings page, which has its own search
 | Group | Options |
 | --- | --- |
 | Account | **Connect YouTube**: pick a browser and test its session, or import a `cookies.txt` (see [Login](#login)) |
-| Tabs & lists | Subscriptions, Playlists, History, Recommendations, Description, Chapters, Comments and Watch later tabs (the last two off by default), **Shorts** (everywhere) |
+| Tabs & lists | Subscriptions, Playlists, History, Downloads, Recommendations, Description, Chapters, Comments and Watch later tabs (the last two off by default), **Shorts** (everywhere) |
 | Buttons | Back / forward, Subscribe, Save to playlist, Watch later, Like, Dislike, Volume, Subtitles, Cast, Share, Share at current time, Open in browser, Download |
 | Subtitles | On/off, language(s), auto-generated captions, size |
 | Player | Max quality (480p–4K), autoplay, **audio only**, prefer hardware-friendly codecs (skip AV1), hardware decoding, hover controls on the video, mpv's own controls and hotkeys, speed |
@@ -192,7 +196,7 @@ remembered.
 | E | Lower pane (Recommended, Description, Chapters, Watch later, Comments, Up next) full height, and back (`e` in Vim mode) |
 | ⇧E | Player full height (hide the lower pane), and back |
 | Tab / ⇧Tab | Move a focus ring through every clickable thing (tabs, rows, buttons, switches); Enter or Space presses it, Esc clears it |
-| 1 – 4 | Switch tab: Subscriptions, Playlists, History, Settings |
+| 1 – 4 | Switch tab: Subscriptions, Playlists, History, Settings (with the Downloads tab: 1 – 5, and the lower pane's tabs start at 6) |
 | 5 – 9 | Switch lower pane tab: Recommended, Description, Chapters, Watch later, Comments, Up next (as shown; the first five) |
 | [ / ] | Previous / next tab: through 1–4, then 5–9, wrapping around |
 | B | Hide or show the left column (`b` in Vim mode) |
@@ -542,7 +546,6 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   - *Dislike counts* next to the Dislike button (Return YouTube Dislike API)
   - *A daily watch-time limit*: a budget, a quiet counter and a soft stop when it runs out,
     optionally only at certain hours or for certain groups
-  - *Downloads as a local library*: downloaded videos in a tab of their own, played offline
 - **History: channel links on Shorts.** History's Shorts entries carry no channel, so they have
   no channel button; the Videos entries do.
 - **Test the Connect flow on more setups.** Verified with Brave (keyring) and a failing

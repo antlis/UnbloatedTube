@@ -67,6 +67,7 @@ enum Tab {
     Subscriptions,
     Playlists,
     History,
+    Downloads,
     Search,
     Settings,
 }
@@ -105,7 +106,7 @@ fn channel_of(v: &Video) -> Option<&str> {
 /// Settings page toggles: label, hint, field.
 type Toggle = (&'static str, &'static str, fn(&mut Settings) -> &mut bool);
 
-const TOGGLES: [Toggle; 12] = [
+const TOGGLES: [Toggle; 13] = [
     ("Subscriptions", "Your subscribed channels", |s| &mut s.subscriptions),
     ("Playlists", "Watch later, Liked and your playlists", |s| &mut s.playlists),
     ("History", "What you watched, here and on YouTube", |s| &mut s.history),
@@ -113,6 +114,7 @@ const TOGGLES: [Toggle; 12] = [
     ("Chapters", "Chapters tab under the player, for videos that have them", |s| &mut s.chapters),
     ("Description", "Description tab under the player, loaded when you open it", |s| &mut s.description),
     ("Comments", "Comments tab under the player, loaded when you open it", |s| &mut s.comments),
+    ("Downloads tab", "Videos you downloaded, played from the file (also offline); shows once there is one", |s| &mut s.downloads_tab),
     ("Watch later tab", "Your Watch later list under the player (needs your login), loaded when you open it", |s| &mut s.watch_later_tab),
     ("Shorts", "Shorts tab on channels, and Shorts in feeds and search", |s| &mut s.shorts),
     ("Vim mode", "j/k move, Enter opens, h goes back, ⇧F shows click hints; ? lists all keys", |s| &mut s.vim),
@@ -257,7 +259,7 @@ const SHORTCUTS: [(&str, &str); 30] = [
     ("E", "Lower pane full height, and back"),
     ("⇧E", "Player full height (hide the lower pane), and back"),
     ("[ / ]", "Previous / next tab (header tabs, then the lower pane's)"),
-    ("1 - 4", "Switch tab: Subscriptions, Playlists, History, Settings"),
+    ("1 - 4", "Switch tab: Subscriptions, Playlists, History, (Downloads,) Settings"),
     ("5 - 9", "Switch lower tab: Recommended, Description, Chapters, Watch later, Comments, Up next"),
     ("Tab / ⇧Tab", "Move the focus ring (Enter or Space presses, Esc clears)"),
     ("B", "Hide or show the left column"),
@@ -301,7 +303,7 @@ const VIM_SHORTCUTS: [(&str, &str); 36] = [
     ("e", "Lower pane full height, and back"),
     ("⇧E", "Player full height (hide the lower pane), and back"),
     ("[ / ]", "Previous / next tab (header tabs, then the lower pane's)"),
-    ("1 - 4", "Switch tab: Subscriptions, Playlists, History, Settings"),
+    ("1 - 4", "Switch tab: Subscriptions, Playlists, History, (Downloads,) Settings"),
     ("5 - 9", "Switch lower tab: Recommended, Description, Chapters, Watch later, Comments, Up next"),
     ("Tab / ⇧Tab", "Move the focus ring (Enter or Space presses, Esc clears)"),
     ("b", "Hide or show the left column"),
@@ -566,6 +568,8 @@ struct Unbloated {
     notice_seen: Option<(String, std::time::Instant)>,
     /// Downloads by video id: progress, then the saved file path or an error.
     downloads: HashMap<String, Download>,
+    /// Videos saved with Download, newest first: the Downloads tab (stored as `downloads.json`).
+    library: Vec<Saved>,
     ticks: u32,
     _poll: Task<()>,
 }
@@ -803,6 +807,7 @@ impl Unbloated {
             notice: None,
             notice_seen: None,
             downloads: HashMap::new(),
+            library: Saved::load(),
             ticks: 0,
             _poll: poll,
         };
@@ -974,6 +979,7 @@ impl Unbloated {
     fn load_tab(&mut self, cx: &mut Context<Self>) {
         match self.tab {
             Tab::Settings => {}
+            Tab::Downloads => self.prune_library(),
             Tab::Search => self.run_search(cx),
             Tab::History if !self.cfg.has_auth() => self.load_anon(cx),
             Tab::History => {
@@ -1500,7 +1506,7 @@ impl Unbloated {
 
     /// Ctrl+F: focus the filter, where the current list has one.
     fn focus_filter(&mut self, window: &mut Window) -> bool {
-        let has = matches!(self.tab, Tab::Subscriptions | Tab::Playlists | Tab::History);
+        let has = matches!(self.tab, Tab::Subscriptions | Tab::Playlists | Tab::History | Tab::Downloads);
         if has {
             window.focus(&self.filter_focus);
         }
@@ -1934,6 +1940,7 @@ impl Unbloated {
         let (video, pos, over_player, _) = self.video_menu.clone()?;
         let auth = self.cfg.has_auth();
         let queued = self.up_next.iter().any(|v| v.id == video.id);
+        let downloaded = self.library.iter().any(|s| s.video.id == video.id);
         let row = |id: &'static str| div().id(id).px_3().py_2().text_sm().cursor_pointer().text_color(themed(TEXT)).hover(|d| d.bg(themed(BORDER)));
         // Ticked when the video is already in the playlist; clicking toggles, like the groups menu.
         let lists = self.menu_lists.as_ref().filter(|(id, _)| *id == video.id).and_then(|(_, l)| l.clone());
@@ -1969,12 +1976,12 @@ impl Unbloated {
             })
             .collect();
         let n_lists = list_rows.len();
-        // Fixed rows: title, Copy link, Up next, [Watch later, divider, "Save to playlist"]. The
+        // Fixed rows: title, Copy link, Up next, [Delete download], [Watch later, divider, "Save to playlist"]. The
         // list shows at most 5½ rows (the cut-off one says it scrolls), less if the window is short.
         const MENU_W: f32 = 240.;
         const ROW_H: f32 = 36.;
         const EDGE: f32 = 48.;
-        let fixed_h = 28. + ROW_H * 2. + if self.menu_queue.is_some() && self.cast_available() { ROW_H * self.cast_targets().len() as f32 } else { 0. } + if auth { ROW_H + 9. + 24. } else { 0. } + if self.player_menu { ROW_H * 6. + 9. } else { 0. };
+        let fixed_h = 28. + ROW_H * if downloaded { 3. } else { 2. } + if self.menu_queue.is_some() && self.cast_available() { ROW_H * self.cast_targets().len() as f32 } else { 0. } + if auth { ROW_H + 9. + 24. } else { 0. } + if self.player_menu { ROW_H * 6. + 9. } else { 0. };
         let win = window.viewport_size();
         let (win_w, mut win_h) = (f32::from(win.width), f32::from(win.height));
         if let Some(display) = window.display(cx) {
@@ -2110,6 +2117,13 @@ impl Unbloated {
                                 },
                             )),
                         )
+                        .when(downloaded, |d| {
+                            let id = video.id.clone();
+                            d.child(row("video-menu-delete-download").child("Delete downloaded file").on_click(cx.listener(move |this, _, _, cx| {
+                                this.close_video_menu(cx);
+                                this.delete_download(&id, cx);
+                            })))
+                        })
                         .when(auth, |d| {
                             d.child(row("video-menu-later").child("Save to Watch later").on_click(cx.listener(move |this, _, _, cx| {
                                 this.close_video_menu(cx);
@@ -2343,8 +2357,11 @@ impl Unbloated {
         self.cycle_lower = false;
         self.left_collapsed = false;
         self.searching = false;
+        if tab == Tab::Downloads {
+            self.prune_library();
+        }
         let idle = match tab {
-            Tab::Search | Tab::Settings => false,
+            Tab::Search | Tab::Settings | Tab::Downloads => false,
             // Logged out: only fetch the anonymous home the first time (or after a failure).
             _ if !self.cfg.has_auth() => matches!(self.anon, Load::Idle | Load::Failed(_)),
             Tab::History => matches!(self.yt_history, Load::Idle),
@@ -2358,7 +2375,7 @@ impl Unbloated {
 
     fn tab_loading(&self) -> bool {
         match self.tab {
-            Tab::Settings => false,
+            Tab::Settings | Tab::Downloads => false,
             Tab::Search => matches!(self.search, Load::Loading(_)),
             Tab::History if self.cfg.has_auth() => matches!(self.yt_history, Load::Loading(_)),
             tab => {
@@ -2557,7 +2574,7 @@ impl Unbloated {
             // Show the new thumbnail right away instead of the old video's last frame.
             e.borrow_mut().set_visible(false);
         }
-        if let Err(e) = self.player.play(&options, &video.url(), start, self.settings.speed, wid, paused) {
+        if let Err(e) = self.player.play(&options, &self.media_path(&video), start, self.settings.speed, wid, paused) {
             eprintln!("{e}");
         }
         self.saving = false;
@@ -2574,6 +2591,7 @@ impl Unbloated {
             d => d.strip_prefix("~/").map_or_else(|| PathBuf::from(d), |rest| home.join(rest)),
         };
         let (cfg, format, url, id) = (self.cfg.clone(), player::format(&self.settings), video.url(), video.id.clone());
+        let saved = video.clone();
         self.downloads.insert(id.clone(), Download { progress: 0., result: None, done_at: None });
         let shared: Arc<Mutex<Download>> = Arc::new(Mutex::new(Download { progress: 0., result: None, done_at: None }));
         let sink = shared.clone();
@@ -2592,6 +2610,9 @@ impl Unbloated {
                     let mut now = now;
                     if done {
                         now.done_at = Some(std::time::Instant::now());
+                        if let Some(Ok(path)) = &now.result {
+                            this.add_to_library(saved.clone(), path.clone());
+                        }
                     }
                     this.downloads.insert(id.clone(), now);
                     cx.notify();
@@ -2605,6 +2626,81 @@ impl Unbloated {
         })
         .detach();
         cx.notify();
+    }
+
+    /// The Downloads tab is on and has something in it.
+    fn downloads_on(&self) -> bool {
+        self.settings.downloads_tab && !self.library.is_empty()
+    }
+
+    /// A finished download goes to the top of the library (replacing an older copy).
+    fn add_to_library(&mut self, video: Video, path: String) {
+        self.library.retain(|s| s.video.id != video.id);
+        self.library.insert(0, Saved { video, path });
+        store::save_data("downloads", &self.library);
+    }
+
+    /// Forget downloads whose file is gone (deleted or moved outside the app).
+    fn prune_library(&mut self) {
+        let before = self.library.len();
+        self.library.retain(|s| std::path::Path::new(&s.path).exists());
+        if self.library.len() != before {
+            store::save_data("downloads", &self.library);
+        }
+    }
+
+    /// Delete a downloaded file and forget it; a file already gone is only forgotten.
+    fn delete_download(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(i) = self.library.iter().position(|s| s.video.id == id) else { return };
+        let path = self.library[i].path.clone();
+        match std::fs::remove_file(&path) {
+            Ok(()) => self.notice = Some(format!("Deleted {path}")),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => self.notice = Some("Removed from Downloads".into()),
+            Err(e) => {
+                self.notice = Some(format!("Couldn't delete {path}: {e}"));
+                cx.notify();
+                return;
+            }
+        }
+        self.library.remove(i);
+        self.downloads.remove(id);
+        store::save_data("downloads", &self.library);
+        // The tab goes away with its last video.
+        if self.tab == Tab::Downloads && !self.downloads_on() {
+            self.select_tab(self.tab_list()[0], cx);
+        }
+        cx.notify();
+    }
+
+    /// The Downloads tab's videos, as the list filter narrows them.
+    fn library_videos(&self) -> Vec<Video> {
+        self.library.iter().map(|s| s.video.clone()).filter(|v| self.video_matches(v)).collect()
+    }
+
+    /// What mpv plays for `video`: its downloaded file when there is one, else its page.
+    fn media_path(&self, video: &Video) -> String {
+        self.library
+            .iter()
+            .find(|s| s.video.id == video.id && std::path::Path::new(&s.path).exists())
+            .map_or_else(|| video.url(), |s| s.path.clone())
+    }
+
+    /// The Downloads tab: videos saved with Download, newest first, played from their files.
+    fn render_downloads(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let videos = self.library_videos();
+        let body = if videos.is_empty() {
+            self.status("No matches.")
+        } else {
+            self.video_list("downloads", &videos, Some(0), cx)
+        };
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .child(self.filter_bar("Filter downloads", window, cx))
+            .child(div().flex().flex_col().flex_1().min_h_0().child(body))
+            .into_any_element()
     }
 
     fn account_buttons(&self) -> bool {
@@ -3575,7 +3671,7 @@ impl Unbloated {
         // The main area followed the receiver; an mpv holding another video is dropped, so
         // pressing play starts the one shown (a paused leftover would show the wrong picture).
         if let (Some(s), Some(v)) = (&self.state, &self.current) {
-            if s.path != v.url() {
+            if s.path != self.media_path(v) {
                 self.player.stop();
                 self.state = None;
             }
@@ -3769,7 +3865,7 @@ impl Unbloated {
             self.subs_pending = None;
             return;
         };
-        if state.is_some_and(|s| s.playing && s.path == video.url()) {
+        if state.is_some_and(|s| s.playing && s.path == self.media_path(video)) {
             self.player.add_subtitle(&file);
             self.subs_pending = None;
         }
@@ -4276,11 +4372,14 @@ impl Unbloated {
     /// Jump to a tab by number, as shown: 1-4 are the header tabs, 5-9 the lower pane's.
     /// Nothing if there are fewer.
     fn tab_number(&mut self, n: usize, cx: &mut Context<Self>) {
-        if n <= 4 {
-            if let Some(tab) = self.tab_list().get(n.wrapping_sub(1)).copied() {
+        // The lower pane starts at 5, or after the header's tabs when Downloads makes them five.
+        let header = self.tab_list();
+        let first_lower = header.len().max(4) + 1;
+        if n < first_lower {
+            if let Some(tab) = header.get(n.wrapping_sub(1)).copied() {
                 self.select_tab(tab, cx);
             }
-        } else if let Some(tab) = self.lower_tabs().get(n - 5).copied() {
+        } else if let Some(tab) = self.lower_tabs().get(n - first_lower).copied() {
             self.show_lower(tab, cx);
         }
     }
@@ -4289,10 +4388,13 @@ impl Unbloated {
     fn tab_list(&self) -> Vec<Tab> {
         let st = &self.settings;
         if !self.cfg.has_auth() {
-            // No account tabs: the anonymous home (Subscriptions) and Settings.
-            return vec![Tab::Subscriptions, Tab::Settings];
+            // No account tabs: the anonymous home (Subscriptions), Downloads and Settings.
+            let mut tabs = vec![Tab::Subscriptions];
+            tabs.extend(self.downloads_on().then_some(Tab::Downloads));
+            tabs.push(Tab::Settings);
+            return tabs;
         }
-        let mut tabs: Vec<Tab> = [(st.subscriptions, Tab::Subscriptions), (st.playlists, Tab::Playlists), (st.history, Tab::History)]
+        let mut tabs: Vec<Tab> = [(st.subscriptions, Tab::Subscriptions), (st.playlists, Tab::Playlists), (st.history, Tab::History), (self.downloads_on(), Tab::Downloads)]
             .into_iter()
             .filter_map(|(on, t)| on.then_some(t))
             .collect();
@@ -4321,6 +4423,7 @@ impl Unbloated {
         match self.tab {
             Tab::Settings => Vec::new(),
             Tab::Search => videos(self.search.items().to_vec()),
+            Tab::Downloads => videos(self.library_videos()),
             Tab::History if self.cfg.has_auth() => {
                 let (partial, all) = self.history_items();
                 let mut items = videos(partial);
@@ -4439,7 +4542,7 @@ impl Unbloated {
         }
         self.load_status(cx);
         self.poll_subtitles(state.as_ref(), cx);
-        let url = self.current.as_ref().map(|v| v.url());
+        let url = self.current.as_ref().map(|v| self.media_path(v));
         let was_loading = self.loading;
         if let Some(s) = &state {
             if s.idle || (s.playing && Some(&s.path) == url.as_ref()) {
@@ -4867,6 +4970,7 @@ impl Unbloated {
                     .into_any_element();
             }
             Tab::Settings => return self.render_settings(window, cx),
+            Tab::Downloads => return self.render_downloads(window, cx),
             Tab::Search if self.query.trim().is_empty() || matches!(self.search, Load::Idle) => {
                 return self.render_recent_searches(cx);
             }
@@ -4943,6 +5047,9 @@ impl Unbloated {
         LIGHT.store(self.settings.light_theme, std::sync::atomic::Ordering::Relaxed);
         if self.settings.recommendations && matches!(self.recs, Load::Idle) {
             self.load_recs(cx);
+        }
+        if self.tab == Tab::Downloads && !self.downloads_on() {
+            self.select_tab(self.tab_list()[0], cx);
         }
         self.apply_player_settings(cx);
     }
@@ -6280,7 +6387,9 @@ impl Unbloated {
                             })
                             .when(self.account_buttons(), |d| d.children(self.account_buttons_els(cx)))
                             .when(self.settings.download_button, |d| {
+                                let saved = self.library.iter().find(|s| s.video.id == video.id).map(|s| s.path.clone());
                                 let (tip_text, enabled) = match self.downloads.get(&video.id) {
+                                    _ if saved.is_some() => (format!("Downloaded to {}", saved.unwrap_or_default()), false),
                                     Some(Download { result: None, progress, .. }) => (format!("Downloading {progress:.0}%"), false),
                                     Some(Download { result: Some(Ok(f)), .. }) => (format!("Downloaded to {f}"), false),
                                     _ => ("Download".to_string(), true),
@@ -6860,6 +6969,22 @@ impl Unbloated {
     }
 }
 
+/// A video saved with Download: listed in the Downloads tab and played from its file.
+#[derive(Clone, Serialize, serde::Deserialize)]
+struct Saved {
+    video: Video,
+    path: String,
+}
+
+impl Saved {
+    /// The library, without entries whose file was deleted or moved outside the app.
+    fn load() -> Vec<Saved> {
+        let mut list: Vec<Saved> = store::load_data("downloads").unwrap_or_default();
+        list.retain(|s| std::path::Path::new(&s.path).exists());
+        list
+    }
+}
+
 #[derive(Clone)]
 struct Download {
     progress: f32,
@@ -7298,6 +7423,7 @@ impl Render for Unbloated {
             (auth && st.subscriptions, "Subscriptions", Tab::Subscriptions),
             (auth && st.playlists, "Playlists", Tab::Playlists),
             (auth && st.history, "History", Tab::History),
+            (auth && self.downloads_on(), "Downloads", Tab::Downloads),
         ]
         .into_iter()
         .filter_map(|(on, label, tab)| on.then_some((label, tab)))
@@ -7377,9 +7503,15 @@ impl Render for Unbloated {
             // Logged out: the account tabs are replaced by the home list and one way in.
             .when(!auth, |d| {
                 d.child(
-                    tab_button("Home", self.tab != Tab::Settings)
+                    tab_button("Home", !matches!(self.tab, Tab::Settings | Tab::Downloads))
                         .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.select_tab(Tab::Subscriptions, cx)),
                 )
+                .when(self.downloads_on(), |d| {
+                    d.child(
+                        tab_button("Downloads", self.tab == Tab::Downloads)
+                            .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.select_tab(Tab::Downloads, cx)),
+                    )
+                })
                 .child(
                     tab_button("Sign in", self.tab == Tab::Settings)
                         .tooltip(tip_left("Connect your YouTube account (Settings)"))
