@@ -6,6 +6,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.28.0 - 2026-10-10
+
 ### Added
 - **Transcript tab**: the video's captions as a list of timed lines, the current one highlighted.
   Its search field finds every moment a word is said (marked, with a count); a click jumps
