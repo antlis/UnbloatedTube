@@ -6,6 +6,12 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Added
+- **Hide videos by keyword**: Settings → Hide videos with words (comma-separated, e.g.
+  `reaction, prank, #shorts`). Videos whose title says one, as a whole word, disappear from
+  feeds, channels, recommendations, Live and search, and send no upload notification; your own
+  lists (History, Up next, Watch later, Downloads, playlists) keep them.
+
 ## 0.28.0 - 2026-10-10
 
 ### Added

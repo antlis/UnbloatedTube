@@ -53,6 +53,11 @@ list, your playlists, your history, search and a player.
   a folder icon in the list marks channels that are in a group (hover for the names). Groups are
   kept only in this app (`groups.json` in the data folder), not on YouTube.
 - **Mute a channel**: hide its uploads from New uploads without unsubscribing.
+- **Hide videos by keyword**: Settings → Hide videos with words takes comma-separated words or
+  phrases (`reaction, prank, #shorts`); a video whose title says one, as a word of its own
+  ("art" hides "Art school", not "start"; list "reactions" too if you want both), is hidden from
+  feeds, channels, recommendations, Live and search, and gets no upload notification. Your own
+  lists (History, Up next, Watch later, Downloads, your playlists) are left alone.
 - **Upload notifications**: turn the bell on in a channel's header to get a desktop
   notification when it uploads (checked every 5–60 minutes, configurable).
 - **Playlists**: Watch later, Liked videos and your own playlists, loaded in full.
@@ -174,7 +179,7 @@ Everything is a toggle or a field on the Settings page, which has its own search
 | Player | Max quality (480p–4K), autoplay, **audio only**, prefer hardware-friendly codecs (skip AV1), hardware decoding, hover controls on the video, mpv's own controls and hotkeys, speed |
 | SponsorBlock | **Skip sponsored segments**, choosing which: sponsor, self-promotion, like/subscribe reminders, intro, credits, preview, filler, non-music |
 | Video info | **Views**, **upload date** (playing video), **subscriber counts** (channels) |
-| Other | Extra mpv options, download folder, upload notifications and their interval, Vim mode, window buttons, **light theme** |
+| Other | Extra mpv options, download folder, words to hide videos by, upload notifications and their interval, Vim mode, window buttons, **light theme** |
 
 At the very bottom of the page, a **GitHub** button opens the project's page and the installed version is shown next to it.
 
@@ -550,8 +555,6 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   - videos YouTube refuses to give captions to without a login (HTTP 429): a clearer hint, or a
     way to get them (yt-dlp's PO token plugins)
 - **Feature ideas** (none started; roughly smallest first):
-  - *Hide videos by keyword*: like muting a channel, but for title words you pick, in feeds,
-    recommendations and search
   - *DeArrow*: community titles and thumbnails instead of clickbait ones (from the SponsorBlock
     authors; same free, keyless kind of API)
   - *Dislike counts* next to the Dislike button (Return YouTube Dislike API)
