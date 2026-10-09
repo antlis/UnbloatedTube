@@ -186,6 +186,29 @@ pub fn comments(cfg: &Config, video_id: &str, limit: usize, on: &mut dyn FnMut(C
     Ok(())
 }
 
+/// A video's description, as its uploader wrote it; `on` gets it once (empty when there is none).
+pub fn description(cfg: &Config, video_id: &str, on: &mut dyn FnMut(String)) -> Result<(), String> {
+    #[derive(Deserialize)]
+    struct Info {
+        #[serde(default)]
+        description: Option<String>,
+    }
+    let out = crate::prefetch::ytdlp()
+        .env("PYCRYPTODOME_DISABLE_GMP", "1")
+        .args(["--no-update", "--no-warnings", "--skip-download", "-j", "--no-playlist"])
+        .args(cfg.cookie_args())
+        .arg(format!("https://www.youtube.com/watch?v={video_id}"))
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run yt-dlp: {e}"))?;
+    if !out.status.success() {
+        return Err(short_error(&String::from_utf8_lossy(&out.stderr)));
+    }
+    let info: Info = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+    on(info.description.unwrap_or_default().trim().to_string());
+    Ok(())
+}
+
 pub fn short_error(stderr: &str) -> String {
     let line = stderr.lines().rev().find(|l| l.starts_with("ERROR")).unwrap_or(stderr.trim());
     let line = line.trim_start_matches("ERROR: ");
