@@ -6,6 +6,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.37.0 - 2026-10-10
+
 ### Changed
 - **Faster channels.** A channel's Videos, Shorts and Live tabs and the list of channels you're
   subscribed to come straight from YouTube's API, a page at a time, instead of through yt-dlp
