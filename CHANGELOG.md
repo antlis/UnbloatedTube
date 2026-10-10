@@ -6,6 +6,17 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Fixed
+- Opening Settings closed the app (since 0.31.0): the "Hide videos with words" field had no
+  input focus of its own.
+
+### Added
+- **DeArrow**: titles and thumbnails the community wrote to replace clickbait ones, from the
+  SponsorBlock authors' DeArrow project. Off by default; Settings → DeArrow turns titles and
+  thumbnails on separately. A replaced title shows YouTube's own on hover in lists, and under
+  it on the player. Videos are asked for by a hash prefix of their id, so DeArrow doesn't learn
+  which one; without a submission (or when DeArrow can't be reached) YouTube's stay.
+
 ## 0.35.1 - 2026-10-10
 
 ### Fixed

@@ -247,6 +247,9 @@ pub struct Settings {
     /// Like and dislike counts of the playing video, from the Return YouTube Dislike API.
     pub show_votes: bool,
     pub show_subs: bool,
+    /// DeArrow: community titles and thumbnails instead of clickbait ones (see dearrow.rs).
+    pub dearrow_titles: bool,
+    pub dearrow_thumbs: bool,
     /// Player
     pub autoplay: bool,
     pub max_quality: u32,
@@ -334,6 +337,8 @@ impl Default for Settings {
             show_date: true,
             show_votes: true,
             show_subs: true,
+            dearrow_titles: false,
+            dearrow_thumbs: false,
             autoplay: true,
             max_quality: 1080,
             // On by default: software-decoding 1080p AV1/VP9 stutters on many laptops, and
