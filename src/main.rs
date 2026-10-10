@@ -220,9 +220,10 @@ const BUTTON_TOGGLES: [Toggle; 13] = [
     ("Download", "Save the video to your Downloads folder", |s| &mut s.download_button),
 ];
 
-const INFO_TOGGLES: [Toggle; 3] = [
+const INFO_TOGGLES: [Toggle; 4] = [
     ("Views", "View counts on videos (the playing video needs your login)", |s| &mut s.show_views),
     ("Upload date", "When the playing video was posted (needs your login)", |s| &mut s.show_date),
+    ("Likes and dislikes", "Counts for the playing video from the Return YouTube Dislike project (dislikes are its estimate; it learns which video you watch)", |s| &mut s.show_votes),
     ("Subscribers", "Subscriber counts of channels", |s| &mut s.show_subs),
 ];
 
@@ -520,6 +521,8 @@ struct Unbloated {
     /// A quality picked for one video (its id, and a height or 0 for audio only) instead of the
     /// settings' maximum; dropped when another video starts.
     quality: Option<(String, u32)>,
+    /// Likes and dislikes of the video `votes.0` (None while they load, or when there are none).
+    votes: Option<(String, Option<(u64, u64)>)>,
     /// The player menu's quality list is open.
     quality_menu: bool,
     /// The pointer is over the menu (it closes 2 seconds after the pointer is away).
@@ -773,6 +776,7 @@ impl Unbloated {
             menu_queue: None,
             player_menu: false,
             quality: None,
+            votes: None,
             quality_menu: false,
             menu_lists: None,
             menu_hovered: false,
@@ -3179,6 +3183,33 @@ impl Unbloated {
         });
     }
 
+    /// Fetch the playing video's like and dislike counts once (Return YouTube Dislike).
+    fn load_votes(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.current.as_ref().map(|v| v.id.clone()) else { return };
+        if !self.settings.show_votes || self.votes.as_ref().is_some_and(|(v, _)| *v == id) {
+            return;
+        }
+        self.votes = Some((id.clone(), None));
+        let task = {
+            let id = id.clone();
+            cx.background_executor().spawn(async move { yt::votes(&id) })
+        };
+        cx.spawn(async move |this, cx| {
+            let res = task.await;
+            this.update(cx, |this, cx| {
+                // Quietly nothing on a failure: the counts are a nicety.
+                if let (Ok(counts), Some((v, slot))) = (res, this.votes.as_mut()) {
+                    if *v == id {
+                        *slot = Some(counts);
+                        cx.notify();
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn current_status(&self) -> Option<&VideoStatus> {
         let (id, st) = self.status.as_ref()?;
         (self.current.as_ref()?.id == *id).then_some(st)
@@ -4717,6 +4748,7 @@ impl Unbloated {
             self.prefetch_top(cx);
         }
         self.load_status(cx);
+        self.load_votes(cx);
         self.poll_subtitles(state.as_ref(), cx);
         let url = self.current.as_ref().map(|v| self.media_path(v));
         let was_loading = self.loading;
@@ -6389,6 +6421,11 @@ impl Unbloated {
             let parts: Vec<String> = [
                 st.and_then(|s| s.views.clone()).filter(|_| self.settings.show_views),
                 st.and_then(|s| s.date.clone()).filter(|_| self.settings.show_date),
+                self.votes
+                    .as_ref()
+                    .filter(|(id, _)| self.settings.show_votes && *id == video.id)
+                    .and_then(|(_, c)| *c)
+                    .map(|(likes, dislikes)| format!("{} likes  ·  {} dislikes", fmt_count(likes), fmt_count(dislikes))),
             ]
             .into_iter()
             .flatten()

@@ -129,6 +129,10 @@ list, your playlists, your history, search and a player.
   description, fetched when you open the tab. Timestamps in it (`12:34`, `1:02:03`) jump the
   video there, `#tags` are searched for, `@handles` and YouTube links open in the app, and other
   links in the browser; the same works in comments.
+- **Likes and dislikes** of the playing video in the line under its title ("412 likes · 23
+  dislikes"), from the [Return YouTube Dislike](https://returnyoutubedislike.com) project: YouTube
+  hides dislikes, so the number is the project's estimate. Works logged out too. The request
+  tells the project which video you watch; Settings → Likes and dislikes turns it off.
 - **Quality picker**: right-click the video → Quality: 1080p shows the playing quality and a
   list (Auto, 2160p … 144p, Audio only); a pick reloads the video at once from where it was, for
   this video only (the next one plays at Settings → Max quality again). A height is a maximum:
@@ -182,7 +186,7 @@ Everything is a toggle or a field on the Settings page, which has its own search
 | Subtitles | On/off, language(s), auto-generated captions, size |
 | Player | Max quality (480p–4K), autoplay, **audio only**, prefer hardware-friendly codecs (skip AV1), hardware decoding, hover controls on the video, mpv's own controls and hotkeys, speed |
 | SponsorBlock | **Skip sponsored segments**, choosing which: sponsor, self-promotion, like/subscribe reminders, intro, credits, preview, filler, non-music |
-| Video info | **Views**, **upload date** (playing video), **subscriber counts** (channels) |
+| Video info | **Views**, **upload date**, **likes and dislikes** (playing video), **subscriber counts** (channels) |
 | Other | Extra mpv options, download folder, words to hide videos by, upload notifications and their interval, Vim mode, window buttons, **light theme** |
 
 At the very bottom of the page, a **GitHub** button opens the project's page and the installed version is shown next to it.
@@ -561,7 +565,6 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
 - **Feature ideas** (none started; roughly smallest first):
   - *DeArrow*: community titles and thumbnails instead of clickbait ones (from the SponsorBlock
     authors; same free, keyless kind of API)
-  - *Dislike counts* next to the Dislike button (Return YouTube Dislike API)
   - *A daily watch-time limit*: a budget, a quiet counter and a soft stop when it runs out,
     optionally only at certain hours or for certain groups
   - *Open in a new window*, depending on what it is for:

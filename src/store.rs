@@ -242,6 +242,8 @@ pub struct Settings {
     /// Video info: view counts, upload date, channel subscriber counts.
     pub show_views: bool,
     pub show_date: bool,
+    /// Like and dislike counts of the playing video, from the Return YouTube Dislike API.
+    pub show_votes: bool,
     pub show_subs: bool,
     /// Player
     pub autoplay: bool,
@@ -328,6 +330,7 @@ impl Default for Settings {
             watch_later_button: true,
             show_views: true,
             show_date: true,
+            show_votes: true,
             show_subs: true,
             autoplay: true,
             max_quality: 1080,

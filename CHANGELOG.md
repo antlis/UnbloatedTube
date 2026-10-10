@@ -6,6 +6,10 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Added
+- **Likes and dislikes** of the playing video under its title, from the Return YouTube Dislike
+  API (dislikes are its estimate), also logged out. Settings → Likes and dislikes turns it off.
+
 ## 0.30.0 - 2026-10-10
 
 ### Added
