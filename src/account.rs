@@ -4,7 +4,7 @@
 
 use crate::auth::Auth;
 use crate::store::Config;
-use crate::yt::Video;
+use crate::yt::{Group, Video};
 use serde_json::{Value, json};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -341,23 +341,71 @@ impl Account {
     /// The videos of a browse page ("FEsubscriptions", "FEwhat_to_watch", "VL<playlist id>"),
     /// handed to `on` page by page as they arrive, until `limit`. The number delivered.
     pub fn browse_videos(&self, browse_id: &str, limit: usize, on: &mut dyn FnMut(Video)) -> Result<usize, String> {
-        self.paged("browse", json!({ "browseId": browse_id }), limit, on)
+        let first = self.post("browse", json!({ "browseId": browse_id }))?;
+        self.paged("browse", first, limit, collect_videos, |v| &v.id, on)
     }
 
     /// Search results (videos only, like yt-dlp's `ytsearch`), page by page, until `limit`.
     pub fn search_videos(&self, query: &str, limit: usize, on: &mut dyn FnMut(Video)) -> Result<usize, String> {
-        self.paged("search", json!({ "query": query, "params": "EgIQAQ==" }), limit, on)
+        let first = self.post("search", json!({ "query": query, "params": "EgIQAQ==" }))?;
+        self.paged("search", first, limit, collect_videos, |v| &v.id, on)
+    }
+
+    /// One tab of a channel, page by page, until `limit`. `channel`: a channel id (UC…), or a
+    /// channel page's link of any kind (@handle, /c/, /user/), which YouTube resolves first.
+    pub fn channel_videos(&self, channel: &str, tab: ChannelTab, limit: usize, on: &mut dyn FnMut(Video)) -> Result<usize, String> {
+        let id = match channel.starts_with("UC") {
+            true => channel.to_string(),
+            false => {
+                let resp = self.post("navigation/resolve_url", json!({ "url": channel }))?;
+                resp["endpoint"]["browseEndpoint"]["browseId"].as_str().filter(|id| id.starts_with("UC")).ok_or("not a channel")?.to_string()
+            }
+        };
+        let first = self.post("browse", json!({ "browseId": id, "params": tab.params() }))?;
+        // Parameters YouTube no longer knows get the channel's Home tab instead: a mix of
+        // shelves, not this list. Only the tab asked for is taken.
+        let mut selected = None;
+        walk(&first, &mut |key, v| {
+            if key == "tabRenderer" && v["selected"].as_bool() == Some(true) {
+                selected = selected.take().or_else(|| v["title"].as_str().map(String::from));
+            }
+        });
+        if selected.as_deref() != Some(tab.title()) {
+            return Err(format!("YouTube answered with the {} tab", selected.as_deref().unwrap_or("wrong")));
+        }
+        // The rows of a channel's own tab don't name the channel.
+        let name = first["metadata"]["channelMetadataRenderer"]["title"].as_str().map(String::from);
+        let url = format!("https://www.youtube.com/channel/{id}");
+        let mut named = |mut v: Video| {
+            v.channel = v.channel.or_else(|| name.clone());
+            v.channel_url = v.channel_url.or_else(|| Some(url.clone()));
+            on(v)
+        };
+        self.paged("browse", first, limit, collect_videos, |v| &v.id, &mut named)
+    }
+
+    /// The channels the account is subscribed to (YouTube's own list of them), page by page.
+    pub fn subscribed_channels(&self, on: &mut dyn FnMut(Group)) -> Result<usize, String> {
+        let first = self.post("browse", json!({ "browseId": "FEchannels" }))?;
+        self.paged("browse", first, 5000, collect_channels, |g| &g.id, on)
     }
 
     /// Follow a list's continuation pages. Stops at `limit`, at the end, or at a page that adds
     /// nothing new; a failed later page keeps what arrived.
-    fn paged(&self, endpoint: &str, first: Value, limit: usize, on: &mut dyn FnMut(Video)) -> Result<usize, String> {
+    fn paged<T>(
+        &self,
+        endpoint: &str,
+        mut resp: Value,
+        limit: usize,
+        collect: impl Fn(&Value) -> Vec<T>,
+        key: impl Fn(&T) -> &String,
+        on: &mut dyn FnMut(T),
+    ) -> Result<usize, String> {
         let mut seen = std::collections::HashSet::new();
-        let mut resp = self.post(endpoint, first)?;
         for _ in 0..200 {
             let before = seen.len();
-            for v in collect_videos(&resp) {
-                if seen.len() < limit && seen.insert(v.id.clone()) {
+            for v in collect(&resp) {
+                if seen.len() < limit && seen.insert(key(&v).clone()) {
                     on(v);
                 }
             }
@@ -611,7 +659,7 @@ fn parse_duration(s: &str) -> Option<f64> {
 /// "17K views", "1.2M views", "218 views", "1,234 watching" as a number.
 fn parse_views(s: &str) -> Option<u64> {
     let s = s.trim();
-    let n = s.strip_suffix("views").or_else(|| s.strip_suffix("view")).or_else(|| s.strip_suffix("watching"))?.trim();
+    let n = ["views", "view", "watching", "subscribers", "subscriber"].iter().find_map(|w| s.strip_suffix(w))?.trim();
     let (num, mult) = match n.chars().last()? {
         'K' | 'k' => (&n[..n.len() - 1], 1e3),
         'M' | 'm' => (&n[..n.len() - 1], 1e6),
@@ -619,6 +667,55 @@ fn parse_views(s: &str) -> Option<u64> {
         _ => (n, 1.),
     };
     num.replace(',', "").parse::<f64>().ok().map(|x| (x * mult) as u64)
+}
+
+/// A tab of a channel's page.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ChannelTab {
+    Videos,
+    Shorts,
+    Live,
+}
+
+impl ChannelTab {
+    /// The browse parameters that open the tab, as the page's own tab links carry them.
+    fn params(self) -> &'static str {
+        match self {
+            ChannelTab::Videos => "EgZ2aWRlb3PyBgQKAjoA",
+            ChannelTab::Shorts => "EgZzaG9ydHPyBgUKA5oBAA%3D%3D",
+            ChannelTab::Live => "EgdzdHJlYW1z8gYECgJ6AA%3D%3D",
+        }
+    }
+
+    /// Its title on the page (requests ask for English).
+    fn title(self) -> &'static str {
+        match self {
+            ChannelTab::Videos => "Videos",
+            ChannelTab::Shorts => "Shorts",
+            ChannelTab::Live => "Live",
+        }
+    }
+}
+
+/// The channels listed on a page (`channelRenderer`s, as on the subscriptions page).
+fn collect_channels(page: &Value) -> Vec<Group> {
+    let mut out = Vec::new();
+    walk(page, &mut |key, c| {
+        if key != "channelRenderer" {
+            return;
+        }
+        let Some(id) = c["channelId"].as_str().filter(|id| id.starts_with("UC")) else { return };
+        let Some(title) = full_text(&c["title"]).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) else { return };
+        let thumb = c["thumbnail"]["thumbnails"].as_array().and_then(|t| t.last()).and_then(|t| t["url"].as_str()).map(|u| match u.starts_with("//") {
+            true => format!("https:{u}"),
+            false => u.to_string(),
+        });
+        // Since handles, the subscriber count sits where the video count was (and the handle
+        // where the subscriber count was): take whichever says "subscribers".
+        let subscribers = [&c["subscriberCountText"], &c["videoCountText"]].into_iter().filter_map(full_text).find_map(|t| parse_views(&t));
+        out.push(Group { id: id.to_string(), title, url: format!("https://www.youtube.com/channel/{id}/videos"), thumb, subscribers });
+    });
+    out
 }
 
 /// Call `f` for every key/value pair in a JSON tree.
