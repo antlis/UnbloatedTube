@@ -6,6 +6,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.32.0 - 2026-10-10
+
 ### Added
 - **Sleep timer**: right-click the video → Sleep: end of this video, or 15 / 30 / 45 / 60 / 90
   minutes. The video pauses when the time is up (also while casting); "End of this video" lets
