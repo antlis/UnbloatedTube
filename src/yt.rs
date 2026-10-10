@@ -646,6 +646,21 @@ fn tidy_auto_captions(vtt: &str) -> Option<String> {
     Some(out)
 }
 
+/// Likes and dislikes of a video from the Return YouTube Dislike API (YouTube hides dislikes; the
+/// project estimates them from its users' votes). No key; the request names the video.
+pub fn votes(id: &str) -> Result<(u64, u64), String> {
+    let v: serde_json::Value = ureq::get(&format!("https://returnyoutubedislikeapi.com/votes?videoId={id}"))
+        .timeout(std::time::Duration::from_secs(10))
+        .call()
+        .map_err(|e| e.to_string())?
+        .into_json()
+        .map_err(|e| e.to_string())?;
+    match (v["likes"].as_u64(), v["dislikes"].as_u64()) {
+        (Some(likes), Some(dislikes)) => Ok((likes, dislikes)),
+        _ => Err("no counts for this video".into()),
+    }
+}
+
 /// One video's details by id, for a pasted link.
 pub fn video(cfg: &Config, id: &str) -> Result<Video, String> {
     let mut found = None;
