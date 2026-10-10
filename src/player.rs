@@ -42,6 +42,8 @@ pub struct State {
     pub sub_id: Option<i64>,
     /// One of them is selected and visible.
     pub sub_on: bool,
+    /// Height of the video stream playing (None: audio only, or not known yet).
+    pub height: Option<u32>,
 }
 
 /// Where a right click happened, in mpv's window pixels, from its `menu ...` action: the hover
@@ -145,6 +147,11 @@ impl Player {
         let _ = self.command(json!(["set_property", "sub-visibility", true]));
         self.command(json!(["set_property", "pause", paused]))?;
         self.command(json!(["loadfile", url, "replace"]))
+    }
+
+    /// The yt-dlp format mpv uses for the files it loads from now on (the quality picker).
+    pub fn set_format(&self, format: &str) {
+        let _ = self.command(json!(["set_property", "ytdl-format", format]));
     }
 
     /// Stop playback and exit mpv (logout, or the connect screen coming up).
@@ -265,9 +272,15 @@ impl Player {
 
 /// yt-dlp format selector for the user's quality / codec / audio-only settings.
 pub fn format(s: &Settings) -> String {
-    let q = s.max_quality;
+    format_at(s, None)
+}
+
+/// The yt-dlp format for a quality picked for one video (a height, or 0 for audio only) instead
+/// of the settings' maximum; None: the settings'.
+pub fn format_at(s: &Settings, pick: Option<u32>) -> String {
+    let q = pick.filter(|h| *h > 0).unwrap_or(s.max_quality);
     let codec = if s.prefer_hw_codecs { "[vcodec!^=av01]" } else { "" };
-    if s.audio_only {
+    if pick.map_or(s.audio_only, |h| h == 0) {
         "bestaudio/best".to_string()
     } else {
         // Fall back to any codec, then to a single combined stream, if the preferred one is missing.
@@ -391,6 +404,7 @@ pub fn query(socket: &Path) -> Option<State> {
         sub_tracks: ours.len() as u32,
         sub_id: ours.first().and_then(|t| t["id"].as_i64()),
         sub_on: vals[13].as_bool().unwrap_or(false) && ours.iter().any(|t| t["selected"] == true),
+        height: tracks.iter().find(|t| t["type"] == "video" && t["selected"] == true).and_then(|t| t["demux-h"].as_u64()).map(|h| h as u32),
     })
 }
 
