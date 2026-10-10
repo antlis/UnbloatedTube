@@ -551,7 +551,7 @@ struct Unbloated {
     settings_filter: String,
     settings_focus: FocusHandle,
     /// Focus of the settings text fields, in TEXT_FIELDS order.
-    field_focus: [FocusHandle; 4],
+    field_focus: [FocusHandle; TEXT_FIELDS.len()],
     /// Latest fetch per list; older fetches of the same list are ignored.
     generations: HashMap<&'static str, u64>,
     history: History,
@@ -840,7 +840,7 @@ impl Unbloated {
             hints: None,
             settings_filter: String::new(),
             settings_focus: cx.focus_handle(),
-            field_focus: [cx.focus_handle(), cx.focus_handle(), cx.focus_handle(), cx.focus_handle()],
+            field_focus: std::array::from_fn(|_| cx.focus_handle()),
             generations: HashMap::new(),
             current: restore,
             history,
