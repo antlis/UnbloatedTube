@@ -244,7 +244,10 @@ Settings → Network → **Connection**:
 **Test connection** asks YouTube once, the way the app does, and says how long it took. With
 Bypass or Proxy, everything goes through a small proxy inside the app: lists, thumbnails, yt-dlp
 and the video itself (mpv only speaks HTTP proxies; this way SOCKS ones work for it too).
-Addresses on your own network (cast receivers) always go direct.
+The app's own requests then use OpenSSL, and mpv fetches the video from the app's proxy, which
+makes the encrypted connection to YouTube for it over OpenSSL as well: on the Russian network we
+tested, filters stopped mpv's own TLS (GnuTLS) even with its first packet split, and let OpenSSL's
+through. Addresses on your own network (cast receivers) always go direct.
 
 ### Keyboard
 
@@ -561,7 +564,7 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
 | `embed.rs` | Creates an X11 child window inside the app's window for `mpv --wid`, and keeps it positioned over the player area. |
 | `store.rs` | `config.toml`, `settings.json`, watch history with resume positions, seen videos, groups, cached lists. |
 | `thumbs.rs` | Downloads and caches thumbnails and avatars. |
-| `proxy.rs` | The local proxy behind Settings → Network: Bypass (the TLS ClientHello split into two records and/or two TCP segments, inside the server name) or an upstream SOCKS5/HTTP proxy; local addresses direct. |
+| `proxy.rs` | The local proxy behind Settings → Network: Bypass (the TLS ClientHello split into two records and/or two TCP segments, inside the server name) or an upstream SOCKS5/HTTP proxy; local addresses direct. mpv's stream links come to it as http:// and it makes the TLS connection (OpenSSL). |
 | `icons.rs` | Small single-color SVG icons compiled into the binary. |
 
 ### Design notes

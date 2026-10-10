@@ -32,6 +32,9 @@ use crate::yt;
 pub const ENV: &str = "UNBLOATED_YTDL_SHIM";
 /// Where the helper listens, for the same.
 pub const SOCK_ENV: &str = "UNBLOATED_YTDL_SOCK";
+/// Set for mpv while the app's proxy is in use: stream links go to it as http:// (see
+/// `proxy::relay_url`).
+pub const RELAY_ENV: &str = "UNBLOATED_YTDL_RELAY";
 
 /// How long an answer is used; the stream links in it last hours.
 pub const TTL: Duration = Duration::from_secs(3600);
@@ -327,22 +330,60 @@ fn request(args: &[String]) -> Option<(String, String)> {
 /// The single-video lookup tried first, with the manifests skipped; its answer if it is an
 /// ordinary finished video (see `finished`), else None and the caller runs the real request.
 fn quick(args: &[String]) -> Option<Vec<u8>> {
-    std::fs::create_dir_all(dir()).ok()?;
-    let path = dir().join(format!("quick-{}-{:x}", std::process::id(), SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).ok()?.as_nanos()));
-    let capture = File::options().read(true).write(true).create_new(true).open(&path).ok()?;
-    let _ = std::fs::remove_file(&path);
     let nothing = File::options().write(true).open("/dev/null").ok()?;
     let mut tried = vec!["--extractor-args".to_string(), "youtube:skip=hls,dash".to_string()];
     tried.extend_from_slice(args);
-    if run(&tried, &capture, &nothing) != 0 {
-        return None;
+    match captured(&tried, &nothing)? {
+        (0, json) => finished(&json).then_some(json),
+        _ => None,
     }
-    let mut json = Vec::new();
+}
+
+/// `run`, its output kept instead of printed: the exit code and the output.
+fn captured(args: &[String], err: &File) -> Option<(i32, Vec<u8>)> {
+    std::fs::create_dir_all(dir()).ok()?;
+    let path = dir().join(format!("quick-{}-{:x}", std::process::id(), SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).ok()?.as_nanos()));
+    let mut capture = File::options().read(true).write(true).create_new(true).open(&path).ok()?;
+    let _ = std::fs::remove_file(&path);
+    let code = run(args, &capture, err);
+    let mut out = Vec::new();
     // The run wrote through the same open file: read it from the start.
-    let mut capture = capture;
     capture.seek(SeekFrom::Start(0)).ok()?;
-    capture.read_to_end(&mut json).ok()?;
-    finished(&json).then_some(json)
+    capture.read_to_end(&mut out).ok()?;
+    Some((code, out))
+}
+
+/// An answer as mpv gets it: with `RELAY_ENV` set, its links to YouTube's servers as http://, for
+/// the app's proxy to fetch (see `proxy::relay_url`).
+fn for_mpv(json: Vec<u8>) -> Vec<u8> {
+    fn walk(v: &mut serde_json::Value) {
+        match v {
+            serde_json::Value::String(s) => {
+                if let Some(url) = crate::proxy::relay_url(s) {
+                    *s = url;
+                }
+            }
+            serde_json::Value::Array(a) => a.iter_mut().for_each(walk),
+            serde_json::Value::Object(o) => o.values_mut().for_each(walk),
+            _ => {}
+        }
+    }
+    if std::env::var_os(RELAY_ENV).is_none() {
+        return json;
+    }
+    // One JSON document per line (a list prints one per entry).
+    let mut out = Vec::with_capacity(json.len());
+    for line in json.split_inclusive(|&b| b == b'\n') {
+        match serde_json::from_slice::<serde_json::Value>(line) {
+            Ok(mut v) => {
+                walk(&mut v);
+                out.extend_from_slice(&serde_json::to_vec(&v).unwrap_or_else(|_| line.to_vec()));
+                out.push(b'\n');
+            }
+            Err(_) => out.extend_from_slice(line),
+        }
+    }
+    out
 }
 
 /// Be mpv's yt-dlp (or the app's): see the module docs.
@@ -388,7 +429,17 @@ pub fn run_shim() -> ! {
     }
     if let Some(json) = json {
         // mpv closed the pipe: nobody wants an answer, and yt-dlp must not run a second time.
-        done(if (&stdout).write_all(&json).is_ok() { 0 } else { 1 });
+        done(if (&stdout).write_all(&for_mpv(json)).is_ok() { 0 } else { 1 });
+    }
+    // Links for the app's proxy: the answer is rewritten before mpv gets it.
+    if std::env::var_os(RELAY_ENV).is_some() {
+        let mut answer = captured(&fast, &stderr);
+        if answer.as_ref().is_none_or(|(code, _)| *code != 0) && jar.is_some() && ask.is_some() {
+            answer = captured(&args, &stderr);
+        }
+        let (code, json) = answer.unwrap_or((1, Vec::new()));
+        log("full lookup");
+        done(if (&stdout).write_all(&for_mpv(json)).is_ok() { code } else { 1 });
     }
     // Everything else, and a single video that is not the ordinary kind (live, premiere, odd):
     // exactly what was asked.

@@ -117,6 +117,7 @@ impl Player {
                 // mpv's yt-dlp is this program, which answers from what was resolved ahead of time.
                 .args(crate::prefetch::self_exe().map(|exe| format!("--script-opts-append=ytdl_hook-ytdl_path={}", exe.display())))
                 .envs(crate::prefetch::environment())
+                .envs(crate::proxy::url().map(|_| (crate::prefetch::RELAY_ENV, "1")))
                 .args(options)
                 .args(["--volume-max=100".to_string(), format!("--volume={}", self.volume)])
                 .arg(format!("--speed={speed}"))
@@ -362,6 +363,7 @@ pub fn play_separate(cfg: &Config, s: &Settings, url: &str, start: f64) -> Resul
     cmd.env("PYCRYPTODOME_DISABLE_GMP", "1")
         .args(crate::prefetch::self_exe().map(|exe| format!("--script-opts-append=ytdl_hook-ytdl_path={}", exe.display())))
         .envs(crate::prefetch::environment())
+        .envs(crate::proxy::url().map(|_| (crate::prefetch::RELAY_ENV, "1")))
         .args(window_options(cfg, s, true, false))
         .arg("--force-window=immediate")
         .arg(format!("--volume={}", s.volume))

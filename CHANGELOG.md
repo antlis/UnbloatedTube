@@ -17,8 +17,9 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
     SOCKS5/HTTP proxy, with presets for Tor and ByeDPI.
   - **Test connection** checks that YouTube answers and how fast, or says what failed, within 12 s.
 
-  Lists, thumbnails, yt-dlp and the video stream all follow it; cast receivers on your network
-  stay direct.
+  Lists, thumbnails, yt-dlp and the video stream all follow it, over OpenSSL (on a Russian
+  network, filters stopped mpv's and the app's other TLS even when split); cast receivers on your
+  network stay direct.
 
 ## 0.40.1 - 2026-10-10
 

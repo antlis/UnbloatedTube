@@ -1,9 +1,10 @@
 //! One HTTP client for the whole app, so connections are kept open and reused: each new
 //! connection costs a TCP and TLS handshake (100–300 ms), which a list of thumbnails or a run of
 //! account requests would otherwise pay every time (`ureq::get` builds a fresh client per call).
-//! Rebuilt when Settings → Network changes, to go through the app's proxy (see proxy.rs) or not.
+//! Rebuilt when Settings → Network changes, to go through the app's proxy (see proxy.rs) or not;
+//! through it, over OpenSSL, whose TLS gets past filters that stop rustls's.
 
-use std::sync::{LazyLock, RwLock};
+use std::sync::{Arc, LazyLock, RwLock};
 use std::time::Duration;
 
 static AGENT: LazyLock<RwLock<ureq::Agent>> = LazyLock::new(|| RwLock::new(build(None, Duration::from_secs(60))));
@@ -13,6 +14,10 @@ fn build(proxy: Option<&str>, timeout: Duration) -> ureq::Agent {
     let mut b = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout(timeout).max_idle_connections_per_host(8);
     if let Some(p) = proxy.and_then(|p| ureq::Proxy::new(p).ok()) {
         b = b.proxy(p);
+        match native_tls::TlsConnector::new() {
+            Ok(tls) => b = b.tls_connector(Arc::new(tls)),
+            Err(e) => eprintln!("unbloatedtube: OpenSSL: {e}"),
+        }
     }
     b.build()
 }

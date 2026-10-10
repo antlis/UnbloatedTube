@@ -13,7 +13,8 @@
 //!   VPN client's local port, a server of their own). mpv speaks only HTTP proxies; going through
 //!   this one, SOCKS works for it too.
 //!
-//! Addresses on the local network (cast receivers) always go direct.
+//! Addresses on the local network (cast receivers) always go direct. mpv's video comes through
+//! in the clear and this proxy makes the TLS connection for it, over OpenSSL (`relay_url`).
 
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Shutdown, TcpListener, TcpStream, ToSocketAddrs};
@@ -179,6 +180,9 @@ fn serve(mut client: TcpStream) -> io::Result<()> {
         let Some(after) = target.strip_prefix("http://") else { return reply(&mut client, "400 Bad Request") };
         let (authority, path) = after.split_once('/').map_or((after, "/".to_string()), |(a, p)| (a, format!("/{p}")));
         let Some((host, port)) = host_port(authority, 80) else { return reply(&mut client, "400 Bad Request") };
+        if port == 80 && relayed(&host) {
+            return upgrade(client, &route, &host, &head.replacen(target, &path, 1), &rest);
+        }
         let mut server = match connect(&route, &host, port) {
             Ok(s) => s,
             Err(e) => return reply(&mut client, &format!("502 {e}")),
@@ -186,6 +190,123 @@ fn serve(mut client: TcpStream) -> io::Result<()> {
         let fixed = head.replacen(target, &path, 1);
         server.write_all(fixed.as_bytes())?;
         relay(client, server, rest, None)
+    }
+}
+
+/// YouTube's hosts whose links mpv gets as http:// (see `relay_url`).
+fn relayed(host: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    host.ends_with(".googlevideo.com") || host == "www.youtube.com"
+}
+
+/// mpv's version of a stream or caption link while a route other than Direct is on: http://, so
+/// it asks this proxy for it in the clear and the proxy makes the TLS connection (`upgrade`).
+/// mpv's own TLS (GnuTLS) gets stopped by a filter even with its first packet split, where
+/// OpenSSL's gets through (tested on a Russian network); and mpv uses no proxy for https://.
+pub fn relay_url(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://")?;
+    let host = rest.split(['/', '?', ':']).next()?;
+    // Of www.youtube.com, only captions: its page links (`webpage_url`) stay as they are.
+    let media = !host.eq_ignore_ascii_case("www.youtube.com") || rest[host.len()..].starts_with("/api/timedtext");
+    (relayed(host) && media).then(|| format!("http://{rest}"))
+}
+
+/// A plain request for a relayed host: made over TLS (OpenSSL, the first packet split in Bypass)
+/// to port 443, its answer passed back with any redirect to the host kept in the clear.
+fn upgrade(mut client: TcpStream, route: &Route, host: &str, head: &str, body: &[u8]) -> io::Result<()> {
+    let server = match connect(route, host, 443) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("unbloatedtube: proxy: can't reach {host}:443: {e}");
+            return reply(&mut client, &format!("502 {e}"));
+        }
+    };
+    let _ = server.set_nodelay(true);
+    let split = match route {
+        Route::Bypass(split) => Some(*split),
+        _ => None,
+    };
+    let tls = native_tls::TlsConnector::new().map_err(|e| bad(e.to_string()))?;
+    let mut tls = match tls.connect(host, SplitFirst { s: server, split }) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("unbloatedtube: proxy: TLS with {host}: {e}");
+            return reply(&mut client, &format!("502 TLS: {e}"));
+        }
+    };
+    // One request per connection: the answer is passed on as it comes, without reading its length.
+    let mut req = String::new();
+    for line in head.split("\r\n").filter(|l| !l.is_empty()) {
+        let name = line.split(':').next().unwrap_or("").trim().to_ascii_lowercase();
+        if name != "connection" && name != "proxy-connection" && name != "keep-alive" {
+            req.push_str(line);
+            req.push_str("\r\n");
+        }
+    }
+    req.push_str("Connection: close\r\n\r\n");
+    tls.write_all(req.as_bytes())?;
+    tls.write_all(body)?;
+    // The answer's head, its Location (a redirect to another video server) in the clear too.
+    let mut answer = Vec::new();
+    let mut chunk = [0u8; 16 * 1024];
+    let head_end = loop {
+        let n = tls.read(&mut chunk)?;
+        if n == 0 {
+            return Ok(());
+        }
+        answer.extend_from_slice(&chunk[..n]);
+        if let Some(i) = answer.windows(4).position(|w| w == b"\r\n\r\n") {
+            break i + 4;
+        }
+        if answer.len() > 64 * 1024 {
+            return Ok(());
+        }
+    };
+    let answer_head = String::from_utf8_lossy(&answer[..head_end]).into_owned();
+    let mut out = String::new();
+    for line in answer_head.split_inclusive("\r\n") {
+        match line.split_once(':').filter(|(name, _)| name.eq_ignore_ascii_case("location")) {
+            Some((name, value)) => match relay_url(value.trim()) {
+                Some(url) => out.push_str(&format!("{name}: {url}\r\n")),
+                None => out.push_str(line),
+            },
+            None => out.push_str(line),
+        }
+    }
+    client.write_all(out.as_bytes())?;
+    client.write_all(&answer[head_end..])?;
+    io::copy(&mut tls, &mut client)?;
+    Ok(())
+}
+
+/// A connection whose first write (the TLS ClientHello) goes out split: see `split_hello`.
+#[derive(Debug)]
+struct SplitFirst {
+    s: TcpStream,
+    split: Option<Split>,
+}
+
+impl Read for SplitFirst {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.s.read(buf)
+    }
+}
+
+impl Write for SplitFirst {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self.split.take() {
+            Some(split) => {
+                for part in split_hello(buf, split) {
+                    self.s.write_all(&part)?;
+                }
+                Ok(buf.len())
+            }
+            None => self.s.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.s.flush()
     }
 }
 
@@ -496,6 +617,17 @@ mod tests {
         assert_eq!(&both[1][..3], &[0x16, 3, 1]);
         // Not TLS: untouched.
         assert_eq!(split_hello(b"GET / HTTP/1.1\r\n\r\n", Split::Both), vec![b"GET / HTTP/1.1\r\n\r\n".to_vec()]);
+    }
+
+    #[test]
+    fn stream_and_caption_links_go_in_the_clear() {
+        let v = "https://rr2---sn-gvnuxaxjvh-jx3z.googlevideo.com/videoplayback?expire=1&ip=1.2.3.4";
+        assert_eq!(relay_url(v).as_deref(), Some(&v.replacen("https", "http", 1)[..]));
+        assert!(relay_url("https://www.youtube.com/api/timedtext?v=x&lang=en").is_some());
+        assert_eq!(relay_url("https://www.youtube.com/watch?v=x"), None);
+        assert_eq!(relay_url("https://i.ytimg.com/vi/x/hq720.jpg"), None);
+        assert_eq!(relay_url("http://rr2---sn-x.googlevideo.com/videoplayback"), None);
+        assert_eq!(relay_url("https://googlevideo.com.example/x"), None);
     }
 
     #[test]
