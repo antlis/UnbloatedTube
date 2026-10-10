@@ -6,6 +6,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.35.0 - 2026-10-10
+
 ### Changed
 - **Faster lists.** The subscriptions feed, playlists (Watch later and Liked included),
   recommendations and search come straight from YouTube's API, a page at a time, instead of
