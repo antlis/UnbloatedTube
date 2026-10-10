@@ -6,6 +6,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.34.0 - 2026-10-10
+
 ### Changed
 - **Renamed to UnbloatedTube** (the repository already was): the command is `unbloatedtube`, with
   `ubt` as a short name and `unbloated-youtube` kept as an alias in the AUR and Nix packages.
