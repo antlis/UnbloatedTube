@@ -6,6 +6,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.30.0 - 2026-10-10
+
 ### Added
 - **Quality picker** for the playing video: right-click it → Quality shows what plays (e.g.
   "1080p") and lets you pick Auto, 2160p … 144p or Audio only. The video reloads at once from
