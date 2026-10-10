@@ -214,7 +214,7 @@ const BUTTON_TOGGLES: [Toggle; 13] = [
     ("Like", "Like the video, or remove your like", |s| &mut s.like_button),
     ("Dislike", "Dislike the video, or remove your dislike", |s| &mut s.dislike_button),
     ("Volume", "Mute button and volume bar next to the speed button", |s| &mut s.volume_control),
-    ("Subtitles", "CC button: subtitles on / off for the video (V); language and size are under Subtitles", |s| &mut s.subtitles_button),
+    ("Subtitles", "CC button, under the player and on the hover bar over the video: subtitles on / off for the video (V); language and size are under Subtitles", |s| &mut s.subtitles_button),
     ("Cast", "Send the video to another device (T); the button shows once a Cast command (Settings) or a [cast] target (config.toml) exists", |s| &mut s.cast_button),
     ("Share", "Copy the video's link", |s| &mut s.share_button),
     ("Share at current time", "Copy the video's link so it opens at the current time", |s| &mut s.share_time_button),
@@ -5122,6 +5122,7 @@ impl Unbloated {
                 }
                 "speed" => self.cycle_speed(cx),
                 "pip" => self.toggle_pip(cx),
+                "subtitles" => self.toggle_subtitles(cx),
                 a if a.starts_with("menu") && !self.fullscreen => {
                     if let Some(at) = player::menu_position(a) {
                         self.open_player_menu(at, window, cx);

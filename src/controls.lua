@@ -1,15 +1,15 @@
 -- Hover controls for unbloatedtube's embedded player, drawn by mpv itself (the video is a
 -- separate native window, so the app can't draw over it). Moving the pointer over the video
 -- shows a bar like YouTube's: a seek line, then play/pause, previous/next, mute + volume and the
--- time on the left, and -10 s/+10 s, speed, picture-in-picture and fullscreen on the right. It
--- hides after a moment. What only the app can do (previous/next video, speed, picture-in-picture)
--- is passed to it through the user-data/unbloated/action property.
+-- time on the left, and -10 s/+10 s, subtitles, speed, picture-in-picture and fullscreen on the
+-- right. It hides after a moment. What only the app can do (previous/next video, subtitles, speed,
+-- picture-in-picture) is passed to it through the user-data/unbloated/action property.
 -- Clicks elsewhere on the video keep their meaning: one click pauses, a double click toggles
 -- fullscreen.
 local mp = require 'mp'
 local options = require 'mp.options'
 
-local opts = { accent = "454EFF" } -- ASS colour, BBGGRR
+local opts = { accent = "454EFF", cc = true } -- accent: ASS colour, BBGGRR; cc: the subtitles button
 options.read_options(opts, "unbloated-controls")
 
 local overlay = mp.create_osd_overlay("ass-events")
@@ -18,9 +18,10 @@ local hide_timer
 local L = {} -- layout of the current frame: named rectangles {x1, y1, x2, y2}
 
 local LEFT = { "play", "prev", "next", "mute", "vol", "time" }
-local RIGHT = { "back10", "fwd10", "speed", "pip", "full" }
+local RIGHT = { "back10", "fwd10", "cc", "speed", "pip", "full" }
+if not opts.cc then table.remove(RIGHT, 3) end
 -- What goes first when the video is too narrow for everything.
-local DROP = { "back10", "fwd10", "pip", "prev", "speed", "time", "vol" }
+local DROP = { "back10", "fwd10", "pip", "cc", "prev", "speed", "time", "vol" }
 
 local function i(v) return math.floor(v + 0.5) end
 
@@ -173,7 +174,7 @@ local function render()
         add(string.format("{\\an4\\pos(%d,%d)\\bord0\\shad1\\fs%d\\1c&H%s&}%s / %s", L.time[1] + i(6 * u), i(ty2), i(17 * u), white, clock(pos), clock(dur)))
     end
 
-    -- right side: -10 s, +10 s, speed, picture-in-picture, fullscreen
+    -- right side: -10 s, +10 s, subtitles, speed, picture-in-picture, fullscreen
     if L.back10 then
         cx, cy = center(L.back10)
         add(poly(white, 0, { cx + s * 0.05, cy - s * 0.38, cx + s * 0.05, cy + s * 0.38, cx - s * 0.4, cy }))
@@ -183,6 +184,22 @@ local function render()
         cx, cy = center(L.fwd10)
         add(poly(white, 0, { cx - s * 0.5, cy - s * 0.38, cx - s * 0.5, cy + s * 0.38, cx - s * 0.05, cy }))
         add(poly(white, 0, { cx - s * 0.05, cy - s * 0.38, cx - s * 0.05, cy + s * 0.38, cx + s * 0.4, cy }))
+    end
+    if L.cc then
+        -- A "CC" box: filled while subtitles show, an outline while they don't.
+        cx, cy = center(L.cc)
+        local sid = mp.get_property("sid")
+        local on = sid ~= nil and sid ~= "no" and mp.get_property_bool("sub-visibility")
+        local a, b, t = s * 0.52, s * 0.36, s * 0.07
+        if on then
+            add(rect(white, 0, cx - a, cy - b, cx + a, cy + b))
+        else
+            add(rect(white, 0, cx - a, cy - b, cx + a, cy - b + t))
+            add(rect(white, 0, cx - a, cy + b - t, cx + a, cy + b))
+            add(rect(white, 0, cx - a, cy - b, cx - a + t, cy + b))
+            add(rect(white, 0, cx + a - t, cy - b, cx + a, cy + b))
+        end
+        add(string.format("{\\an5\\pos(%d,%d)\\bord0\\shad0\\b1\\fs%d\\1c&H%s&}CC", i(cx), i(cy), i(15 * u), on and "000000" or white))
     end
     if L.speed then
         cx, cy = center(L.speed)
@@ -237,7 +254,7 @@ mp.observe_property("mouse-pos", "native", function(_, p)
     end
 end)
 
-for _, name in ipairs({ "pause", "volume", "mute", "fullscreen", "duration", "speed" }) do
+for _, name in ipairs({ "pause", "volume", "mute", "fullscreen", "duration", "speed", "sid", "sub-visibility" }) do
     mp.observe_property(name, nil, function() if visible then render() end end)
 end
 mp.add_periodic_timer(0.25, function() if visible then render() end end)
@@ -265,6 +282,8 @@ mp.add_forced_key_binding("MBTN_LEFT", "unbloated-click", function()
         mp.commandv("seek", -10)
     elseif inside(L.fwd10, x, y) then
         mp.commandv("seek", 10)
+    elseif inside(L.cc, x, y) then
+        ask_app("subtitles")
     elseif inside(L.speed, x, y) then
         ask_app("speed")
     elseif inside(L.pip, x, y) then

@@ -331,6 +331,8 @@ pub fn options(cfg: &Config, s: &Settings, pip: bool) -> Vec<String> {
     if let (false, true, Some(script)) = (pip, s.video_controls, controls_script()) {
         out.push(format!("--script={script}"));
         out.push("--script-opts-append=unbloated-controls-accent=454EFF".into());
+        // The subtitles button follows the one under the player (Settings → Player buttons).
+        out.push(format!("--script-opts-append=unbloated-controls-cc={}", if s.subtitles_button { "yes" } else { "no" }));
     }
     if pip {
         // Bottom-right corner; the title lets tiling WMs float it (e.g. i3 for_window rules).
