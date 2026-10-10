@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Publish a GitHub release to the AUR as unbloated-youtube-bin: downloads the release archive,
+# Publish a GitHub release to the AUR as unbloatedtube-bin: downloads the release archive,
 # checks it against the release's .sha256, sets pkgver and sha256sums in PKGBUILD, generates
 # .SRCINFO and pushes both to the AUR. The copy of PKGBUILD in this repo is the template; the
 # AUR repo is where the current version lives, so nothing is written back here.
@@ -8,13 +8,14 @@
 #   packaging/aur/publish.sh v0.8.2 --dry-run # everything except the push; prints the files
 #
 # Run by the release workflow after each tag when the AUR_SSH_KEY secret is set.
+# The first push for a package name creates it on the AUR (unbloatedtube-bin, from 0.34.0).
 set -euo pipefail
 
 version=${1:?usage: publish.sh VERSION [--dry-run]}
 version=${version#v}
 dry=${2:-}
-repo=antlis/unbloated-youtube
-aur=ssh://aur@aur.archlinux.org/unbloated-youtube-bin.git
+repo=antlis/UnbloatedTube
+aur=ssh://aur@aur.archlinux.org/unbloatedtube-bin.git
 author_name=antlis
 author_email=antlis@protonmail.com
 
@@ -22,7 +23,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-archive=unbloated-youtube-$version-x86_64-linux.tar.gz
+archive=unbloatedtube-$version-x86_64-linux.tar.gz
 base=https://github.com/$repo/releases/download/v$version
 curl -fsSL -o "$work/$archive" "$base/$archive"
 curl -fsSL -o "$work/$archive.sha256" "$base/$archive.sha256"

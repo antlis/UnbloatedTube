@@ -5762,7 +5762,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "unbloated-youtube"
+name = "unbloatedtube"
 version = "0.33.0"
 dependencies = [
  "anyhow",

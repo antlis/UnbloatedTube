@@ -1,4 +1,4 @@
--- Hover controls for unbloated-youtube's embedded player, drawn by mpv itself (the video is a
+-- Hover controls for unbloatedtube's embedded player, drawn by mpv itself (the video is a
 -- separate native window, so the app can't draw over it). Moving the pointer over the video
 -- shows a bar like YouTube's: a seek line, then play/pause, previous/next, mute + volume and the
 -- time on the left, and -10 s/+10 s, speed, picture-in-picture and fullscreen on the right. It

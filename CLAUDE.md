@@ -1,4 +1,4 @@
-# unbloated-youtube
+# UnbloatedTube
 
 Lightweight, configurable YouTube desktop client: Rust + GPUI 0.2.2, mpv embedded via X11
 (`--wid`) for playback, yt-dlp for data, YouTube's InnerTube API for account actions.
@@ -29,7 +29,7 @@ every user-visible change).
 ## Releases
 - Semantic versioning. To release: move the changelog's entries under a new `## X.Y.Z - date`
   heading, bump `version` in Cargo.toml (and let Cargo.lock follow), commit "Release X.Y.Z",
-  then tag it: `git tag -a vX.Y.Z -m "unbloated-youtube X.Y.Z"`. Push the tag only when asked.
+  then tag it: `git tag -a vX.Y.Z -m "unbloatedtube X.Y.Z"`. Push the tag only when asked.
 
 ## Conventions
 - Minimal, surgical changes; match the surrounding style and comment density.

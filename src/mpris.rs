@@ -15,7 +15,7 @@ use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 use crate::cli::Command;
 
 const PATH: &str = "/org/mpris/MediaPlayer2";
-const NAME: &str = "org.mpris.MediaPlayer2.unbloated_youtube";
+const NAME: &str = "org.mpris.MediaPlayer2.unbloatedtube";
 
 /// What plays, as MPRIS shows it.
 #[derive(Clone, Default, PartialEq)]
@@ -53,7 +53,7 @@ impl Mpris {
         std::thread::spawn(move || {
             let conn = match connect(commands_tx, state.clone()) {
                 Ok(c) => c,
-                Err(e) => return eprintln!("unbloated-youtube: no MPRIS (media keys): {e}"),
+                Err(e) => return eprintln!("unbloatedtube: no MPRIS (media keys): {e}"),
             };
             // Announce each change; the bus keeps serving requests on its own threads.
             while changed_rx.recv().is_ok() {
@@ -157,12 +157,12 @@ impl Root {
 
     #[zbus(property)]
     fn identity(&self) -> &str {
-        "Unbloated YouTube"
+        "UnbloatedTube"
     }
 
     #[zbus(property)]
     fn desktop_entry(&self) -> &str {
-        "unbloated-youtube"
+        "unbloatedtube"
     }
 
     #[zbus(property)]

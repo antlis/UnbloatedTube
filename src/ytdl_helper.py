@@ -1,4 +1,4 @@
-"""A yt-dlp that stays running, for unbloated-youtube (see src/prefetch.rs).
+"""A yt-dlp that stays running, for unbloatedtube (see src/prefetch.rs).
 
 Starting yt-dlp costs about a second before it does anything, mostly importing itself. This
 imports it once and forks for every request: the request names the arguments and carries the

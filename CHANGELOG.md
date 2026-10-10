@@ -6,6 +6,15 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Changed
+- **Renamed to UnbloatedTube** (the repository already was): the command is `unbloatedtube`, with
+  `ubt` as a short name and `unbloated-youtube` kept as an alias in the AUR and Nix packages.
+  Settings, history, downloads and caches move from `~/.config/unbloated-youtube` (and the data
+  and cache folders) to `…/unbloatedtube` on first start. The AUR package is now
+  `unbloatedtube-bin` (`unbloated-youtube-bin` becomes a transitional package that installs it),
+  the Nix flake output `unbloatedtube` (`unbloated-youtube` stays as an alias), the release
+  archives `unbloatedtube-X.Y.Z-…`, the media-player (MPRIS) name `unbloatedtube`.
+
 ## 0.33.0 - 2026-10-10
 
 ### Added

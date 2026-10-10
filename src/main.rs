@@ -191,7 +191,7 @@ const SEGMENTS: [(&str, &str); 8] = [
     ("Non-music in music videos", "music_offtopic"),
 ];
 /// Where the project lives; opened by the button at the bottom of Settings.
-const REPO_URL: &str = "https://github.com/antlis/unbloated-youtube";
+const REPO_URL: &str = "https://github.com/antlis/UnbloatedTube";
 
 const SPEEDS: [f32; 6] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
 
@@ -1419,7 +1419,7 @@ impl Unbloated {
         };
         std::thread::spawn(move || {
             for (summary, body) in messages {
-                let _ = notify_rust::Notification::new().appname("unbloated-youtube").summary(&summary).body(&body).show();
+                let _ = notify_rust::Notification::new().appname("UnbloatedTube").summary(&summary).body(&body).show();
             }
         });
     }
@@ -2745,7 +2745,7 @@ impl Unbloated {
         if self.embed.is_none() {
             self.embed = Embed::new().map(|e| Rc::new(RefCell::new(e)));
             if self.embed.is_none() {
-                eprintln!("unbloated-youtube: can't embed video (not X11?), using a separate mpv window");
+                eprintln!("unbloatedtube: can't embed video (not X11?), using a separate mpv window");
             }
         }
         let wid = self.embed.as_ref().filter(|_| !self.pip).map(|e| {
@@ -3765,7 +3765,7 @@ impl Unbloated {
         cx.background_executor()
             .spawn(async move {
                 if let Err(e) = yt::mark_watched(&cfg, &id) {
-                    eprintln!("unbloated-youtube: couldn't add {id} to the history: {e}");
+                    eprintln!("unbloatedtube: couldn't add {id} to the history: {e}");
                 }
             })
             .detach();
@@ -3873,7 +3873,7 @@ impl Unbloated {
         (now, position)
     }
 
-    /// What `unbloated-youtube status` prints.
+    /// What `unbloatedtube status` prints.
     fn status_line(&self) -> String {
         let (title, state, position, duration, target) = match &self.casting {
             Some(c) => match c.status.as_ref().filter(|s| s.playing) {
@@ -5067,7 +5067,7 @@ impl Unbloated {
     }
 
     /// Load the last-watched video paused, so Resume starts instantly. Only when it can play
-    /// inside unbloated-youtube; our X11 window may need a few ticks to show up in the WM's client list.
+    /// inside unbloatedtube; our X11 window may need a few ticks to show up in the WM's client list.
     fn preload(&mut self, cx: &mut Context<Self>) {
         if self.preloaded || self.player.alive() {
             self.preloaded = true;
@@ -5867,7 +5867,7 @@ impl Unbloated {
                     .flex()
                     .flex_col()
                     .gap_3()
-                    .child(div().text_2xl().text_color(themed(TEXT)).child("unbloated-youtube"))
+                    .child(div().text_2xl().text_color(themed(TEXT)).child("UnbloatedTube"))
                     .child(div().text_sm().text_color(themed(MUTED)).child(
                         "Connect your YouTube account to see your subscriptions, playlists and history. The app never asks for a password: it uses your browser's own YouTube session.",
                     ))
@@ -6113,7 +6113,7 @@ impl Unbloated {
                             .child(div().text_sm().text_color(themed(TEXT)).child("GitHub"))
                             .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.open_url(REPO_URL, cx)),
                     )
-                    .child(div().text_xs().text_color(themed(MUTED)).child(format!("unbloated-youtube {}", env!("CARGO_PKG_VERSION")))),
+                    .child(div().text_xs().text_color(themed(MUTED)).child(format!("UnbloatedTube {}", env!("CARGO_PKG_VERSION")))),
             )
             .into_any_element()
     }
@@ -8515,7 +8515,7 @@ fn finish(reply: cli::Reply) -> ! {
             std::process::exit(0)
         }
         Err(error) => {
-            eprintln!("unbloated-youtube: {error}");
+            eprintln!("unbloatedtube: {error}");
             std::process::exit(1)
         }
     }
@@ -8532,7 +8532,7 @@ fn main() {
         Ok(cli::Parsed::Run(command)) => match cli::send(&command) {
             Ok(reply) => finish(reply),
             Err(_) => {
-                eprintln!("unbloated-youtube: not running");
+                eprintln!("unbloatedtube: not running");
                 std::process::exit(1);
             }
         },
@@ -8550,7 +8550,7 @@ fn main() {
         },
         Ok(cli::Parsed::Launch(None)) => None,
         Err(message) => {
-            eprintln!("unbloated-youtube: {message}");
+            eprintln!("unbloatedtube: {message}");
             std::process::exit(2);
         }
     };
@@ -8569,8 +8569,8 @@ fn main() {
         let window = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                app_id: Some("unbloated-youtube".into()),
-                titlebar: Some(TitlebarOptions { title: Some("unbloated-youtube".into()), ..Default::default() }),
+                app_id: Some("unbloatedtube".into()),
+                titlebar: Some(TitlebarOptions { title: Some("UnbloatedTube".into()), ..Default::default() }),
                 ..Default::default()
             },
             |window, cx| cx.new(|cx| Unbloated::new(window, cx)),

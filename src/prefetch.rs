@@ -58,7 +58,7 @@ fn runtime_dir() -> PathBuf {
 
 /// Where this app's helper listens (its process id keeps instances apart).
 fn socket_path() -> PathBuf {
-    runtime_dir().join(format!("unbloated-youtube-ytdl-{}.sock", std::process::id()))
+    runtime_dir().join(format!("unbloatedtube-ytdl-{}.sock", std::process::id()))
 }
 
 /// What to give a program that should run yt-dlp through this one (mpv, `ytdlp`).
@@ -139,7 +139,7 @@ pub fn sweep() {
     // A helper socket whose app is gone (killed, so never cleaned up).
     for entry in std::fs::read_dir(runtime_dir()).into_iter().flatten().flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        let pid = name.strip_prefix("unbloated-youtube-ytdl-").and_then(|n| n.strip_suffix(".sock"));
+        let pid = name.strip_prefix("unbloatedtube-ytdl-").and_then(|n| n.strip_suffix(".sock"));
         if pid.is_some_and(|pid| !Path::new(&format!("/proc/{pid}")).exists()) {
             let _ = std::fs::remove_file(entry.path());
         }
@@ -321,7 +321,7 @@ pub fn run_shim() -> ! {
     // exactly what was asked.
     let code = run(&args, &stdout, &stderr);
     if code == 127 {
-        eprintln!("unbloated-youtube: cannot run yt-dlp");
+        eprintln!("unbloatedtube: cannot run yt-dlp");
     }
     std::process::exit(code)
 }

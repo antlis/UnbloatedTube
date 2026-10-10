@@ -403,7 +403,7 @@ fn export_browser_cookies(browser: &str) -> Result<(String, String), String> {
     // its own file — a shared path would let one run delete or truncate another's jar.
     static N: AtomicU64 = AtomicU64::new(0);
     let file = dir.join(format!(
-        "unbloated-youtube-cookies-{}-{}.txt",
+        "unbloatedtube-cookies-{}-{}.txt",
         std::process::id(),
         N.fetch_add(1, Ordering::Relaxed)
     ));
