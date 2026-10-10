@@ -4,7 +4,7 @@
 
 use crate::auth::Auth;
 use crate::store::Config;
-use crate::yt::{Group, Video};
+use crate::yt::{Comment, Group, Video};
 use serde_json::{Value, json};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -283,7 +283,7 @@ impl Account {
 
     /// Like and subscription state for a video (read-only).
     pub fn status(&self, video_id: &str) -> Result<VideoStatus, String> {
-        let next = self.post("next", json!({ "videoId": video_id }))?;
+        let next = self.watch_page(video_id)?;
         // The first subscribe button / like state is the watched video's; related videos come later.
         let (mut sub, mut like, mut owner, mut primary) = (None, None, None, None);
         walk(&next, &mut |key, v| match key {
@@ -349,6 +349,48 @@ impl Account {
     pub fn search_videos(&self, query: &str, limit: usize, on: &mut dyn FnMut(Video)) -> Result<usize, String> {
         let first = self.post("search", json!({ "query": query, "params": "EgIQAQ==" }))?;
         self.paged("search", first, limit, collect_videos, |v| &v.id, on)
+    }
+
+    /// A video's watch page data (`next`): its like and subscribe state, the way to its comments.
+    /// The last one is kept, so the comments of the playing video don't ask for it again.
+    fn watch_page(&self, video_id: &str) -> Result<Arc<Value>, String> {
+        static LAST: Mutex<Option<(String, Arc<Value>)>> = Mutex::new(None);
+        if let Some((_, page)) = LAST.lock().unwrap().clone().filter(|(id, _)| id == video_id) {
+            return Ok(page);
+        }
+        let page = Arc::new(self.post("next", json!({ "videoId": video_id }))?);
+        *LAST.lock().unwrap() = Some((video_id.to_string(), page.clone()));
+        Ok(page)
+    }
+
+    /// A video's description as its uploader wrote it (the plain text, links as they were typed,
+    /// which the watch page shows rewritten). Empty when there is none.
+    pub fn description(&self, video_id: &str) -> Result<String, String> {
+        let player = self.post("player", json!({ "videoId": video_id, "contentCheckOk": true, "racyCheckOk": true }))?;
+        let details = &player["videoDetails"];
+        if details["videoId"].as_str() != Some(video_id) {
+            return Err("no video details".into());
+        }
+        Ok(details["shortDescription"].as_str().unwrap_or("").trim().to_string())
+    }
+
+    /// The top comments of a video (YouTube's "Top comments" order), page by page, until `limit`.
+    pub fn comments(&self, video_id: &str, limit: usize, on: &mut dyn FnMut(Comment)) -> Result<usize, String> {
+        let page = self.watch_page(video_id)?;
+        // The comments section is a continuation of the watch page; turned off comments have none.
+        let mut token = None;
+        walk(&page, &mut |key, v| {
+            if key == "itemSectionRenderer" && v["sectionIdentifier"].as_str() == Some("comment-item-section") {
+                walk(v, &mut |key, v| {
+                    if key == "continuationCommand" && token.is_none() {
+                        token = v["token"].as_str().map(String::from);
+                    }
+                });
+            }
+        });
+        let token = token.ok_or("no comments")?;
+        let first = self.post("next", json!({ "continuation": token }))?;
+        self.paged("next", first, limit, collect_comments, |c: &(String, Comment)| &c.0, &mut |(_, c)| on(c))
     }
 
     /// One tab of a channel, page by page, until `limit`. `channel`: a channel id (UC…), or a
@@ -659,7 +701,12 @@ fn parse_duration(s: &str) -> Option<f64> {
 /// "17K views", "1.2M views", "218 views", "1,234 watching" as a number.
 fn parse_views(s: &str) -> Option<u64> {
     let s = s.trim();
-    let n = ["views", "view", "watching", "subscribers", "subscriber"].iter().find_map(|w| s.strip_suffix(w))?.trim();
+    parse_count(["views", "view", "watching", "subscribers", "subscriber"].iter().find_map(|w| s.strip_suffix(w))?)
+}
+
+/// "1,234", "1.2K", "3M" as a number.
+fn parse_count(n: &str) -> Option<u64> {
+    let n = n.trim();
     let (num, mult) = match n.chars().last()? {
         'K' | 'k' => (&n[..n.len() - 1], 1e3),
         'M' | 'm' => (&n[..n.len() - 1], 1e6),
@@ -695,6 +742,54 @@ impl ChannelTab {
             ChannelTab::Live => "Live",
         }
     }
+}
+
+/// The comments of a comments page, in order, with their ids. YouTube sends them two ways: as
+/// `commentRenderer`s inside the threads, or as threads that only name a comment whose content
+/// comes separately (`commentEntityPayload`, under `frameworkUpdates`).
+fn collect_comments(page: &Value) -> Vec<(String, Comment)> {
+    let mut payloads = std::collections::HashMap::new();
+    walk(page, &mut |key, v| {
+        if key == "commentEntityPayload" {
+            if let Some(k) = v["key"].as_str() {
+                payloads.insert(k.to_string(), v.clone());
+            }
+        }
+    });
+    let mut out = Vec::new();
+    walk(page, &mut |key, t| {
+        if key != "commentThreadRenderer" {
+            return;
+        }
+        let view = &t["commentViewModel"]["commentViewModel"];
+        let old = &t["comment"]["commentRenderer"];
+        if let Some(p) = view["commentKey"].as_str().and_then(|k| payloads.get(k)) {
+            let props = &p["properties"];
+            let Some(id) = props["commentId"].as_str() else { return };
+            out.push((
+                id.to_string(),
+                Comment {
+                    author: p["author"]["displayName"].as_str().unwrap_or("").to_string(),
+                    text: props["content"]["content"].as_str().unwrap_or("").to_string(),
+                    likes: p["toolbar"]["likeCountNotliked"].as_str().map(str::trim).and_then(|n| if n.is_empty() { Some(0) } else { parse_count(n) }),
+                    age: props["publishedTime"].as_str().unwrap_or("").to_string(),
+                    pinned: !view["pinnedText"].is_null(),
+                },
+            ));
+        } else if let Some(id) = old["commentId"].as_str() {
+            out.push((
+                id.to_string(),
+                Comment {
+                    author: full_text(&old["authorText"]).unwrap_or_default(),
+                    text: full_text(&old["contentText"]).unwrap_or_default(),
+                    likes: full_text(&old["voteCount"]).and_then(|n| parse_count(&n)).or(Some(0)),
+                    age: full_text(&old["publishedTimeText"]).unwrap_or_default(),
+                    pinned: !old["pinnedCommentBadge"].is_null(),
+                },
+            ));
+        }
+    });
+    out
 }
 
 /// The channels listed on a page (`channelRenderer`s, as on the subscriptions page).
