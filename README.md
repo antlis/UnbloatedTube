@@ -176,7 +176,8 @@ list, your playlists, your history, search and a player.
 - **Hover controls**: move the pointer over the video and a YouTube-style bar appears: a seek
   line, then play/pause, previous/next, mute and volume and the time on the left, and ±10 s,
   subtitles (CC: filled while they show, like V), speed, picture-in-picture and fullscreen on the
-  right; the CC button goes with the one under the player (Settings → Player buttons → Subtitles). It hides itself after a moment. With it on, the
+  right. The CC button under the player then only shows where the bar can't be used (hover
+  controls off, picture-in-picture, casting); both follow Settings → Player buttons → Subtitles. It hides itself after a moment. With it on, the
   row of playback buttons under the video is gone and only the account/action buttons remain; with
   it off (Settings, *Hover controls on the video*) you get the two button rows instead. The bar is
   drawn by mpv from a small bundled script, since the video is a separate native window the app

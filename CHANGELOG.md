@@ -8,8 +8,9 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ### Added
 - **CC button on the hover bar** over the video, between ±10 s and the speed: subtitles on or off
-  for the video, like the CC button under the player and V (filled while they show). It goes
-  with that button's setting (Settings → Player buttons → Subtitles).
+  for the video, like V (filled while they show). It replaces the CC button under the player,
+  which now shows only where the bar can't be used: with hover controls off, in
+  picture-in-picture and while casting. Both go with Settings → Player buttons → Subtitles.
 
 ## 0.38.0 - 2026-10-10
 
