@@ -143,6 +143,11 @@ fn stream(cfg: &Config, targets: &[String], limit: usize, mut on: impl FnMut(Ent
 /// The top `limit` comments of a video (no replies). yt-dlp can't stream them: one JSON
 /// document arrives when it is done, so `on` is called for all of them at the end.
 pub fn comments(cfg: &Config, video_id: &str, limit: usize, on: &mut dyn FnMut(Comment)) -> Result<(), String> {
+    let start = std::time::Instant::now();
+    match any_account(cfg, |a| a.comments(video_id, limit, &mut *on).and_then(|n| if n > 0 { Ok(n) } else { Err("empty".into()) })) {
+        Ok(n) => return Ok(timing(&format!("innertube comments ({n})"), start)),
+        Err(e) => timing(&format!("innertube comments failed ({e})"), start),
+    }
     #[derive(Deserialize)]
     struct Info {
         #[serde(default)]
@@ -188,6 +193,15 @@ pub fn comments(cfg: &Config, video_id: &str, limit: usize, on: &mut dyn FnMut(C
 
 /// A video's description, as its uploader wrote it; `on` gets it once (empty when there is none).
 pub fn description(cfg: &Config, video_id: &str, on: &mut dyn FnMut(String)) -> Result<(), String> {
+    let start = std::time::Instant::now();
+    match any_account(cfg, |a| a.description(video_id)) {
+        Ok(text) => {
+            timing("innertube description", start);
+            on(text);
+            return Ok(());
+        }
+        Err(e) => timing(&format!("innertube description failed ({e})"), start),
+    }
     #[derive(Deserialize)]
     struct Info {
         #[serde(default)]
