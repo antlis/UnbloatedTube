@@ -1,4 +1,4 @@
-//! On-disk thumbnail cache (~/.cache/unbloated-youtube/thumbs/<id>.jpg).
+//! On-disk thumbnail cache (~/.cache/unbloatedtube/thumbs/<id>.jpg).
 
 use std::io::Read;
 use std::path::PathBuf;

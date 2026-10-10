@@ -1,4 +1,4 @@
-//! The command line: `unbloated-youtube <link>` and the control commands.
+//! The command line: `unbloatedtube <link>` and the control commands.
 //!
 //! The running app listens on a small socket (one JSON line in, one out); a command line that
 //! names a command is sent to it. Only `open` (and a bare link) may start the app instead.
@@ -12,12 +12,12 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 pub const HELP: &str = "\
-unbloated-youtube: lightweight YouTube client (GPUI, mpv, yt-dlp)
+unbloatedtube: lightweight YouTube client (GPUI, mpv, yt-dlp)
 
 Usage:
-  unbloated-youtube                 start the app
-  unbloated-youtube <link>          play a YouTube link (video, channel or playlist)
-  unbloated-youtube <command> ...   control the running app
+  unbloatedtube                 start the app
+  unbloatedtube <link>          play a YouTube link (video, channel or playlist)
+  unbloatedtube <command> ...   control the running app
 
 Commands:
   open <link>     play a link; starts the app if it is not running
@@ -34,6 +34,9 @@ Commands:
 Options:
   -h, --help      show this help
   -V, --version   show the version
+
+`ubt` is the same program by a short name (and `unbloated-youtube`, its name before 0.34.0),
+in the AUR and Nix packages.
 
 A command prints its answer and exits 0, or prints why it failed and exits 1.";
 
@@ -67,7 +70,7 @@ pub fn parse(args: &[String]) -> Result<Parsed, String> {
     let arg = || args.get(1).cloned().ok_or_else(|| format!("{first}: missing argument (see --help)"));
     let command = match first.as_str() {
         "-h" | "--help" | "help" => return Ok(Parsed::Print(HELP.into())),
-        "-V" | "--version" => return Ok(Parsed::Print(format!("unbloated-youtube {}", env!("CARGO_PKG_VERSION")))),
+        "-V" | "--version" => return Ok(Parsed::Print(format!("unbloatedtube {}", env!("CARGO_PKG_VERSION")))),
         "open" => Command::Open { url: arg()? },
         "queue" => Command::Queue { url: arg()? },
         "pause" => Command::Pause,
@@ -102,7 +105,7 @@ fn arg_free(c: &Command) -> bool {
 }
 
 fn socket_path() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("unbloated-youtube.sock")
+    std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("unbloatedtube.sock")
 }
 
 /// What a command got back from the app: its answer, or why it failed.

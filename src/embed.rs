@@ -1,4 +1,4 @@
-//! X11 child window inside unbloated-youtube's own window that mpv renders into (`mpv --wid`).
+//! X11 child window inside unbloatedtube's own window that mpv renders into (`mpv --wid`).
 //! gpui doesn't expose its X11 window id, so we find it via the WM's _NET_CLIENT_LIST + _NET_WM_PID.
 
 use x11rb::connection::Connection;
@@ -42,7 +42,7 @@ impl Embed {
         )
         .ok()?
         .check()
-        .map_err(|e| eprintln!("unbloated-youtube: creating video window failed: {e}"))
+        .map_err(|e| eprintln!("unbloatedtube: creating video window failed: {e}"))
         .ok()?;
         Some(Self { conn, child, mapped: false, wanted: false, collapsed: false, rect: (0, 0, 16, 9) })
     }
@@ -51,7 +51,7 @@ impl Embed {
         self.child
     }
 
-    /// Position in device pixels relative to unbloated-youtube's window.
+    /// Position in device pixels relative to unbloatedtube's window.
     pub fn place(&mut self, x: i32, y: i32, w: u32, h: u32) {
         let collapsed = w < 40 || h < 40;
         if collapsed != self.collapsed {

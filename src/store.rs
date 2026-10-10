@@ -1,4 +1,4 @@
-//! Config (~/.config/unbloated-youtube/config.toml) and local watch history (~/.local/share/unbloated-youtube/history.json).
+//! Config (~/.config/unbloatedtube/config.toml) and local watch history (~/.local/share/unbloatedtube/history.json).
 
 use crate::auth::Auth;
 use crate::yt::Video;
@@ -51,19 +51,21 @@ impl Config {
     }
 }
 
-/// The app used to be called jtube: move its folders over once so settings, login config,
-/// history and caches survive the rename.
+/// The app used to be called jtube, then unbloated-youtube: move the newest old folders over
+/// once so settings, login config, history, downloads and caches survive the renames.
 pub fn migrate_old_dirs() {
     for base in [dirs::config_dir(), dirs::data_dir(), dirs::cache_dir()].into_iter().flatten() {
-        let (old, new) = (base.join("jtube"), base.join("unbloated-youtube"));
-        if old.is_dir() && !new.exists() {
-            let _ = std::fs::rename(old, new);
+        let new = base.join("unbloatedtube");
+        for old in ["unbloated-youtube", "jtube"].map(|name| base.join(name)) {
+            if old.is_dir() && !new.exists() {
+                let _ = std::fs::rename(old, &new);
+            }
         }
     }
 }
 
 pub fn config_dir() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("unbloated-youtube")
+    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("unbloatedtube")
 }
 
 /// Comment out config.toml's login lines (everything else in the file, including other
@@ -95,11 +97,11 @@ pub fn disable_login_in_config() -> Result<bool, String> {
 }
 
 pub fn data_dir() -> PathBuf {
-    dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("unbloated-youtube")
+    dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("unbloatedtube")
 }
 
 pub fn cache_dir() -> PathBuf {
-    dirs::cache_dir().unwrap_or_else(|| PathBuf::from(".")).join("unbloated-youtube")
+    dirs::cache_dir().unwrap_or_else(|| PathBuf::from(".")).join("unbloatedtube")
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -195,7 +197,7 @@ pub fn save_list<T: Serialize>(key: &str, items: &[T]) {
     }
 }
 
-/// In-app preferences, written by unbloated-youtube itself (~/.config/unbloated-youtube/settings.json).
+/// In-app preferences, written by unbloatedtube itself (~/.config/unbloatedtube/settings.json).
 /// Kept apart from config.toml so saving never rewrites the user's hand-edited file.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]

@@ -37,10 +37,10 @@ jobs:
         id: pkg
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          name="unbloated-youtube-${version}-x86_64-linux"
+          name="unbloatedtube-${version}-x86_64-linux"
           mkdir "$name"
-          strip -o "$name/unbloated-youtube" target/release/unbloated-youtube
-          cp LICENSE README.md CHANGELOG.md packaging/unbloated-youtube.desktop packaging/unbloated-youtube.svg "$name/"
+          strip -o "$name/unbloatedtube" target/release/unbloatedtube
+          cp LICENSE README.md CHANGELOG.md packaging/unbloatedtube.desktop packaging/unbloatedtube.svg "$name/"
           tar czf "$name.tar.gz" "$name"
           sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -65,7 +65,7 @@ jobs:
           # This version's section of the changelog is the release notes.
           awk -v v="## $VERSION " 'index($0, v) == 1 { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md > notes.md
           gh release create "$GITHUB_REF_NAME" "$ARCHIVE" "$ARCHIVE.sha256" \
-            --title "unbloated-youtube $VERSION" --notes-file notes.md
+            --title "UnbloatedTube $VERSION" --notes-file notes.md
 
   appimage:
     # Turns the release binary into an AppImage (packaging/appimage/build.sh): the libraries it
@@ -96,10 +96,10 @@ jobs:
       - name: Check it
         # No library may be missing (RPATH and the system's), and the bundled tools must run.
         run: |
-          appimage=$(ls unbloated-youtube-*-x86_64.AppImage)
+          appimage=$(ls unbloatedtube-*-x86_64.AppImage)
           chmod +x "$appimage"
           "./$appimage" --appimage-extract >/dev/null
-          ldd squashfs-root/usr/bin/unbloated-youtube | grep -i "not found" && exit 1 || true
+          ldd squashfs-root/usr/bin/unbloatedtube | grep -i "not found" && exit 1 || true
           squashfs-root/usr/helpers/yt-dlp --version
           squashfs-root/usr/helpers/deno --version | head -1
 
@@ -107,17 +107,17 @@ jobs:
         with:
           name: appimage
           path: |
-            unbloated-youtube-*-x86_64.AppImage
-            unbloated-youtube-*-x86_64.AppImage.sha256
+            unbloatedtube-*-x86_64.AppImage
+            unbloatedtube-*-x86_64.AppImage.sha256
 
       - name: Attach to the release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" unbloated-youtube-*-x86_64.AppImage unbloated-youtube-*-x86_64.AppImage.sha256
+        run: gh release upload "$GITHUB_REF_NAME" unbloatedtube-*-x86_64.AppImage unbloatedtube-*-x86_64.AppImage.sha256
 
   aur:
-    # Publishes the new release to the AUR (unbloated-youtube-bin). Needs the AUR_SSH_KEY secret:
+    # Publishes the new release to the AUR (unbloatedtube-bin). Needs the AUR_SSH_KEY secret:
     # the private half of an SSH key added to the AUR account. Without it this only prints a notice.
     needs: linux-x86_64
     if: startsWith(github.ref, 'refs/tags/v')

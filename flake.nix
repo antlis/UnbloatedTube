@@ -1,5 +1,5 @@
 {
-  description = "unbloated-youtube: lightweight, configurable YouTube desktop client (GPUI, embedded mpv, yt-dlp)";
+  description = "unbloatedtube: lightweight, configurable YouTube desktop client (GPUI, embedded mpv, yt-dlp)";
 
   # The same nixpkgs-unstable revision as nix/unstable.nix: YouTube breaks old yt-dlp quickly,
   # so yt-dlp, deno and mpv come from a recent one. (Bump both together.)
@@ -20,11 +20,16 @@
     in
     {
       packages = forAllSystems (pkgs: rec {
-        unbloated-youtube = build pkgs;
-        default = unbloated-youtube;
+        unbloatedtube = build pkgs;
+        default = unbloatedtube;
+        # The name before 0.34.0, so existing configs keep building.
+        unbloated-youtube = unbloatedtube;
       });
 
-      # For a NixOS / home-manager config that has its own nixpkgs: pkgs.unbloated-youtube.
-      overlays.default = final: _prev: { unbloated-youtube = build final; };
+      # For a NixOS / home-manager config that has its own nixpkgs: pkgs.unbloatedtube.
+      overlays.default = final: _prev: rec {
+        unbloatedtube = build final;
+        unbloated-youtube = unbloatedtube;
+      };
     };
 }

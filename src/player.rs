@@ -33,7 +33,7 @@ pub struct State {
     pub muted: bool,
     /// mpv's volume, 0-100 (also changed by its own key bindings over the video).
     pub volume: Option<f64>,
-    /// mpv's own fullscreen flag (toggled by f / double-click / Esc); unbloated-youtube mirrors it.
+    /// mpv's own fullscreen flag (toggled by f / double-click / Esc); unbloatedtube mirrors it.
     pub fullscreen: bool,
     /// Subtitle tracks the app added (downloaded files). mpv's own ones, which are URLs that
     /// YouTube refuses to serve it, don't count.
@@ -71,15 +71,15 @@ pub struct Player {
 impl Player {
     pub fn new(volume: f32) -> Self {
         let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-        // Sockets of unbloated-youtube instances that were killed (and so never cleaned up after themselves).
+        // Sockets of unbloatedtube instances that were killed (and so never cleaned up after themselves).
         for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let pid = name.strip_prefix("unbloated-youtube-mpv-").and_then(|n| n.strip_suffix(".sock"));
+            let pid = name.strip_prefix("unbloatedtube-mpv-").and_then(|n| n.strip_suffix(".sock"));
             if pid.is_some_and(|pid| !std::path::Path::new(&format!("/proc/{pid}")).exists()) {
                 let _ = std::fs::remove_file(entry.path());
             }
         }
-        Self { socket: dir.join(format!("unbloated-youtube-mpv-{}.sock", std::process::id())), child: None, options: Vec::new(), bound: false, volume }
+        Self { socket: dir.join(format!("unbloatedtube-mpv-{}.sock", std::process::id())), child: None, options: Vec::new(), bound: false, volume }
     }
 
     pub fn alive(&mut self) -> bool {
@@ -109,7 +109,7 @@ impl Player {
             // mpv's yt-dlp inherits this; see `crate::yt` for why it matters.
             cmd.env("PYCRYPTODOME_DISABLE_GMP", "1")
                 .arg(format!("--input-ipc-server={}", self.socket.display()))
-                .args(["--idle=yes", "--force-window=yes", "--keep-open=yes", "--title=unbloated-youtube"])
+                .args(["--idle=yes", "--force-window=yes", "--keep-open=yes", "--title=unbloatedtube"])
                 // Embedded in our X11 window: pick X11 EGL directly. mpv's auto-probing of GPU
                 // contexts segfaults with the nixos-unstable mpv on some drivers (Intel/Mesa 25.2).
                 // Before `options`, so a --gpu-context in the user's extra options still wins.
@@ -333,7 +333,7 @@ pub fn options(cfg: &Config, s: &Settings, pip: bool) -> Vec<String> {
     }
     if pip {
         // Bottom-right corner; the title lets tiling WMs float it (e.g. i3 for_window rules).
-        out.extend(["--ontop", "--geometry=480x270-24-24", "--title=unbloated-youtube PiP"].map(String::from));
+        out.extend(["--ontop", "--geometry=480x270-24-24", "--title=unbloatedtube PiP"].map(String::from));
     }
     out.extend(s.mpv_args.split_whitespace().map(String::from));
     out

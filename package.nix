@@ -31,7 +31,7 @@ let
   ];
 
   common = {
-    pname = "unbloated-youtube";
+    pname = "unbloatedtube";
     version = (lib.importTOML ./Cargo.toml).package.version;
 
     src = lib.fileset.toSource {
@@ -50,29 +50,32 @@ let
   # empty main.rs for crane to put a dummy program in. Releases only change that version, so this
   # (and with it the compiled dependencies) stays the same derivation until Cargo.lock changes
   # something else.
-  depsSrc = runCommand "unbloated-youtube-deps-src" { } ''
+  depsSrc = runCommand "unbloatedtube-deps-src" { } ''
     mkdir -p $out/src
     touch $out/src/main.rs
     sed '0,/^version = ".*"/s//version = "0.0.0"/' ${./Cargo.toml} > $out/Cargo.toml
-    sed '/^name = "unbloated-youtube"$/{n;s/.*/version = "0.0.0"/}' ${./Cargo.lock} > $out/Cargo.lock
+    sed '/^name = "unbloatedtube"$/{n;s/.*/version = "0.0.0"/}' ${./Cargo.lock} > $out/Cargo.lock
   '';
 
   # The app runs mpv and yt-dlp (which needs deno for YouTube's JavaScript challenges) as programs,
   # and gpui loads Vulkan and the window system libraries at run time. SponsorBlock is a script mpv loads.
   rest = {
     postInstall = ''
-      install -Dm644 packaging/unbloated-youtube.desktop $out/share/applications/unbloated-youtube.desktop
-      install -Dm644 packaging/unbloated-youtube.svg $out/share/icons/hicolor/scalable/apps/unbloated-youtube.svg
-      wrapProgram $out/bin/unbloated-youtube \
+      install -Dm644 packaging/unbloatedtube.desktop $out/share/applications/unbloatedtube.desktop
+      install -Dm644 packaging/unbloatedtube.svg $out/share/icons/hicolor/scalable/apps/unbloatedtube.svg
+      wrapProgram $out/bin/unbloatedtube \
         --prefix PATH : ${lib.makeBinPath [ mpv yt-dlp deno ]} \
         --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath buildInputs} \
         --set-default UNBLOATED_SPONSORBLOCK ${mpvScripts.sponsorblock-minimal}/share/mpv/scripts/sponsorblock_minimal.lua
+      # A short name, and the command's name before 0.34.0 (so key bindings and scripts keep working).
+      ln -s unbloatedtube $out/bin/ubt
+      ln -s unbloatedtube $out/bin/unbloated-youtube
     '';
 
     meta = {
       description = "Lightweight, configurable YouTube desktop client: GPUI, embedded mpv, yt-dlp";
-      homepage = "https://github.com/antlis/unbloated-youtube";
-      mainProgram = "unbloated-youtube";
+      homepage = "https://github.com/antlis/UnbloatedTube";
+      mainProgram = "unbloatedtube";
       license = lib.licenses.agpl3Only;
       platforms = lib.platforms.linux;
     };

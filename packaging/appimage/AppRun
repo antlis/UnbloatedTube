@@ -5,4 +5,4 @@
 # LD_LIBRARY_PATH, so they don't leak into the mpv and yt-dlp it starts.
 HERE="$(dirname "$(readlink -f "$0")")"
 export PATH="$PATH:$HERE/usr/helpers"
-exec "$HERE/usr/bin/unbloated-youtube" "$@"
+exec "$HERE/usr/bin/unbloatedtube" "$@"

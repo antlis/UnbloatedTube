@@ -1,7 +1,7 @@
-# unbloated-youtube
+# UnbloatedTube
 
-[![Latest release](https://img.shields.io/github/v/release/antlis/unbloated-youtube)](https://github.com/antlis/unbloated-youtube/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/antlis/unbloated-youtube/total)](https://github.com/antlis/unbloated-youtube/releases)
+[![Latest release](https://img.shields.io/github/v/release/antlis/UnbloatedTube)](https://github.com/antlis/UnbloatedTube/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/antlis/UnbloatedTube/total)](https://github.com/antlis/UnbloatedTube/releases)
 ![Status: alpha](https://img.shields.io/badge/status-alpha-orange)
 
 > **Alpha software.** It works day to day for its author, but it is young: expect rough edges, bugs
@@ -16,7 +16,13 @@ It is **keyboard-driven**: playback, lists, tabs, panes and column layout all ha
 `Tab` moves a visible focus ring through every button, row and switch (`Enter` presses it); and an
 optional Vim mode adds Vimium-style [hint mode](#vim-mode) to click anything without the mouse.
 
-![unbloated-youtube: History on the left; the player, its buttons and the Recommended, Watch later, Comments and Up next tabs on the right](docs/screenshot.png)
+> **Renamed in 0.34.0** from *unbloated-youtube*. The command is now `unbloatedtube` (or `ubt`);
+> `unbloated-youtube` still works as an alias. Settings, history, downloads and caches move to
+> the new folders by themselves on first start. Arch: the package is now `unbloatedtube-bin`,
+> and `unbloated-youtube-bin` moves you over on the next upgrade. Nix: the flake output is
+> `unbloatedtube` (`unbloated-youtube` stays as an alias).
+
+![UnbloatedTube: History on the left; the player, its buttons and the Recommended, Watch later, Comments and Up next tabs on the right](docs/screenshot.png)
 
 ## Why
 
@@ -263,7 +269,7 @@ for YouTube's JavaScript challenges).
 ### Prebuilt binary
 
 Releases on GitHub have a Linux x86_64 archive (built on Ubuntu 22.04, so it needs glibc 2.35 or
-newer: Ubuntu 22.04+, Debian 12+, Fedora, Arch). Unpack it and run `unbloated-youtube`; the
+newer: Ubuntu 22.04+, Debian 12+, Fedora, Arch). Unpack it and run `unbloatedtube`; the
 `.desktop` file and icon in it are for your launcher. Install separately:
 
 - the tools above: `mpv`, `yt-dlp`, `deno`
@@ -276,12 +282,12 @@ Check the download with the `.sha256` file next to it (`sha256sum -c`).
 
 ### AppImage
 
-Releases also have an `unbloated-youtube-X.Y.Z-x86_64.AppImage` (with a `.sha256`): one file that
+Releases also have an `unbloatedtube-X.Y.Z-x86_64.AppImage` (with a `.sha256`): one file that
 runs on most Linux distros, with no unpacking. Make it executable and run it:
 
 ```sh
-chmod +x unbloated-youtube-*-x86_64.AppImage
-./unbloated-youtube-*-x86_64.AppImage
+chmod +x unbloatedtube-*-x86_64.AppImage
+./unbloatedtube-*-x86_64.AppImage
 ```
 
 It carries `yt-dlp` and `deno` as a fallback: it looks for those on your `PATH` first, so a
@@ -299,17 +305,17 @@ and deno on the app's `PATH` and installs the desktop entry and icon; they come 
 nixpkgs-unstable:
 
 ```sh
-nix profile install github:antlis/unbloated-youtube     # into your profile
-nix run github:antlis/unbloated-youtube                 # or just try it
+nix profile install github:antlis/UnbloatedTube     # into your profile
+nix run github:antlis/UnbloatedTube                 # or just try it
 ```
 
 In a flake-based NixOS / home-manager config, add it as an input and the package to
 `home.packages` (or `environment.systemPackages`):
 
 ```nix
-inputs.unbloated-youtube.url = "github:antlis/unbloated-youtube";
+inputs.unbloatedtube.url = "github:antlis/UnbloatedTube";
 # …
-home.packages = [ inputs.unbloated-youtube.packages.${pkgs.system}.default ];
+home.packages = [ inputs.unbloatedtube.packages.${pkgs.system}.default ];
 ```
 
 Without flakes, `nix-build` (or `nix-env -f . -i`) builds the same package through `default.nix`.
@@ -346,7 +352,7 @@ new mix per refresh, cached); a random video of it waits in the player, not play
 and channels work without an account; groups, searches and resume positions are kept locally.
 Right after the first Connect, the latest video of your YouTube history waits there instead.
 
-A `~/.config/unbloated-youtube/config.toml` login still works and wins over the app's choice:
+A `~/.config/unbloatedtube/config.toml` login still works and wins over the app's choice:
 
 ```toml
 cookies_from_browser = "brave+gnomekeyring"   # yt-dlp syntax: "firefox", "chromium", …
@@ -359,14 +365,14 @@ playlists, history, Watch later) stay hidden until you connect.
 ### Command line
 
 ```
-unbloated-youtube                 start the app
-unbloated-youtube <link>          play a YouTube link (video, channel or playlist)
-unbloated-youtube <command> ...   control the running app
+unbloatedtube                 start the app
+unbloatedtube <link>          play a YouTube link (video, channel or playlist)
+unbloatedtube <command> ...   control the running app
 ```
 
 The running app listens on a socket in `$XDG_RUNTIME_DIR`, so a link or command reaches it
 instead of opening a second window; if it isn't running, a link starts it (and plays). A bare
-`unbloated-youtube` always starts a window, as before.
+`unbloatedtube` always starts a window, as before.
 
 | Command | |
 |---|---|
@@ -381,11 +387,11 @@ instead of opening a second window; if it isn't running, a link starts it (and p
 
 `-h` / `--help` and `-V` / `--version` work without the app. A command prints its answer and exits
 0, or prints why it failed to stderr and exits 1 (2 for a mistake in the command line). Handy for
-key bindings, e.g. `bindsym XF86AudioPlay exec unbloated-youtube toggle`.
+key bindings, e.g. `bindsym XF86AudioPlay exec unbloatedtube toggle`.
 
 ### Media keys (MPRIS)
 
-The app is a media player on the session D-Bus (`org.mpris.MediaPlayer2.unbloated_youtube`), so
+The app is a media player on the session D-Bus (`org.mpris.MediaPlayer2.unbloatedtube`), so
 with no setup the keyboard's media keys, the desktop's player widget (GNOME, KDE, waybar and the
 like, with title, channel and thumbnail), Bluetooth headphone buttons, KDE Connect / GSConnect and
 `playerctl` show what plays and control it: play/pause, next and previous, seeking, and bringing
@@ -487,7 +493,7 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
 ## Architecture
 
 ```
-┌──────────────────────── unbloated-youtube (one process) ────────────────────────┐
+┌──────────────────────── unbloatedtube (one process) ────────────────────────┐
 │  GPUI app (main.rs): views, state, keyboard, settings                           │
 │     │                         │                          │                      │
 │     │ background threads      │ background threads       │ X11 child window     │
@@ -555,7 +561,7 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   counts as playing, so a video that is only shown in the player is never preloaded.
 
 ## TODO
-- **Open YouTube links in the app** (instead of the browser). `unbloated-youtube <url>` works
+- **Open YouTube links in the app** (instead of the browser). `unbloatedtube <url>` works
   now (see [Command line](#command-line)); what's left is links from other programs:
   - A `.desktop` file can only claim a whole URL scheme, not one domain, so a small
     router is set as the default browser: `youtube.com` / `youtu.be` go to the app, everything
@@ -634,8 +640,8 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   `nixos-rebuild` downloads the app. Not tried: the cache doesn't exist yet. The package pins its own nixpkgs for yt-dlp, deno and mpv
   (`nix/unstable.nix` and the flake's input, which must be bumped together), which is fine for a
   profile but not what a nixpkgs package would do.
-- **AUR package** (Arch). Published as `unbloated-youtube-bin`
-  (https://aur.archlinux.org/packages/unbloated-youtube-bin): `packaging/aur/PKGBUILD` is the
+- **AUR package** (Arch). Published as `unbloatedtube-bin`
+  (https://aur.archlinux.org/packages/unbloatedtube-bin): `packaging/aur/PKGBUILD` is the
   template. It downloads the release archive, pins its sha256, depends on `mpv`, `yt-dlp`,
   `deno`, xkbcommon, xcb, Wayland and a Vulkan loader and driver, and installs the binary,
   desktop entry, icon, README and LICENSE. Tested with `makepkg --nodeps` on NixOS; not tested
@@ -651,8 +657,14 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   - By hand: `packaging/aur/publish.sh 0.8.2` with any key the AUR knows (`GIT_SSH_COMMAND` picks
     one); `--dry-run` stops before the push.
   - It doesn't bump `pkgrel`: a packaging-only fix to the PKGBUILD needs a manual push.
+  - The rename (0.34.0): the AUR can't rename a package, so `unbloatedtube-bin` is new (the
+    first push of 0.34.0 created it) and `unbloated-youtube-bin` became a transitional package
+    that only depends on it (`packaging/aur/transitional/PKGBUILD`, pushed once with
+    `packaging/aur/transitional.sh`). The new package provides `unbloated-youtube` and installs
+    `/usr/bin/unbloated-youtube` and `/usr/bin/ubt` as links. Later, a merge request on the old
+    package's AUR page (old → new) moves its votes and comments and retires it.
   A source or `-git` package (compiles all ~730 crates) comes second.
-- **crates.io.** `cargo install unbloated-youtube`. All dependencies are already on crates.io
+- **crates.io.** `cargo install unbloatedtube`. All dependencies are already on crates.io
   (no git or path dependencies), and `Cargo.toml` now has `description`, `license` and
   `repository`, so it is ready to publish (`cargo publish --dry-run` not tried yet). It
   needs the same system libraries and runtime tools (`mpv`, `yt-dlp`, `deno`) as a source build,
@@ -687,7 +699,7 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
     an AppImage with all three; a Flatpak (solves mpv properly, but see the X11 and cookie notes
     above). Nix and the AUR already solve it through dependencies.
   - Conflicts with a copy the user already has: a private folder (e.g. the data folder or
-    `/usr/lib/unbloated-youtube/`, never `/usr/bin`) doesn't clash with the system install, and
+    `/usr/lib/unbloatedtube/`, never `/usr/bin`) doesn't clash with the system install, and
     the app only changes `PATH` for the programs it starts. Rule: use the user's own yt-dlp, deno
     and mpv when found, and the bundled or downloaded ones only as a fallback. The app starts mpv
     with its own IPC socket, so it doesn't talk to another running mpv. It doesn't pass
@@ -747,11 +759,12 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
 
 ## Files
 
-- `~/.config/unbloated-youtube/`: `config.toml` (optional login override), `auth.json` (the app's own login choice, set from Settings), `settings.json` (everything from the Settings page)
-- `~/.local/share/unbloated-youtube/`: watch history with resume positions, seen videos, groups, channel flags, Up next, recent searches
-- `~/.cache/unbloated-youtube/`: thumbnails, cached lists, `mpv.log`
+- `~/.config/unbloatedtube/`: `config.toml` (optional login override), `auth.json` (the app's own login choice, set from Settings), `settings.json` (everything from the Settings page)
+- `~/.local/share/unbloatedtube/`: watch history with resume positions, seen videos, groups, channel flags, Up next, recent searches
+- `~/.cache/unbloatedtube/`: thumbnails, cached lists, `mpv.log`
 
-Folders from the app's old name (`jtube`) are moved over automatically on first start.
+Folders from the app's old names (`unbloated-youtube`, before that `jtube`) are moved over
+automatically on first start.
 
 ## License
 

@@ -2,9 +2,9 @@
 # Builds the AppImage from the release archive the workflow already made (the same binary, built
 # on Ubuntu 22.04, so the same glibc 2.35 requirement):
 #
-#   packaging/appimage/build.sh unbloated-youtube-X.Y.Z-x86_64-linux.tar.gz
+#   packaging/appimage/build.sh unbloatedtube-X.Y.Z-x86_64-linux.tar.gz
 #
-# Writes unbloated-youtube-X.Y.Z-x86_64.AppImage and its .sha256 into the current directory.
+# Writes unbloatedtube-X.Y.Z-x86_64.AppImage and its .sha256 into the current directory.
 # Needs curl, unzip, file, patchelf and libfuse2 (or FUSE-less: the tools run extracted), and
 # the libraries the binary links against installed, because linuxdeploy copies them from here.
 set -euo pipefail
@@ -18,8 +18,8 @@ cd "$work"
 
 # The release archive: the binary, the desktop entry and the icon.
 tar xzf "$archive"
-dir=$(find . -maxdepth 1 -type d -name 'unbloated-youtube-*' | head -1)
-version=$(basename "$dir" | sed -E 's/^unbloated-youtube-(.*)-x86_64-linux$/\1/')
+dir=$(find . -maxdepth 1 -type d -name 'unbloatedtube-*' | head -1)
+version=$(basename "$dir" | sed -E 's/^unbloatedtube-(.*)-x86_64-linux$/\1/')
 
 get() { curl -fsSL --retry 3 -o "$2" "$1"; chmod +x "$2"; }
 get https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage linuxdeploy
@@ -42,15 +42,15 @@ chmod +x helpers/yt-dlp helpers/deno
 # compose tables are the system's: a bundled older copy prints errors about newer ones.
 ./linuxdeploy --appimage-extract-and-run --appdir AppDir \
   --exclude-library 'libxkbcommon*' \
-  --executable "$dir/unbloated-youtube" \
-  --desktop-file "$dir/unbloated-youtube.desktop" \
-  --icon-file "$dir/unbloated-youtube.svg" \
+  --executable "$dir/unbloatedtube" \
+  --desktop-file "$dir/unbloatedtube.desktop" \
+  --icon-file "$dir/unbloatedtube.svg" \
   --custom-apprun "$here/AppRun"
 mkdir -p AppDir/usr/helpers
 cp helpers/yt-dlp helpers/deno AppDir/usr/helpers/
 cp "$dir/LICENSE" AppDir/usr/share/doc-LICENSE 2>/dev/null || true
 
-name="unbloated-youtube-$version-x86_64.AppImage"
+name="unbloatedtube-$version-x86_64.AppImage"
 ARCH=x86_64 ./appimagetool --appimage-extract-and-run --no-appstream AppDir "$name"
 cp "$name" "$out/"
 (cd "$out" && sha256sum "$name" > "$name.sha256")
