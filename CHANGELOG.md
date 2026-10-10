@@ -13,8 +13,11 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 - The browser's cookies are kept between starts (up to 12 hours, in the private runtime folder,
   readable only by you), so lists don't wait for the browser at every start; when YouTube
   stops accepting them they are read again. Logging out or a login change deletes them.
-- The timing log also shows when a list's first videos appeared, and how long reading the
-  browser's cookies took.
+- Videos start about two seconds sooner (and are looked up ahead sooner): yt-dlp gets the kept
+  cookies instead of reading the browser's on every lookup. If YouTube refuses them, the lookup
+  runs again with the browser's own.
+- The timing log also shows when a list's first videos appeared, how long reading the
+  browser's cookies took, and each video lookup (from a kept answer, the quick or the full one).
 
 ## 0.35.0 - 2026-10-10
 

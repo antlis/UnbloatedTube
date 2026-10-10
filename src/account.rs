@@ -86,23 +86,31 @@ fn kept(browser: &str) -> Option<String> {
 }
 
 fn keep(browser: &str, text: &str) {
+    let path = kept_path();
+    let tmp = path.with_extension("tmp");
+    if write_private(&tmp, &format!("# browser: {browser}\n{text}")).is_ok() {
+        let _ = std::fs::rename(&tmp, &path);
+    }
+}
+
+/// A copy of the kept cookies for one yt-dlp run, so it skips reading the browser (yt-dlp writes
+/// its jar back to the file it is given, so each run gets its own). The caller deletes it.
+pub fn kept_copy(browser: &str) -> Option<std::path::PathBuf> {
+    let text = kept(browser)?;
+    let path = kept_path().with_file_name(format!("unbloatedtube-cookies-run-{}.txt", std::process::id()));
+    write_private(&path, &text).ok()?;
+    Some(path)
+}
+
+/// Write a new file only the user can read.
+fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
-    let path = kept_path();
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let tmp = path.with_extension("tmp");
-    let _ = std::fs::remove_file(&tmp);
-    let written = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&tmp)
-        .and_then(|mut f| write!(f, "# browser: {browser}\n{text}"));
-    if written.is_ok() {
-        let _ = std::fs::rename(&tmp, &path);
-    }
+    let _ = std::fs::remove_file(path);
+    std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)?.write_all(text.as_bytes())
 }
 
 /// The signed-in account as far as YouTube's guide endpoint shows it: handle like

@@ -62,8 +62,12 @@ fn socket_path() -> PathBuf {
 }
 
 /// What to give a program that should run yt-dlp through this one (mpv, `ytdlp`).
-pub fn environment() -> [(&'static str, String); 2] {
-    [(ENV, "1".into()), (SOCK_ENV, socket_path().display().to_string())]
+pub fn environment() -> Vec<(&'static str, String)> {
+    let mut env = vec![(ENV, "1".into()), (SOCK_ENV, socket_path().display().to_string())];
+    if yt::timing_on() && std::env::var_os(yt::TIMING_TO).is_none() {
+        env.push((yt::TIMING_TO, format!("/proc/{}/fd/2", std::process::id())));
+    }
+    env
 }
 
 /// This program, to run again as yt-dlp. On Linux through `/proc/<pid>/exe`, which reaches the
@@ -296,7 +300,21 @@ pub fn run_shim() -> ! {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let stdout = File::from(std::io::stdout().as_fd().try_clone_to_owned().expect("stdout"));
     let stderr = err_file();
+    let started = std::time::Instant::now();
     let ask = request(&args);
+    let log = |how: &str| {
+        if let Some((id, _)) = &ask {
+            let who = if args.iter().any(|a| a == "--mark-watched") { "to play" } else { "ahead" };
+            yt::timing(&format!("yt-dlp {id} {who}: {how}"), started);
+        }
+    };
+    let (fast, jar) = kept_cookies(&args);
+    let done = |code: i32| -> ! {
+        if let Some(jar) = &jar {
+            let _ = std::fs::remove_file(jar);
+        }
+        std::process::exit(code)
+    };
     let mut json = ask.as_ref().map(|(id, format)| file(id, format)).filter(|p| fresh(p)).and_then(|p| std::fs::read(p).ok());
     if json.is_some() {
         if args.iter().any(|a| a == "--mark-watched") {
@@ -307,23 +325,48 @@ pub fn run_shim() -> ! {
                 }
             }
         }
+        log("kept answer");
     } else if let Some((id, format)) = &ask {
-        json = quick(&args);
+        json = quick(&fast);
         if let Some(json) = &json {
             keep(&file(id, format), json);
+            log("quick lookup");
         }
     }
     if let Some(json) = json {
         // mpv closed the pipe: nobody wants an answer, and yt-dlp must not run a second time.
-        std::process::exit(if (&stdout).write_all(&json).is_ok() { 0 } else { 1 });
+        done(if (&stdout).write_all(&json).is_ok() { 0 } else { 1 });
     }
     // Everything else, and a single video that is not the ordinary kind (live, premiere, odd):
     // exactly what was asked.
-    let code = run(&args, &stdout, &stderr);
+    let mut code = run(&fast, &stdout, &stderr);
+    // Kept cookies YouTube no longer takes: once more with the browser's own. Only for a single
+    // video, whose failed run printed nothing (a list may have printed half of itself).
+    if code != 0 && jar.is_some() && ask.is_some() {
+        code = run(&args, &stdout, &stderr);
+    }
     if code == 127 {
         eprintln!("unbloatedtube: cannot run yt-dlp");
     }
-    std::process::exit(code)
+    log("full lookup");
+    done(code)
+}
+
+/// `args` with `--cookies-from-browser` replaced by a copy of the cookies the app kept from that
+/// browser (see `account::kept_copy`): reading the browser costs about two seconds a run. The
+/// copy's path comes back for deleting it; without kept cookies, `args` stay as they are.
+fn kept_cookies(args: &[String]) -> (Vec<String>, Option<PathBuf>) {
+    let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
+    let found = args[..end].iter().enumerate().find_map(|(i, a)| match a.strip_prefix("--cookies-from-browser") {
+        Some("") => args.get(i + 1).map(|spec| (i, 2, spec.clone())),
+        Some(rest) => rest.strip_prefix('=').map(|spec| (i, 1, spec.to_string())),
+        None => None,
+    });
+    let Some((i, n, spec)) = found else { return (args.to_vec(), None) };
+    let Some(jar) = crate::account::kept_copy(&spec) else { return (args.to_vec(), None) };
+    let mut out = args.to_vec();
+    out.splice(i..i + n, ["--cookies".to_string(), jar.display().to_string()]);
+    (out, Some(jar))
 }
 
 #[cfg(test)]

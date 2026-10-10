@@ -245,11 +245,23 @@ fn videos(cfg: &Config, target: &str, limit: usize, on: &mut dyn FnMut(Video)) -
 }
 
 /// `UNBLOATEDTUBE_TIMING=1`: log how long each list took and which way it came, on stderr.
+/// The yt-dlp runs mpv starts write to the app's stderr too (`TIMING_TO`).
 pub fn timing(what: &str, start: std::time::Instant) {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("UNBLOATEDTUBE_TIMING").is_some_and(|v| v != "0"));
-    if *ON {
-        eprintln!("unbloatedtube: {what}: {} ms", start.elapsed().as_millis());
+    if !timing_on() {
+        return;
     }
+    let line = format!("unbloatedtube: {what}: {} ms\n", start.elapsed().as_millis());
+    match std::env::var_os(TIMING_TO).and_then(|to| std::fs::OpenOptions::new().append(true).open(to).ok()) {
+        Some(mut f) => drop(std::io::Write::write_all(&mut f, line.as_bytes())),
+        None => eprint!("{line}"),
+    }
+}
+
+pub const TIMING_TO: &str = "UNBLOATEDTUBE_TIMING_TO";
+
+pub fn timing_on() -> bool {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("UNBLOATEDTUBE_TIMING").is_some_and(|v| v != "0"));
+    *ON
 }
 
 /// A list asked of YouTube's own API first (one request per page, no yt-dlp start-up), and of
