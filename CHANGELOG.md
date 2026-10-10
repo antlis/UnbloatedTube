@@ -6,6 +6,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.36.0 - 2026-10-10
+
 ### Fixed
 - Opening Settings closed the app (since 0.31.0): the "Hide videos with words" field had no
   input focus of its own.
