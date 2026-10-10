@@ -523,7 +523,7 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
 | Module | Role |
 | --- | --- |
 | `main.rs` | The GPUI app: all views (tabs, lists, player panel, settings, overlays), state, shortcuts, Vim mode and hints, notices. |
-| `yt.rs` | Lists: the subscriptions feed, playlists, recommendations and search come from `account.rs` (InnerTube) page by page, with `yt-dlp --flat-playlist -j` as the fallback; channels and the subscribed-channels list come from yt-dlp, streamed line by line. Also downloads. History comes from `account.rs`, with `:ythistory` as the fallback. |
+| `yt.rs` | Lists: the subscriptions feed, playlists, recommendations, search, channel tabs and the subscribed-channels list come from `account.rs` (InnerTube) page by page, with `yt-dlp --flat-playlist -j` as the fallback, streamed line by line. Also downloads. History comes from `account.rs`, with `:ythistory` as the fallback. |
 | `account.rs` | Account actions and the watch history (with Shorts and each entry's day, which yt-dlp's `:ythistory` lacks) through YouTube's internal InnerTube API, authenticated like the web app: browser cookies plus a `SAPISIDHASH` header. Cookies stay in memory. |
 | `auth.rs` | The login source (`auth.json`): browser or cookies file. Browser login exports the cookies with yt-dlp and remembers the keyring suffix that worked (e.g. `brave+gnomekeyring`). |
 | `player.rs` | One long-lived mpv process, controlled over its JSON IPC socket; builds mpv options from settings; restarts mpv only when options change. |
@@ -537,7 +537,8 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
 - **Nothing blocks the UI thread.** yt-dlp runs, InnerTube requests and mpv queries all happen
   on background threads; results come back to the UI as they arrive.
 - **Lists straight from YouTube.** The subscriptions feed, playlists (Watch later and Liked
-  included), recommendations and search are asked of YouTube's InnerTube API, one HTTPS request
+  included), recommendations, search, channel tabs (Videos, Shorts, Live; also logged out) and
+  the list of your subscribed channels are asked of YouTube's InnerTube API, one HTTPS request
   per page of about 20–100 videos, instead of starting yt-dlp, which takes seconds for the same
   list. If that fails or finds nothing, yt-dlp fetches the list as before.
 - **One HTTP client.** InnerTube, thumbnails, dislike counts and cast receivers share one

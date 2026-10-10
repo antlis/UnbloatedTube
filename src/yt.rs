@@ -316,8 +316,41 @@ fn browse_id(url: &str) -> Option<String> {
     (!list.is_empty() && list.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')).then(|| format!("VL{list}"))
 }
 
-/// A list by its yt-dlp target, via InnerTube when it has a browse id.
+/// A channel tab's link (`…/channel/UC…/videos`, `…/@handle/shorts`, `…/c/name/streams`): the
+/// channel id, or else the channel page's link for YouTube to resolve, and the tab.
+fn channel_target(url: &str) -> Option<(String, crate::account::ChannelTab)> {
+    use crate::account::ChannelTab;
+    let path = url.strip_prefix("https://www.youtube.com/")?;
+    let (page, tab) = path.trim_end_matches('/').rsplit_once('/')?;
+    let tab = match tab {
+        "videos" => ChannelTab::Videos,
+        "shorts" => ChannelTab::Shorts,
+        "streams" => ChannelTab::Live,
+        _ => return None,
+    };
+    let channel = match page.strip_prefix("channel/") {
+        Some(id) if id.starts_with("UC") && !id.contains('/') => id.to_string(),
+        Some(_) => return None,
+        None if page.starts_with('@') || page.starts_with("c/") || page.starts_with("user/") => format!("https://www.youtube.com/{page}"),
+        None => return None,
+    };
+    Some((channel, tab))
+}
+
+/// The account a list that needs no login asks with: yours when connected (as on the site),
+/// else none.
+fn any_account<R>(cfg: &Config, mut f: impl FnMut(&Account) -> Result<R, String>) -> Result<R, String> {
+    match cfg.has_auth() {
+        true => crate::account::with_shared(cfg, f),
+        false => f(&Account::anonymous()),
+    }
+}
+
+/// A list by its yt-dlp target, via InnerTube when it has a browse id or is a channel tab.
 fn list(cfg: &Config, target: &str, limit: usize, on: &mut dyn FnMut(Video)) -> Result<(), String> {
+    if let Some((channel, tab)) = channel_target(target) {
+        return fast_first(target, |on| any_account(cfg, |a| a.channel_videos(&channel, tab, limit, on)), on, |on| videos(cfg, target, limit, on));
+    }
     let Some(id) = browse_id(target) else { return videos(cfg, target, limit, on) };
     fast_first(
         target,
@@ -335,6 +368,11 @@ fn thumb(e: &Entry) -> Option<String> {
 
 /// Subscribed channels, in YouTube's order (the UI sorts them once complete).
 pub fn subscriptions(cfg: &Config, on: &mut dyn FnMut(Group)) -> Result<(), String> {
+    let start = std::time::Instant::now();
+    match crate::account::with_shared(cfg, |a| a.subscribed_channels(&mut *on).and_then(|n| if n > 0 { Ok(n) } else { Err("empty".into()) })) {
+        Ok(n) => return Ok(timing(&format!("innertube channels ({n})"), start)),
+        Err(e) => timing(&format!("innertube channels failed ({e})"), start),
+    }
     stream(cfg, &["https://www.youtube.com/feed/channels".to_string()], 5000, |e| {
         let thumb = thumb(&e);
         let (Some(id), Some(url)) = (e.id, e.channel_url.or(e.url)) else { return };
@@ -377,7 +415,7 @@ pub fn recommendations(cfg: &Config, on: &mut dyn FnMut(Video)) -> Result<(), St
 
 /// Fallback "recommendations" without login: latest uploads of the given channel.
 pub fn channel_uploads(cfg: &Config, channel_url: &str, on: &mut dyn FnMut(Video)) -> Result<(), String> {
-    videos(cfg, &format!("{}/videos", channel_url.trim_end_matches('/')), 40, on)
+    list(cfg, &format!("{}/videos", channel_url.trim_end_matches('/')), 40, on)
 }
 
 /// The logged-out home: a shuffled mix of random topic searches. YouTube's own home feed,
