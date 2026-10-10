@@ -6,6 +6,12 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Fixed
+- A video stuck on a black picture at 0:00 (YouTube's video server dropped the connection), or
+  stopped mid-video because the server stopped sending, is loaded again by itself after 10
+  seconds, at the same place and with a fresh lookup, which usually gets another server. If
+  that one doesn't play either, a notice says so instead of the player just sitting there.
+
 ## 0.36.0 - 2026-10-10
 
 ### Fixed

@@ -581,6 +581,10 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   yt-dlp says `live_status` is `not_live` and it has a length and streams; a live stream, a
   premiere, anything unusual and any failure is simply run again exactly as asked, and such
   answers are never kept.
+- **A stuck video is loaded again.** When the playing video doesn't move for 10 seconds
+  (YouTube's video server dropped the connection: a black picture at 0:00, or a stop mid-video),
+  its looked-up answer is dropped and it is loaded once more at the same place, which usually
+  gets another server; a second stall shows a notice instead.
 - **mpv dies with the app.** It's started with `PR_SET_PDEATHSIG`, so closing the window never
   leaves audio playing.
 - **SponsorBlock** runs inside mpv as the `sponsorblock_minimal` script, with the categories

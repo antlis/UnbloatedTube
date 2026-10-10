@@ -591,6 +591,10 @@ struct Unbloated {
     loading: bool,
     /// When the current video was handed to mpv (for `UNBLOATEDTUBE_TIMING`).
     load_started: Instant,
+    /// Since when the playing video hasn't moved, and from where (see `watch_stall`).
+    stall: Option<(Instant, f64)>,
+    /// The video reloaded for not moving, and whether that was said to have failed too.
+    stall_retried: Option<(String, bool)>,
     /// Hide mpv's window while loading, so the old video's last frame doesn't linger.
     /// Not on a fresh mpv start: mpv keeps its window unmapped if ours is hidden then.
     hide_while_loading: bool,
@@ -864,6 +868,8 @@ impl Unbloated {
             fullscreen: false,
             loading: false,
             load_started: Instant::now(),
+            stall: None,
+            stall_retried: None,
             hide_while_loading: false,
             queue: Arc::new([]),
             state: None,
@@ -2790,6 +2796,44 @@ impl Unbloated {
         self.current = Some(video);
         self.loading = true;
         self.load_started = Instant::now();
+    }
+
+    /// A video that plays without moving: mpv shows a black picture at 0:00 when YouTube's video
+    /// server drops the connection (or stops mid-video when it stops sending). After STALL, its
+    /// kept lookup is dropped and it is loaded once more at the same place, which usually gets
+    /// another server; if that one doesn't move either, the notice says so.
+    fn watch_stall(&mut self, state: Option<&player::State>, url: Option<&str>, cx: &mut Context<Self>) {
+        const STALL: Duration = Duration::from_secs(10);
+        let moving = state.filter(|s| s.playing && !s.paused && !s.ended && !s.idle && Some(s.path.as_str()) == url);
+        let (Some(s), Some(video), None, false) = (moving, self.current.clone(), &self.casting, self.loading) else {
+            self.stall = None;
+            return;
+        };
+        match self.stall {
+            Some((since, at)) if (s.position - at).abs() < 0.25 => {
+                if since.elapsed() < STALL {
+                    return;
+                }
+                self.stall = None;
+                match &mut self.stall_retried {
+                    Some((id, told)) if *id == video.id => {
+                        if !*told {
+                            *told = true;
+                            self.notice = Some("YouTube's video server isn't sending this video; try again in a moment".into());
+                            cx.notify();
+                        }
+                    }
+                    _ => {
+                        self.stall_retried = Some((video.id.clone(), false));
+                        prefetch::forget(&video.id);
+                        self.link_start = Some(s.position);
+                        self.start(video, false);
+                        cx.notify();
+                    }
+                }
+            }
+            _ => self.stall = Some((Instant::now(), s.position)),
+        }
     }
 
     /// What the sleep timer waits for, for the notice corner and the menu.
@@ -5048,6 +5092,7 @@ impl Unbloated {
         if !self.player.alive() {
             self.loading = false;
         }
+        self.watch_stall(state.as_ref(), url.as_deref(), cx);
         // Until mpv plays the new video, its state still describes the previous one.
         if state.is_some() {
             self.player.bind_mouse();
