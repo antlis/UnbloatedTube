@@ -525,6 +525,9 @@ struct Unbloated {
     votes: Option<(String, Option<(u64, u64)>)>,
     /// The player menu's quality list is open.
     quality_menu: bool,
+    sleep: Option<Sleep>,
+    /// The player menu's sleep timer list is open.
+    sleep_menu: bool,
     /// The pointer is over the menu (it closes 2 seconds after the pointer is away).
     menu_hovered: bool,
     /// The keyboard shortcuts card (opened with ?).
@@ -778,6 +781,8 @@ impl Unbloated {
             quality: None,
             votes: None,
             quality_menu: false,
+            sleep: None,
+            sleep_menu: false,
             menu_lists: None,
             menu_hovered: false,
             pip: false,
@@ -1804,6 +1809,7 @@ impl Unbloated {
         self.video_menu = None;
         self.player_menu = false;
         self.quality_menu = false;
+        self.sleep_menu = false;
         self.sync_embed();
         cx.notify();
     }
@@ -2031,7 +2037,7 @@ impl Unbloated {
         const MENU_W: f32 = 240.;
         const ROW_H: f32 = 36.;
         const EDGE: f32 = 48.;
-        let fixed_h = 28. + ROW_H * if downloaded { 3. } else { 2. } + if self.menu_queue.is_some() && self.cast_available() { ROW_H * self.cast_targets().len() as f32 } else { 0. } + if auth { ROW_H + 9. + 24. } else { 0. } + if self.player_menu { ROW_H * if self.quality_menu { 17. } else { 7. } + 9. } else { 0. };
+        let fixed_h = 28. + ROW_H * if downloaded { 3. } else { 2. } + if self.menu_queue.is_some() && self.cast_available() { ROW_H * self.cast_targets().len() as f32 } else { 0. } + if auth { ROW_H + 9. + 24. } else { 0. } + if self.player_menu { ROW_H * (8. + if self.quality_menu { 10. } else { 0. } + if self.sleep_menu { 7. } else { 0. }) + 9. } else { 0. };
         let win = window.viewport_size();
         let (win_w, mut win_h) = (f32::from(win.width), f32::from(win.height));
         if let Some(display) = window.display(cx) {
@@ -2057,6 +2063,43 @@ impl Unbloated {
             (_, Some(h)) => format!("{h}p"),
             _ => "…".to_string(),
         };
+        // Sleep timer: off, end of this video (not while casting: the receiver goes on by
+        // itself), or minutes; ticked: the end-of-video choice when set.
+        let sleep_label = self.sleep_status().map_or("off".to_string(), |s| s.trim_start_matches("Sleep ").to_string());
+        let sleep_choices: [(Option<u64>, &str); 7] =
+            [(None, "Off"), (Some(0), "End of this video"), (Some(15), "15 min"), (Some(30), "30 min"), (Some(45), "45 min"), (Some(60), "60 min"), (Some(90), "90 min")];
+        let sleep_rows: Vec<_> = sleep_choices
+            .into_iter()
+            .filter(|_| self.sleep_menu)
+            .filter(|(m, _)| *m != Some(0) || self.casting.is_none())
+            .enumerate()
+            .map(|(i, (minutes, label))| {
+                let ticked = match minutes {
+                    None => self.sleep.is_none(),
+                    Some(0) => self.sleep == Some(Sleep::EndOfVideo),
+                    Some(_) => false,
+                };
+                div()
+                    .id(("video-menu-sleep-option", i))
+                    .pl_6()
+                    .pr_3()
+                    .py_2()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_sm()
+                    .cursor_pointer()
+                    .text_color(themed(TEXT))
+                    .hover(|d| d.bg(themed(BORDER)))
+                    .child(div().w(px(14.)).flex_none().when(ticked, |d| d.child(svg().path(icons::path("check")).size(px(14.)).text_color(themed(ACCENT)))))
+                    .child(label)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.close_video_menu(cx);
+                        let sleep = minutes.map(|m| if m == 0 { Sleep::EndOfVideo } else { Sleep::At(Instant::now() + Duration::from_secs(m * 60)) });
+                        this.set_sleep(sleep, cx);
+                    }))
+            })
+            .collect();
         // The list: the settings' maximum, the usual heights, audio only; ticked: in use.
         let quality_rows: Vec<_> = [None, Some(2160), Some(1440), Some(1080), Some(720), Some(480), Some(360), Some(240), Some(144), Some(0)]
             .into_iter()
@@ -2182,6 +2225,11 @@ impl Unbloated {
                                 })))
                                 .children(quality_rows)
                             })
+                            .child(row("video-menu-sleep").child(format!("Sleep: {sleep_label} ›")).on_click(cx.listener(|this, _, _, cx| {
+                                this.sleep_menu = !this.sleep_menu;
+                                cx.notify();
+                            })))
+                            .children(sleep_rows)
                             .child(row("video-menu-subs").child("Subtitles on / off").on_click(cx.listener(|this, _, _, cx| {
                                 this.close_video_menu(cx);
                                 this.toggle_subtitles(cx);
@@ -2685,6 +2733,24 @@ impl Unbloated {
         self.notice = None;
         self.current = Some(video);
         self.loading = true;
+    }
+
+    /// What the sleep timer waits for, for the notice corner and the menu.
+    fn sleep_status(&self) -> Option<String> {
+        Some(match self.sleep? {
+            Sleep::EndOfVideo => "Sleep after this video".to_string(),
+            Sleep::At(t) => {
+                let left = t.saturating_duration_since(Instant::now()).as_secs();
+                if left < 60 { format!("Sleep in {left} s") } else { format!("Sleep in {} min", left.div_ceil(60)) }
+            }
+        })
+    }
+
+    /// Set the sleep timer (None: off).
+    fn set_sleep(&mut self, sleep: Option<Sleep>, cx: &mut Context<Self>) {
+        self.sleep = sleep;
+        self.notice = Some(self.sleep_status().map_or("Sleep timer off".to_string(), |s| format!("Sleep timer: {}", s.trim_start_matches("Sleep "))));
+        cx.notify();
     }
 
     /// The quality picked for the current video (a height, or 0 for audio only), if any.
@@ -4810,6 +4876,27 @@ impl Unbloated {
                 self.history.save();
             }
         }
+        // Sleep timer: pause when the time is up (the receiver while casting), or end with this
+        // video (marking it ended, so autoplay below leaves it there).
+        match self.sleep {
+            Some(Sleep::At(t)) if Instant::now() >= t => {
+                self.sleep = None;
+                let _ = self.run_command(cli::Command::Pause, window, cx);
+                self.notice = Some("Sleep timer: paused".into());
+                cx.notify();
+            }
+            Some(Sleep::EndOfVideo) => {
+                if let (Some(s), Some(v)) = (&state, &self.current) {
+                    if s.ended && self.ended.as_ref() != Some(&v.id) {
+                        self.ended = Some(v.id.clone());
+                        self.sleep = None;
+                        self.notice = Some("Sleep timer: stopped after the video".into());
+                        cx.notify();
+                    }
+                }
+            }
+            _ => {}
+        }
         if let (true, Some(s), Some(v)) = (self.settings.autoplay, &state, &self.current) {
             if s.ended && self.ended.as_ref() != Some(&v.id) {
                 self.ended = Some(v.id.clone());
@@ -6689,7 +6776,7 @@ impl Unbloated {
     /// controls they'd be covered by the lower pane when the player is short).
     fn render_toasts(&self) -> Option<gpui::Div> {
         let download = self.current.as_ref().and_then(|v| self.downloads.get(&v.id)).and_then(Download::visible_status);
-        let lines: Vec<String> = self.notice.iter().cloned().chain(download).collect();
+        let lines: Vec<String> = self.notice.iter().cloned().chain(download).chain(self.sleep_status()).collect();
         (!lines.is_empty()).then(|| {
             div()
                 .absolute()
@@ -7416,6 +7503,13 @@ impl Saved {
         list.retain(|s| std::path::Path::new(&s.path).exists());
         list
     }
+}
+
+/// The sleep timer: pause at a time, or let the playing video end without starting another.
+#[derive(Clone, Copy, PartialEq)]
+enum Sleep {
+    At(Instant),
+    EndOfVideo,
 }
 
 #[derive(Clone)]
