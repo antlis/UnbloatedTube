@@ -15,6 +15,8 @@ dirs = "5"
 ureq = { version = "2", features = ["json"] }
 x11rb = "0.13"
 sha1_smol = "1"
+# DeArrow asks by a hash prefix of the video id (see src/dearrow.rs).
+sha2 = "0.10"
 anyhow = "1"
 libc = "0.2"
 notify-rust = "4"

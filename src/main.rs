@@ -2,6 +2,7 @@ mod account;
 mod auth;
 mod cast;
 mod cli;
+mod dearrow;
 mod embed;
 mod http;
 mod icons;
@@ -226,6 +227,11 @@ const INFO_TOGGLES: [Toggle; 4] = [
     ("Upload date", "When the playing video was posted (needs your login)", |s| &mut s.show_date),
     ("Likes and dislikes", "Counts for the playing video from the Return YouTube Dislike project (dislikes are its estimate; it learns which video you watch)", |s| &mut s.show_votes),
     ("Subscribers", "Subscriber counts of channels", |s| &mut s.show_subs),
+];
+
+const DEARROW_TOGGLES: [Toggle; 2] = [
+    ("Better titles (DeArrow)", "Titles the community wrote to replace clickbait ones; hover a title for the original. Asks DeArrow by a hash prefix of the video id, so it doesn't learn which video", |s| &mut s.dearrow_titles),
+    ("Better thumbnails (DeArrow)", "A frame from the video the community picked, instead of the clickbait thumbnail", |s| &mut s.dearrow_thumbs),
 ];
 
 /// A list being fetched. `Loading` already holds whatever has arrived (or the previous list
@@ -524,6 +530,8 @@ struct Unbloated {
     quality: Option<(String, u32)>,
     /// Likes and dislikes of the video `votes.0` (None while they load, or when there are none).
     votes: Option<(String, Option<(u64, u64)>)>,
+    /// DeArrow's answer per video id; None while asked (or after a failure, not asked again).
+    dearrow: HashMap<String, Option<dearrow::Branding>>,
     /// The player menu's quality list is open.
     quality_menu: bool,
     sleep: Option<Sleep>,
@@ -792,6 +800,7 @@ impl Unbloated {
             player_menu: false,
             quality: None,
             votes: None,
+            dearrow: HashMap::new(),
             quality_menu: false,
             sleep: None,
             sub_pick: None,
@@ -3302,6 +3311,63 @@ impl Unbloated {
         });
     }
 
+    /// DeArrow's title and thumbnail for a video, when either is turned on: asked once, the first
+    /// time a row or the player shows the video (like thumbnails, only for what is on screen).
+    fn dearrow(&mut self, id: &str, cx: &mut Context<Self>) -> Option<dearrow::Branding> {
+        if !self.settings.dearrow_titles && !self.settings.dearrow_thumbs {
+            return None;
+        }
+        if let Some(known) = self.dearrow.get(id) {
+            return known.clone();
+        }
+        self.dearrow.insert(id.to_string(), None);
+        let id = id.to_string();
+        let task = {
+            let id = id.clone();
+            blocking::unblock(move || dearrow::branding(&id))
+        };
+        cx.spawn(async move |this, cx| {
+            // Quietly nothing on a failure: YouTube's own title and thumbnail stay.
+            if let Ok(b) = task.await {
+                this.update(cx, |this, cx| {
+                    let changed = b != dearrow::Branding::default();
+                    this.dearrow.insert(id, Some(b));
+                    if changed {
+                        cx.notify();
+                    }
+                })
+                .ok();
+            }
+        })
+        .detach();
+        None
+    }
+
+    /// The title to show for `video`, and YouTube's own when DeArrow's replaces it.
+    fn shown_title(&mut self, video: &Video, cx: &mut Context<Self>) -> (String, Option<String>) {
+        let better = self.dearrow(&video.id, cx).and_then(|b| b.title).filter(|_| self.settings.dearrow_titles);
+        match better {
+            Some(t) if t != video.title => (t, Some(video.title.clone())),
+            _ => (video.title.clone(), None),
+        }
+    }
+
+    /// The thumbnail to show for `video`: DeArrow's frame when there is one and it loaded, else
+    /// YouTube's (also while DeArrow's is still on its way).
+    fn video_thumb(&mut self, video: &Video, w: f32, h: f32, radius: Pixels, cx: &mut Context<Self>) -> AnyElement {
+        let frame = self.dearrow(&video.id, cx).and_then(|b| b.thumb).filter(|_| self.settings.dearrow_thumbs);
+        if let Some(time) = frame {
+            let key = format!("{}-dearrow-{}", video.id, (time * 1000.) as u64);
+            if !self.thumbs_failed.contains(&key) {
+                let url = dearrow::thumb_url(&video.id, time);
+                if let Thumb::Ready(_) = self.thumb(&key, Some(url), cx) {
+                    return self.thumb_el(&key, None, w, h, radius, cx);
+                }
+            }
+        }
+        self.thumb_el(&video.id, Some(video.thumb_url()), w, h, radius, cx)
+    }
+
     /// Fetch the playing video's like and dislike counts once (Return YouTube Dislike).
     fn load_votes(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.current.as_ref().map(|v| v.id.clone()) else { return };
@@ -5231,7 +5297,12 @@ impl Unbloated {
             .flatten()
             .collect::<Vec<_>>()
             .join("  ·  ");
-        let thumb = self.thumb_el(&video.id, Some(video.thumb_url()), 96., 54., px(4.), cx);
+        let thumb = self.video_thumb(&video, 96., 54., px(4.), cx);
+        let (title, original) = self.shown_title(&video, cx);
+        let title_tip = match &original {
+            Some(o) => format!("{title}\n\nOriginal title: {o}"),
+            None => title.clone(),
+        };
         let menu_video = video.clone();
         let menu_queue = queue.clone();
         let hover_id = video.id.clone();
@@ -5274,15 +5345,16 @@ impl Unbloated {
                     .flex()
                     .flex_col()
                     .gap_1()
-                    // Titles are truncated; hovering shows the whole one.
+                    // Titles are truncated; hovering shows the whole one (and YouTube's, for a
+                    // DeArrow title).
                     .child(
                         div()
                             .id("title")
                             .text_sm()
                             .text_color(themed(TEXT))
                             .truncate()
-                            .child(video.title.clone())
-                            .tooltip(tip(video.title.clone())),
+                            .child(title)
+                            .tooltip(tip(title_tip)),
                     )
                     .child(div().text_xs().text_color(themed(MUTED)).truncate().child(meta)),
             )
@@ -5942,6 +6014,7 @@ impl Unbloated {
             ("SUBTITLES", &SUB_TOGGLES[..]),
             ("NOTIFICATIONS", &NOTIFY_TOGGLES[..]),
             ("VIDEO INFO", &INFO_TOGGLES[..]),
+            ("DEARROW", &DEARROW_TOGGLES[..]),
         ] {
             let rows = toggles
                 .iter()
@@ -6685,7 +6758,16 @@ impl Unbloated {
             .gap_3()
             .p_4()
             .child(screen)
-            .child(div().text_color(themed(TEXT)).line_clamp(2).child(video.title.clone()))
+            .child({
+                // A DeArrow title, with YouTube's own under it, small.
+                let (title, original) = self.shown_title(&video, cx);
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(div().text_color(themed(TEXT)).line_clamp(2).child(title))
+                    .when_some(original, |d, o| d.child(div().text_xs().text_color(themed(MUTED)).truncate().child(format!("Original title: {o}"))))
+            })
             .child(info)
             .child({
                 let name = video.channel.clone().unwrap_or_default();

@@ -139,6 +139,13 @@ list, your playlists, your history, search and a player.
   dislikes"), from the [Return YouTube Dislike](https://returnyoutubedislike.com) project: YouTube
   hides dislikes, so the number is the project's estimate. Works logged out too. The request
   tells the project which video you watch; Settings → Likes and dislikes turns it off.
+- **Better titles and thumbnails (DeArrow)**, off by default: titles and thumbnails the
+  community wrote to replace clickbait ones, from the [DeArrow](https://dearrow.ajay.app) project
+  (by the SponsorBlock authors). Settings → DeArrow turns titles and thumbnails on separately. A
+  replaced title shows YouTube's own when you hover it in a list, and under it on the player.
+  Only what is on screen is asked for, by the first 4 hex digits of the SHA-256 of the video id
+  (as the browser extension does), so DeArrow doesn't learn which video; without a submission,
+  or when DeArrow can't be reached, YouTube's title and thumbnail stay.
 - **Subtitle language picker**: right-click the video → Subtitles: … lists the video's own
   caption tracks, its auto-generated one, and auto-translations into your languages (Settings →
   Subtitle language); a pick shows those captions at once, for this video only, and the
@@ -597,8 +604,6 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   - videos YouTube refuses to give captions to without a login (HTTP 429): a clearer hint, or a
     way to get them (yt-dlp's PO token plugins)
 - **Feature ideas** (none started; roughly smallest first):
-  - *DeArrow*: community titles and thumbnails instead of clickbait ones (from the SponsorBlock
-    authors; same free, keyless kind of API)
   - *A daily watch-time limit*: a budget, a quiet counter and a soft stop when it runs out,
     optionally only at certain hours or for certain groups
   - *Open in a new window*, depending on what it is for:

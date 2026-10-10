@@ -28,6 +28,10 @@ fn fetch(url: &str, dest: &PathBuf) -> Result<(), String> {
     let resp = crate::http::agent().get(url).call().map_err(|e| e.to_string())?;
     let mut bytes = Vec::new();
     resp.into_reader().take(2 << 20).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+    // DeArrow's thumbnail server answers "not rendered" with an empty reply (and no error).
+    if bytes.is_empty() {
+        return Err("no image".into());
+    }
     std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
     // Write via a temp file so a half-written jpg is never picked up by the UI.
     let tmp = dest.with_extension("part");
