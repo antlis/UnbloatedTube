@@ -140,6 +140,19 @@ pub fn sweep() {
             let _ = std::fs::remove_file(entry.path());
         }
     }
+    // Player scripts the helper keeps in yt-dlp's cache (see `ytdl_helper.py`): a few MB per
+    // player version, and YouTube moves to a new one every week or so.
+    if let Some(ytdlp_cache) = dirs::cache_dir().map(|d| d.join("yt-dlp")) {
+        let old = |p: &Path| p.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > Duration::from_secs(14 * 86400));
+        let kept = [("unbloatedtube-player", ""), ("challenge-solver", "player")];
+        for (section, prefix) in kept {
+            for entry in std::fs::read_dir(ytdlp_cache.join(section)).into_iter().flatten().flatten() {
+                if entry.file_name().to_string_lossy().starts_with(prefix) && old(&entry.path()) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
     // A helper socket whose app is gone (killed, so never cleaned up).
     for entry in std::fs::read_dir(runtime_dir()).into_iter().flatten().flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();

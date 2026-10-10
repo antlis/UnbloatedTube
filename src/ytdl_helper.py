@@ -27,6 +27,46 @@ try:
 except Exception:
     pass
 
+
+def keep_player_work():
+    """Every request is a fresh fork, so what yt-dlp learns about YouTube's player script dies
+    with it: each lookup downloaded the script again (MBs) and had deno parse and preprocess all
+    of it before solving the challenge. Keep both on disk, in yt-dlp's own cache folder, per
+    player version. Written against yt-dlp's internals: if they change, this changes nothing."""
+    try:
+        from yt_dlp.extractor.youtube.jsc._builtin import ejs
+
+        # Off upstream only because the files are large (a few MB per player version).
+        ejs.EJSBaseJCP._ENABLE_PREPROCESSED_PLAYER_CACHE = True
+    except Exception:
+        pass
+    try:
+        from yt_dlp.extractor.youtube import _video
+
+        load_player = _video.YoutubeIE._load_player
+
+        def cached_load_player(self, video_id, player_url, fatal=True):
+            try:
+                key = self._player_js_cache_key(player_url)
+                if key not in self._code_cache:
+                    code = self.cache.load("unbloatedtube-player", key)
+                    if isinstance(code, str) and code:
+                        self._code_cache[key] = code
+                        return code
+                code = load_player(self, video_id, player_url, fatal)
+                if code:
+                    self.cache.store("unbloatedtube-player", key, code)
+                return code
+            except Exception:
+                return load_player(self, video_id, player_url, fatal)
+
+        _video.YoutubeIE._load_player = cached_load_player
+    except Exception:
+        pass
+
+
+keep_player_work()
+
 server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 try:
     os.unlink(sock_path)

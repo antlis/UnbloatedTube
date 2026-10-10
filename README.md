@@ -566,6 +566,9 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   request, handing it the caller's stdout and stderr, so a request starts in milliseconds. The
   helper ends with the app. With the standalone yt-dlp binary (or the AppImage's copy) there is
   nothing to load, and every request starts yt-dlp as before.
+  The helper also keeps YouTube's player script and deno's preprocessing of it on disk (in
+  yt-dlp's cache folder, per player version, two weeks), which every lookup otherwise downloads
+  and redoes before solving YouTube's JavaScript challenge.
 - **Faster lookup for ordinary videos, never for live ones.** A single video is looked up first
   with the HLS and DASH manifests skipped, which saves half a second. That answer is used only if
   yt-dlp says `live_status` is `not_live` and it has a length and streams; a live stream, a
