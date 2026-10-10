@@ -6,6 +6,12 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Fixed
+- Lists and account actions start seconds sooner when logged in through the browser: reading
+  its cookies no longer makes a request to YouTube first, and lists asked for at the same
+  time (feed and recommendations at start) share one read instead of each doing their own.
+- The timing log also shows when a list's first videos appeared.
+
 ## 0.35.0 - 2026-10-10
 
 ### Changed

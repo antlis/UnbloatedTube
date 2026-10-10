@@ -6,7 +6,7 @@ use crate::auth::Auth;
 use crate::store::Config;
 use crate::yt::Video;
 use serde_json::{Value, json};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -33,6 +33,10 @@ pub fn forget() {
 }
 
 pub fn shared(cfg: &Config) -> Result<Arc<Account>, String> {
+    // Lists asked for together (feed and recommendations at start) wait for one cookie export
+    // instead of each running their own.
+    static LOADING: Mutex<()> = Mutex::new(());
+    let _one = LOADING.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(a) = SHARED.lock().unwrap().clone() {
         return Ok(a);
     }
@@ -539,14 +543,15 @@ fn export_browser_cookies(browser: &str) -> Result<(String, String), String> {
         std::process::id(),
         N.fetch_add(1, Ordering::Relaxed)
     ));
-    // yt-dlp saves its cookie jar on exit, so any quick request will do.
+    // yt-dlp saves its cookie jar on exit, even after a failed request. A file URL fails at
+    // once, before anything goes over the network (a YouTube one cost a round trip, seconds).
     let run = |spec: &str| -> Result<(String, bool), String> {
-        let out = Command::new("yt-dlp")
+        let out = crate::prefetch::ytdlp()
             .env("PYCRYPTODOME_DISABLE_GMP", "1")
-            .args(["--no-update", "--no-warnings", "--flat-playlist", "--playlist-end", "1", "--simulate"])
+            .args(["--no-update", "--no-warnings", "--simulate"])
             .args(["--cookies-from-browser", spec, "--cookies"])
             .arg(&file)
-            .arg(":ytwatchlater")
+            .args(["--", "file:///nonexistent"])
             .stdin(Stdio::null())
             .output()
             .map_err(|e| format!("cannot run yt-dlp: {e}"))?;
@@ -555,7 +560,7 @@ fn export_browser_cookies(browser: &str) -> Result<(String, String), String> {
         // backend can miss them and export only the plain cookies.
         let locked = ["could not be decrypted", "cannot decrypt", "no key found"].iter().any(|p| report.contains(p));
         let text = std::fs::read_to_string(&file).map_err(|_| {
-            let detail = report.lines().rev().find_map(|l| l.strip_prefix("ERROR: ")).unwrap_or("").trim();
+            let detail = report.lines().rev().filter(|l| !l.contains("file://")).find_map(|l| l.strip_prefix("ERROR: ")).unwrap_or("").trim();
             format!("couldn't read {spec}'s cookies: is the browser installed, and has it been opened once?{}", if detail.is_empty() { String::new() } else { format!(" ({detail})") })
         });
         let _ = std::fs::remove_file(&file);

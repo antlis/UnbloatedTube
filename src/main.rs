@@ -2975,7 +2975,7 @@ impl Unbloated {
             let cached = account.is_some();
             let mut account = match account {
                 Some(a) => a,
-                None => Arc::new(Account::load(&cfg)?),
+                None => account::shared(&cfg)?,
             };
             let mut res = f(&account);
             // A login kept for long enough stops being accepted (YouTube rotates its cookies):

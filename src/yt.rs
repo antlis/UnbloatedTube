@@ -261,9 +261,15 @@ fn fast_first(
     fallback: impl FnOnce(&mut dyn FnMut(Video)) -> Result<(), String>,
 ) -> Result<(), String> {
     let start = std::time::Instant::now();
-    match ask(on) {
+    let mut first = None;
+    let mut counted = |v: Video| {
+        first.get_or_insert_with(|| start.elapsed().as_millis());
+        on(v)
+    };
+    let r = ask(&mut counted);
+    match r {
         Ok(n) if n > 0 => {
-            timing(&format!("innertube {what} ({n})"), start);
+            timing(&format!("innertube {what} ({n}, first shown after {} ms)", first.unwrap_or(0)), start);
             Ok(())
         }
         r => {
@@ -332,7 +338,7 @@ pub fn auth_probe(cfg: &Config) -> Result<(), String> {
 pub fn history(cfg: &Config, account: Option<Arc<Account>>, on: &mut dyn FnMut(Video)) -> Result<(), String> {
     let list = match account {
         Some(a) => a.history(150),
-        None => Account::load(cfg).and_then(|a| a.history(150)),
+        None => crate::account::shared(cfg).and_then(|a| a.history(150)),
     };
     match list {
         Ok(list) if !list.is_empty() => {
