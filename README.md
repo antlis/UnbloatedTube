@@ -174,8 +174,10 @@ list, your playlists, your history, search and a player.
   (`B`, or drag its divider to the edge), and so does the right one (`⇧B`, or drag the divider
   to the right edge).
 - **Hover controls**: move the pointer over the video and a YouTube-style bar appears: a seek
-  line, then play/pause, previous/next, mute and volume and the time on the left, and ±10 s, speed,
-  picture-in-picture and fullscreen on the right. It hides itself after a moment. With it on, the
+  line, then play/pause, previous/next, mute and volume and the time on the left, and ±10 s,
+  subtitles (CC: filled while they show, like V), speed, picture-in-picture and fullscreen on the
+  right. The CC button under the player then only shows where the bar can't be used (hover
+  controls off, picture-in-picture, casting); both follow Settings → Player buttons → Subtitles. It hides itself after a moment. With it on, the
   row of playback buttons under the video is gone and only the account/action buttons remain; with
   it off (Settings, *Hover controls on the video*) you get the two button rows instead. The bar is
   drawn by mpv from a small bundled script, since the video is a separate native window the app
@@ -604,7 +606,6 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
     dotfiles next to the desktop entries.
 - **Subtitles: picker and more.** The CC toggle and the Settings → Subtitles section work. Still
   open:
-  - the CC button on the hover bar over the video (`controls.lua`), next to the player buttons
   - subtitle style beyond size (position, background)
   - videos YouTube refuses to give captions to without a login (HTTP 429): a clearer hint, or a
     way to get them (yt-dlp's PO token plugins)

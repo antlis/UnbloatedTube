@@ -214,7 +214,7 @@ const BUTTON_TOGGLES: [Toggle; 13] = [
     ("Like", "Like the video, or remove your like", |s| &mut s.like_button),
     ("Dislike", "Dislike the video, or remove your dislike", |s| &mut s.dislike_button),
     ("Volume", "Mute button and volume bar next to the speed button", |s| &mut s.volume_control),
-    ("Subtitles", "CC button: subtitles on / off for the video (V); language and size are under Subtitles", |s| &mut s.subtitles_button),
+    ("Subtitles", "CC button: subtitles on / off for the video (V); on the hover bar over the video, or under the player without it (hover controls off, picture-in-picture, casting); language and size are under Subtitles", |s| &mut s.subtitles_button),
     ("Cast", "Send the video to another device (T); the button shows once a Cast command (Settings) or a [cast] target (config.toml) exists", |s| &mut s.cast_button),
     ("Share", "Copy the video's link", |s| &mut s.share_button),
     ("Share at current time", "Copy the video's link so it opens at the current time", |s| &mut s.share_time_button),
@@ -3006,6 +3006,12 @@ impl Unbloated {
             .into_any_element()
     }
 
+    /// The CC button under the player: only where the hover bar's can't be used (hover controls
+    /// off, picture-in-picture, casting), since that one does the same.
+    fn cc_under_player(&self) -> bool {
+        self.settings.subtitles_button && (!self.settings.video_controls || self.pip || self.casting.is_some())
+    }
+
     fn account_buttons(&self) -> bool {
         let st = &self.settings;
         self.cfg.has_auth() && (st.subscribe_button || st.save_button || st.watch_later_button || st.like_button || st.dislike_button)
@@ -5122,6 +5128,7 @@ impl Unbloated {
                 }
                 "speed" => self.cycle_speed(cx),
                 "pip" => self.toggle_pip(cx),
+                "subtitles" => self.toggle_subtitles(cx),
                 a if a.starts_with("menu") && !self.fullscreen => {
                     if let Some(at) = player::menu_position(a) {
                         self.open_player_menu(at, window, cx);
@@ -6957,7 +6964,7 @@ impl Unbloated {
                     .when(self.settings.volume_control, |d| d.child(self.volume_bar(cx)))
             ))
             // Second row: what you can do with this video.
-            .when(self.account_buttons() || self.cast_available() || self.settings.subtitles_button || self.settings.share_button || self.settings.share_time_button || self.settings.browser_button || self.settings.download_button || self.settings.history_buttons, |d| {
+            .when(self.account_buttons() || self.cast_available() || self.cc_under_player() || self.settings.share_button || self.settings.share_time_button || self.settings.browser_button || self.settings.download_button || self.settings.history_buttons, |d| {
                 d.child(
                     div()
                         .flex()
@@ -7000,7 +7007,7 @@ impl Unbloated {
                                         .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.cast_to(Some(target.clone()), cx))
                                 }))
                             })
-                            .when(self.settings.subtitles_button, |d| {
+                            .when(self.cc_under_player(), |d| {
                                 let on = self.state.as_ref().is_some_and(|s| s.sub_on);
                                 let key = if self.settings.vim { "v" } else { "V" };
                                 let tip_text = format!("Subtitles {} ({key})", if on { "on" } else { "off" });
