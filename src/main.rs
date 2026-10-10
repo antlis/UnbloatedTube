@@ -3326,9 +3326,12 @@ impl Unbloated {
             let id = id.clone();
             blocking::unblock(move || dearrow::branding(&id))
         };
+        let start = Instant::now();
         cx.spawn(async move |this, cx| {
             // Quietly nothing on a failure: YouTube's own title and thumbnail stay.
-            if let Ok(b) = task.await {
+            let res = task.await;
+            yt::timing(&format!("dearrow {id}: {}", match &res { Ok(b) => format!("{b:?}"), Err(e) => format!("failed ({e})") }), start);
+            if let Ok(b) = res {
                 this.update(cx, |this, cx| {
                     let changed = b != dearrow::Branding::default();
                     this.dearrow.insert(id, Some(b));
