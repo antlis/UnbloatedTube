@@ -5800,10 +5800,7 @@ impl Unbloated {
                     .cursor_pointer()
                     .hover(|d| d.opacity(0.85))
                     .child(text)
-                    .on_click_hinted(&self.hint_reg(), cx, move |this, _, window, cx| {
-                        // A choice can take away a text field (Network's proxy address): never
-                        // the focused one, which GPUI's X11 input-method code trips over.
-                        window.blur();
+                    .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
                         set(&mut this.settings, i);
                         this.settings.save();
                         this.apply_player_settings(cx);
@@ -8955,6 +8952,14 @@ fn main() {
         })
         .detach();
         cx.on_app_quit(|_| async { prefetch::cleanup() }).detach();
-        cx.on_window_closed(|cx| cx.quit()).detach();
+        // Quit once GPUI is done closing the window: quitting from inside its close handling
+        // panics in its X11 client ("RefCell already borrowed").
+        cx.on_window_closed(|cx| {
+            cx.spawn(async |cx| {
+                cx.update(|cx| cx.quit()).ok();
+            })
+            .detach();
+        })
+        .detach();
     });
 }
