@@ -6,6 +6,11 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Added
+- **Play in separate window** (right click on a video): plays it in an mpv window of its own,
+  from where you left it, while the app's player keeps going. mpv's own controls; the same
+  quality, login and SponsorBlock settings; it closes with the app.
+
 ## 0.39.1 - 2026-10-10
 
 ### Fixed

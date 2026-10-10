@@ -1321,6 +1321,17 @@ impl Unbloated {
     }
 
     /// Move the video into / out of its own always-on-top window (restarts mpv in place).
+    /// Right click → Play in separate window: the video in an mpv window of its own, from where
+    /// you left it; the app's player keeps what it plays.
+    fn play_separate(&mut self, video: &Video, cx: &mut Context<Self>) {
+        let start = self.history.position(&video.id);
+        self.notice = Some(match player::play_separate(&self.cfg, &self.settings, &self.media_path(video), start) {
+            Ok(()) => format!("Playing \"{}\" in a separate window", video.title),
+            Err(e) => e,
+        });
+        cx.notify();
+    }
+
     fn toggle_pip(&mut self, cx: &mut Context<Self>) {
         self.pip = !self.pip;
         if let (true, Some(video)) = (self.player.alive(), self.current.clone()) {
@@ -2089,7 +2100,7 @@ impl Unbloated {
         // shrank to one row above).
         let avail = (win_h - EDGE - 8.).max(ROW_H * 4.);
         let top = f32::from(pos.y).min(win_h - (fixed_h + list_h).min(avail) - EDGE).max(8.);
-        let (v_copy, v_queue, v_later) = (video.clone(), video.clone(), video.clone());
+        let (v_copy, v_queue, v_later, v_separate) = (video.clone(), video.clone(), video.clone(), video.clone());
         let player_menu = self.player_menu;
         let speed = self.settings.speed;
         // Quality: only for a video streaming here (not a downloaded file, not while casting).
@@ -2319,6 +2330,10 @@ impl Unbloated {
                             .child(div().my_1().h(px(1.)).bg(themed(BORDER)))
                         })
                         .children(cast_rows)
+                        .child(row("video-menu-separate").child("Play in separate window").on_click(cx.listener(move |this, _, _, cx| {
+                            this.close_video_menu(cx);
+                            this.play_separate(&v_separate, cx);
+                        })))
                         .child(row("video-menu-copy").child("Copy link").on_click(cx.listener(move |this, _, _, cx| {
                             this.close_video_menu(cx);
                             this.copy_video_link(&v_copy, cx);

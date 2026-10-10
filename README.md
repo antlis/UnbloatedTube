@@ -127,6 +127,10 @@ list, your playlists, your history, search and a player.
   Up next first, so Next follows the playlist.
 - **Picture-in-picture**: move playback into a small always-on-top mpv window and keep
   browsing.
+- **Play in separate window** (right click on a video, in a list or on the player): the video
+  in an mpv window of its own, from where you left it, while the app's player keeps what it
+  plays: two videos at once, or one kept on another screen. mpv's own controls and keys; the same
+  quality, login and SponsorBlock settings; it closes with the app.
 - **Volume**: mute button and a volume bar next to the speed button, or `↑`/`↓` (`+`/`-` in Vim
   mode), also while the pointer is over the video. Remembered between runs.
 - **Chapters tab** under the player for videos that have chapters: click one to jump there; the
@@ -612,9 +616,7 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
 - **Feature ideas** (none started; roughly smallest first):
   - *A daily watch-time limit*: a budget, a quiet counter and a soft stop when it runs out,
     optionally only at certain hours or for certain groups
-  - *Open in a new window*, depending on what it is for:
-    - a second video: right-click → "Play in separate window" starts an independent mpv window
-      for it while the main player keeps its own (small, and the same on every OS: no embedding)
+  - *Open in a new window*, beyond Play in separate window:
     - several lists open at once: switchable left-column views, like browser tabs (no extra player)
     - a real second app window, with its own embedded player, would mean per-window player state
       and a second X11 embed (`embed.rs`, already the main obstacle to Windows and macOS): not

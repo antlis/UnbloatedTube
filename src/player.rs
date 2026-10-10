@@ -293,6 +293,13 @@ pub fn format_at(s: &Settings, pick: Option<u32>) -> String {
 /// mpv command-line options for the user's settings (everything but per-video ones).
 /// `pip`: play in mpv's own small always-on-top window instead of embedded.
 pub fn options(cfg: &Config, s: &Settings, pip: bool) -> Vec<String> {
+    window_options(cfg, s, pip, pip)
+}
+
+/// `own_window`: mpv's own window (with its own controls) instead of the app's; `corner`: the
+/// PiP placement, small and on top in the bottom-right corner.
+fn window_options(cfg: &Config, s: &Settings, own_window: bool, corner: bool) -> Vec<String> {
+    let pip = own_window;
     let mut out = vec![
         format!("--ytdl-format={}", format(s)),
         // Fetch in 10 MB range requests: YouTube throttles one long request to ~150 KB/s.
@@ -334,12 +341,43 @@ pub fn options(cfg: &Config, s: &Settings, pip: bool) -> Vec<String> {
         // The subtitles button follows the one under the player (Settings → Player buttons).
         out.push(format!("--script-opts-append=unbloated-controls-cc={}", if s.subtitles_button { "yes" } else { "no" }));
     }
-    if pip {
+    if corner {
         // Bottom-right corner; the title lets tiling WMs float it (e.g. i3 for_window rules).
         out.extend(["--ontop", "--geometry=480x270-24-24", "--title=unbloatedtube PiP"].map(String::from));
     }
     out.extend(s.mpv_args.split_whitespace().map(String::from));
     out
+}
+
+/// Play `url` from `start` in an mpv window of its own, beside the app's player (right click →
+/// Play in separate window): mpv's own controls and keys, the same quality, login, SponsorBlock
+/// and extra options, and this program as its yt-dlp. Like the main player it ends with the app.
+pub fn play_separate(cfg: &Config, s: &Settings, url: &str, start: f64) -> Result<(), String> {
+    let mut cmd = Command::new("mpv");
+    cmd.env("PYCRYPTODOME_DISABLE_GMP", "1")
+        .args(crate::prefetch::self_exe().map(|exe| format!("--script-opts-append=ytdl_hook-ytdl_path={}", exe.display())))
+        .envs(crate::prefetch::environment())
+        .args(window_options(cfg, s, true, false))
+        .arg("--force-window=immediate")
+        .arg(format!("--volume={}", s.volume))
+        .arg(format!("--speed={}", s.speed))
+        .arg(format!("--start={start}"))
+        .arg("--")
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    // SAFETY: prctl is async-signal-safe, as pre_exec requires.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+            Ok(())
+        });
+    }
+    let mut child = cmd.spawn().map_err(|e| format!("cannot start mpv: {e}"))?;
+    // Reaped when it is closed, so no zombie stays behind.
+    std::thread::spawn(move || child.wait());
+    Ok(())
 }
 
 /// The hover-controls script (controls.lua), written to the cache dir so mpv can load it.
