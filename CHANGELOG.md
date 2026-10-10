@@ -6,6 +6,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.40.0 - 2026-10-10
+
 ### Added
 - **Play in separate window** (right click on a video): plays it in an mpv window of its own,
   from where you left it, while the app's player keeps going. mpv's own controls; the same
