@@ -211,7 +211,7 @@ const TEXT_FIELDS: [(&str, &str, fn(&mut Settings) -> &mut String); 6] = [
 /// Settings → Network → Connection: label, value.
 const CONNECTIONS: [(&str, &str); 3] = [("Direct", "direct"), ("Bypass slowdown", "bypass"), ("Proxy", "proxy")];
 /// How Bypass splits the first packet: label, value.
-const BYPASS_METHODS: [(&str, &str); 3] = [("TLS split", "tls"), ("TLS + TCP split", "both"), ("TCP split", "tcp")];
+const BYPASS_METHODS: [(&str, &str); 3] = [("TLS split (recommended)", "tls"), ("TLS + TCP split", "both"), ("TCP split", "tcp")];
 /// Proxy presets: label, address (the programs' default ports).
 const PROXY_PRESETS: [(&str, &str); 2] = [("Tor", "socks5://127.0.0.1:9050"), ("ByeDPI", "socks5://127.0.0.1:1080")];
 
@@ -5800,7 +5800,10 @@ impl Unbloated {
                     .cursor_pointer()
                     .hover(|d| d.opacity(0.85))
                     .child(text)
-                    .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
+                    .on_click_hinted(&self.hint_reg(), cx, move |this, _, window, cx| {
+                        // A choice can take away a text field (Network's proxy address): never
+                        // the focused one, which GPUI's X11 input-method code trips over.
+                        window.blur();
                         set(&mut this.settings, i);
                         this.settings.save();
                         this.apply_player_settings(cx);
