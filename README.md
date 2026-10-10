@@ -230,8 +230,10 @@ Settings → Network → **Connection**:
   (Russia since 2024, and some providers elsewhere). The first packet of every connection names
   the server it is for; the app sends it split in two, so the filter doesn't recognise YouTube,
   the way ByeDPI, zapret and GoodbyeDPI do. Nothing to install, no other server involved, full
-  speed. Three **methods** (TLS + TCP split, TLS split, TCP split): providers' filters differ, so
-  if videos stay slow, try another. It can't help where YouTube's addresses are blocked
+  speed. Three **methods**: *TLS split* (the default; the one that got through on a Russian
+  provider in testing, like ByeDPI's `--tlsrec 1+s`), *TLS + TCP split* and *TCP split*.
+  Providers' filters differ, so if videos stay slow, try another. Connections try IPv4 first: on
+  some networks IPv6 to YouTube goes nowhere. It can't help where YouTube's addresses are blocked
   outright: use a proxy there.
 - **Proxy**: everything through a proxy you have running: **Tor** (`socks5://127.0.0.1:9050`),
   **ByeDPI** (`socks5://127.0.0.1:1080`), the local port of a V2Ray, Xray, sing-box or VPN

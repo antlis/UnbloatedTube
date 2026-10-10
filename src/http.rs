@@ -6,10 +6,11 @@
 use std::sync::{LazyLock, RwLock};
 use std::time::Duration;
 
-static AGENT: LazyLock<RwLock<ureq::Agent>> = LazyLock::new(|| RwLock::new(build(None)));
+static AGENT: LazyLock<RwLock<ureq::Agent>> = LazyLock::new(|| RwLock::new(build(None, Duration::from_secs(60))));
+static PROXY: RwLock<Option<String>> = RwLock::new(None);
 
-fn build(proxy: Option<&str>) -> ureq::Agent {
-    let mut b = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout(Duration::from_secs(60)).max_idle_connections_per_host(8);
+fn build(proxy: Option<&str>, timeout: Duration) -> ureq::Agent {
+    let mut b = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout(timeout).max_idle_connections_per_host(8);
     if let Some(p) = proxy.and_then(|p| ureq::Proxy::new(p).ok()) {
         b = b.proxy(p);
     }
@@ -23,5 +24,11 @@ pub fn agent() -> ureq::Agent {
 
 /// Go through `proxy` from now on (None: directly).
 pub fn rebuild(proxy: Option<&str>) {
-    *AGENT.write().unwrap() = build(proxy);
+    *PROXY.write().unwrap() = proxy.map(String::from);
+    *AGENT.write().unwrap() = build(proxy, Duration::from_secs(60));
+}
+
+/// A client of its own that gives up after `timeout` (the connection test).
+pub fn agent_with_timeout(timeout: Duration) -> ureq::Agent {
+    build(PROXY.read().unwrap().as_deref(), timeout)
 }

@@ -211,7 +211,7 @@ const TEXT_FIELDS: [(&str, &str, fn(&mut Settings) -> &mut String); 6] = [
 /// Settings → Network → Connection: label, value.
 const CONNECTIONS: [(&str, &str); 3] = [("Direct", "direct"), ("Bypass slowdown", "bypass"), ("Proxy", "proxy")];
 /// How Bypass splits the first packet: label, value.
-const BYPASS_METHODS: [(&str, &str); 3] = [("TLS + TCP split", "both"), ("TLS split", "tls"), ("TCP split", "tcp")];
+const BYPASS_METHODS: [(&str, &str); 3] = [("TLS split", "tls"), ("TLS + TCP split", "both"), ("TCP split", "tcp")];
 /// Proxy presets: label, address (the programs' default ports).
 const PROXY_PRESETS: [(&str, &str); 2] = [("Tor", "socks5://127.0.0.1:9050"), ("ByeDPI", "socks5://127.0.0.1:1080")];
 
@@ -219,9 +219,9 @@ const PROXY_PRESETS: [(&str, &str); 2] = [("Tor", "socks5://127.0.0.1:9050"), ("
 fn apply_network(s: &Settings) -> Result<(), String> {
     let route = match s.connection.as_str() {
         "bypass" => proxy::Route::Bypass(match s.bypass_method.as_str() {
-            "tls" => proxy::Split::Tls,
+            "both" => proxy::Split::Both,
             "tcp" => proxy::Split::Tcp,
-            _ => proxy::Split::Both,
+            _ => proxy::Split::Tls,
         }),
         "proxy" if s.proxy.trim().is_empty() => return Ok(proxy::set_route(proxy::Route::Direct)),
         "proxy" => match proxy::parse_upstream(&s.proxy) {
@@ -5869,8 +5869,14 @@ impl Unbloated {
         self.net_test = Some("Testing…".into());
         let task = blocking::unblock(|| {
             let start = Instant::now();
-            let res = http::agent().get("https://www.youtube.com/generate_204").call();
-            (res.map(drop).map_err(|e| e.to_string()), start.elapsed())
+            let res = http::agent_with_timeout(Duration::from_secs(12)).get("https://www.youtube.com/generate_204").call();
+            // The proxy says why in its answer's status line ("502 1.2.3.4:443: timed out").
+            let res = res.map(drop).map_err(|e| match e {
+                ureq::Error::Status(code, resp) => format!("{code} {}", resp.status_text()),
+                e if e.to_string().contains("timed out") => "no answer within 12 s".to_string(),
+                e => e.to_string(),
+            });
+            (res, start.elapsed())
         });
         cx.spawn(async move |this, cx| {
             let (res, took) = task.await;

@@ -192,12 +192,17 @@ fn is_local(host: &str) -> bool {
     }
 }
 
+/// IPv4 addresses first, each given a few seconds: where IPv6 to YouTube goes nowhere (as on
+/// some Russian networks) a connection would otherwise sit on the dead IPv6 address first.
 fn direct(host: &str, port: u16) -> io::Result<TcpStream> {
+    let mut addrs: Vec<_> = (host, port).to_socket_addrs()?.collect();
+    addrs.sort_by_key(|a| a.is_ipv6());
     let mut last = io::Error::new(io::ErrorKind::NotFound, format!("can't resolve {host}"));
-    for addr in (host, port).to_socket_addrs()? {
-        match TcpStream::connect_timeout(&addr, TIMEOUT) {
+    for addr in addrs {
+        let wait = Duration::from_secs(if addr.is_ipv6() { 3 } else { 6 });
+        match TcpStream::connect_timeout(&addr, wait) {
             Ok(s) => return Ok(s),
-            Err(e) => last = e,
+            Err(e) => last = io::Error::new(e.kind(), format!("{addr}: {e}")),
         }
     }
     Err(last)

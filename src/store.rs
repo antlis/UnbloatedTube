@@ -352,7 +352,7 @@ impl Default for Settings {
             show_votes: true,
             show_subs: true,
             connection: "direct".into(),
-            bypass_method: "both".into(),
+            bypass_method: "tls".into(),
             proxy: String::new(),
             dearrow_titles: false,
             dearrow_thumbs: false,
