@@ -517,6 +517,49 @@ pub fn subtitles(cfg: &Config, id: &str, langs: &str, auto: bool, dir: &std::pat
     }
 }
 
+/// A caption track a video offers: its language code (what `subtitles` takes), YouTube's name
+/// for it, and whether it is generated (speech recognition, or a machine translation of it).
+#[derive(Clone, Debug)]
+pub struct CaptionLang {
+    pub code: String,
+    pub name: String,
+    pub auto: bool,
+}
+
+/// The caption tracks of a video: its own ones first, then the generated ones (the speech
+/// recognition track, `xx-orig`, and its translations into every language YouTube offers).
+pub fn caption_langs(cfg: &Config, id: &str) -> Result<Vec<CaptionLang>, String> {
+    let out = crate::prefetch::ytdlp()
+        .env("PYCRYPTODOME_DISABLE_GMP", "1")
+        .args(["--no-update", "--no-warnings", "--skip-download", "-j", "--no-playlist"])
+        .args(cfg.cookie_args())
+        .arg(format!("https://www.youtube.com/watch?v={id}"))
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run yt-dlp: {e}"))?;
+    if !out.status.success() {
+        return Err(short_error(&String::from_utf8_lossy(&out.stderr)));
+    }
+    let info: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+    let mut langs = Vec::new();
+    for (key, auto) in [("subtitles", false), ("automatic_captions", true)] {
+        let Some(tracks) = info[key].as_object() else { continue };
+        let mut these: Vec<CaptionLang> = tracks
+            .iter()
+            // "live_chat" is a replay of a stream's chat, not captions.
+            .filter(|(code, _)| *code != "live_chat")
+            .map(|(code, formats)| CaptionLang {
+                code: code.clone(),
+                name: formats[0]["name"].as_str().filter(|n| !n.is_empty()).unwrap_or(code).to_string(),
+                auto,
+            })
+            .collect();
+        these.sort_by(|a, b| a.name.cmp(&b.name));
+        langs.extend(these);
+    }
+    Ok(langs)
+}
+
 /// A video's captions as (start in seconds, text) lines, for the Transcript tab. The same file the
 /// subtitles use (`subtitles`), so it is often there already. No lines: no captions.
 pub fn transcript(cfg: &Config, id: &str, langs: &str, auto: bool, dir: &std::path::Path, on: &mut dyn FnMut((f64, String))) -> Result<(), String> {
