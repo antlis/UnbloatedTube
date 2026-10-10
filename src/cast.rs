@@ -162,7 +162,7 @@ impl Remote {
     }
 
     fn call_within(&self, method: &str, path: &str, body: Option<serde_json::Value>, limit: Duration) -> Result<serde_json::Value, String> {
-        let req = ureq::request(method, &format!("{}{path}", self.base))
+        let req = crate::http::agent().request(method, &format!("{}{path}", self.base))
             .set("Authorization", &format!("Bearer {}", self.token))
             .timeout(limit);
         let res = match body {

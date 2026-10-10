@@ -5766,6 +5766,7 @@ name = "unbloatedtube"
 version = "0.34.0"
 dependencies = [
  "anyhow",
+ "blocking",
  "dirs 5.0.1",
  "gpui",
  "libc",

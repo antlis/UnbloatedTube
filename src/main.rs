@@ -3,6 +3,7 @@ mod auth;
 mod cast;
 mod cli;
 mod embed;
+mod http;
 mod icons;
 mod links;
 mod mpris;
@@ -580,6 +581,8 @@ struct Unbloated {
     fullscreen: bool,
     /// A video was requested and mpv hasn't started playing it yet.
     loading: bool,
+    /// When the current video was handed to mpv (for `UNBLOATEDTUBE_TIMING`).
+    load_started: Instant,
     /// Hide mpv's window while loading, so the old video's last frame doesn't linger.
     /// Not on a fresh mpv start: mpv keeps its window unmapped if ours is hidden then.
     hide_while_loading: bool,
@@ -587,6 +590,8 @@ struct Unbloated {
     queue: Arc<[Video]>,
     state: Option<player::State>,
     thumbs_requested: HashSet<String>,
+    /// Thumbnails known to be on disk: no file check for them on every frame.
+    thumbs_ready: HashSet<String>,
     /// Thumbnails whose download failed: shown as a plain box, not a pulsing skeleton.
     thumbs_failed: HashSet<String>,
     /// Logged-in account for subscribe / like / save; loaded on first use.
@@ -725,7 +730,7 @@ impl Unbloated {
                 let Ok(socket) = this.update(cx, |this, _| this.player.socket_if_alive()) else { break };
                 // mpv can take seconds to answer while it opens a video; ask off the UI thread.
                 let state = match socket {
-                    Some(socket) => cx.background_executor().spawn(async move { player::query(&socket) }).await,
+                    Some(socket) => blocking::unblock(move || { player::query(&socket) }).await,
                     None => None,
                 };
                 if this.update_in(cx, |this, window, cx| this.tick(state, window, cx)).is_err() {
@@ -849,10 +854,12 @@ impl Unbloated {
             subs_none: None,
             fullscreen: false,
             loading: false,
+            load_started: Instant::now(),
             hide_while_loading: false,
             queue: Arc::new([]),
             state: None,
             thumbs_requested: HashSet::new(),
+            thumbs_ready: HashSet::new(),
             thumbs_failed: HashSet::new(),
             account: None,
             connect: Connect::Idle,
@@ -926,8 +933,7 @@ impl Unbloated {
 
         let inbox: Inbox<T> = Default::default();
         let (cfg, sink) = (self.cfg.clone(), inbox.clone());
-        cx.background_executor()
-            .spawn(async move {
+        blocking::unblock(move || {
                 let res = f(&cfg, &mut |item| sink.lock().unwrap().0.push(item));
                 sink.lock().unwrap().1 = Some(res);
             })
@@ -1136,7 +1142,7 @@ impl Unbloated {
     fn open_video_link(&mut self, link: yt::VideoLink, cx: &mut Context<Self>) {
         self.notice = Some("Opening the link…".into());
         let (cfg, id) = (self.cfg.clone(), link.id.clone());
-        let task = cx.background_executor().spawn(async move { yt::video(&cfg, &id) });
+        let task = blocking::unblock(move || { yt::video(&cfg, &id) });
         cx.spawn(async move |this, cx| {
             let res = task.await;
             this.update(cx, |this, cx| {
@@ -1851,7 +1857,7 @@ impl Unbloated {
         }
         self.notice = Some(format!("Loading {}…", group.title));
         let (cfg, url) = (self.cfg.clone(), group.url.clone());
-        let task = cx.background_executor().spawn(async move {
+        let task = blocking::unblock(move || {
             let mut out = Vec::new();
             yt::playlist_videos(&cfg, &url, &mut |v| out.push(v)).map(|_| out)
         });
@@ -1891,7 +1897,7 @@ impl Unbloated {
         }
         self.notice = Some(format!("Loading {}…", group.title));
         let (cfg, url) = (self.cfg.clone(), group.url.clone());
-        let task = cx.background_executor().spawn(async move {
+        let task = blocking::unblock(move || {
             let mut out = Vec::new();
             yt::playlist_head(&cfg, &url, cast::MAX_LIST, &mut |v| out.push(v)).map(|_| out)
         });
@@ -2661,7 +2667,7 @@ impl Unbloated {
         let (cfg, format, id) = (self.cfg.clone(), player::format(&self.settings), id.to_string());
         let task = {
             let id = id.clone();
-            cx.background_executor().spawn(async move { prefetch::fetch(&cfg, &id, &format) })
+            blocking::unblock(move || { prefetch::fetch(&cfg, &id, &format) })
         };
         cx.spawn(async move |this, cx| {
             let res = task.await;
@@ -2781,6 +2787,7 @@ impl Unbloated {
         self.notice = None;
         self.current = Some(video);
         self.loading = true;
+        self.load_started = Instant::now();
     }
 
     /// What the sleep timer waits for, for the notice corner and the menu.
@@ -2837,8 +2844,7 @@ impl Unbloated {
         self.downloads.insert(id.clone(), Download { progress: 0., result: None, done_at: None });
         let shared: Arc<Mutex<Download>> = Arc::new(Mutex::new(Download { progress: 0., result: None, done_at: None }));
         let sink = shared.clone();
-        cx.background_executor()
-            .spawn(async move {
+        blocking::unblock(move || {
                 let res = yt::download(&cfg, &url, &format, &dir, |p| sink.lock().unwrap().progress = p);
                 sink.lock().unwrap().result = Some(res);
             })
@@ -2965,7 +2971,7 @@ impl Unbloated {
         done: impl FnOnce(&mut Self, Result<R, String>, &mut Context<Self>) + 'static,
     ) {
         let (cfg, account) = (self.cfg.clone(), self.account.clone());
-        let task = cx.background_executor().spawn(async move {
+        let task = blocking::unblock(move || {
             let cached = account.is_some();
             let mut account = match account {
                 Some(a) => a,
@@ -2987,6 +2993,7 @@ impl Unbloated {
             this.update(cx, |this, cx| {
                 let res = match res {
                     Ok((account, res)) => {
+                        account::remember(&account);
                         this.account = Some(account);
                         res
                     }
@@ -3028,6 +3035,7 @@ impl Unbloated {
     fn reload_auth(&mut self, cx: &mut Context<Self>) {
         self.cfg = Arc::new(Config::load());
         self.account = None;
+        account::forget();
         clear_failed(&mut self.subs.groups);
         clear_failed(&mut self.feed);
         clear_failed(&mut self.yt_history);
@@ -3081,7 +3089,7 @@ impl Unbloated {
         self.import_msg = None;
         let cfg = self.cfg.clone();
         cx.spawn(async move |this, cx| {
-            let loaded = cx.background_executor().spawn({ let cfg = cfg.clone(); async move { Account::load(&cfg) } }).await;
+            let loaded = blocking::unblock({ let cfg = cfg.clone(); move || Account::load(&cfg) }).await;
             let account = match loaded {
                 Ok(account) => account,
                 Err(error) => {
@@ -3104,7 +3112,7 @@ impl Unbloated {
                 cx.notify();
             })
             .ok();
-            let loaded = { let account = account.clone(); cx.background_executor().spawn(async move { account.me() }).await };
+            let loaded = { let account = account.clone(); blocking::unblock(move || { account.me() }).await };
             let me = match loaded {
                 Ok(me) => me,
                 Err(error) => {
@@ -3122,14 +3130,16 @@ impl Unbloated {
             .ok();
             // Read the config again — the export may have learned the keyring spec.
             let cfg = Arc::new(Config::load());
-            let probe = { let cfg = cfg.clone(); cx.background_executor().spawn(async move { yt::auth_probe(&cfg) }).await };
+            let probe = { let cfg = cfg.clone(); blocking::unblock(move || { yt::auth_probe(&cfg) }).await };
             this.update(cx, |this, cx| {
                 if !this.cfg.has_auth() {
                     return;
                 }
                 match probe {
                     Ok(()) => {
-                        this.account = Some(Arc::new(account));
+                        let account = Arc::new(account);
+                        account::remember(&account);
+                        this.account = Some(account);
                         this.connect = Connect::Done { me };
                         // Re-fetch the playing video's like/subscribe state under the new login.
                         this.status = None;
@@ -3306,7 +3316,7 @@ impl Unbloated {
         self.votes = Some((id.clone(), None));
         let task = {
             let id = id.clone();
-            cx.background_executor().spawn(async move { yt::votes(&id) })
+            blocking::unblock(move || { yt::votes(&id) })
         };
         cx.spawn(async move |this, cx| {
             let res = task.await;
@@ -3682,7 +3692,7 @@ impl Unbloated {
         self.notice = Some(format!("Casting to {name}…"));
         let task_remote = remote.clone();
         let items_len = items.len();
-        let task = cx.background_executor().spawn(async move {
+        let task = blocking::unblock(move || {
             match task_remote {
                 Some(r) if items_len > 1 => r.play_list(&urls, 0, start),
                 Some(r) => r.play(&urls[0], start),
@@ -3738,7 +3748,7 @@ impl Unbloated {
         let chunk: Vec<String> = c.items[range].iter().map(|v| v.url()).collect();
         let (remote, before) = (c.remote.clone(), c.sent);
         c.sent += chunk.len();
-        let task = cx.background_executor().spawn(async move { remote.queue_add(&chunk) });
+        let task = blocking::unblock(move || { remote.queue_add(&chunk) });
         cx.spawn(async move |this, cx| {
             if let Err(e) = task.await {
                 this.update(cx, |this, cx| {
@@ -3757,13 +3767,12 @@ impl Unbloated {
     }
 
     /// Record `id` in the account's YouTube history (a background yt-dlp call); only when logged in.
-    fn mark_watched(&mut self, id: &str, cx: &mut Context<Self>) {
+    fn mark_watched(&mut self, id: &str, _cx: &mut Context<Self>) {
         if !self.cfg.has_auth() {
             return;
         }
         let (cfg, id) = (self.cfg.clone(), id.to_string());
-        cx.background_executor()
-            .spawn(async move {
+        blocking::unblock(move || {
                 if let Err(e) = yt::mark_watched(&cfg, &id) {
                     eprintln!("unbloatedtube: couldn't add {id} to the history: {e}");
                 }
@@ -3791,7 +3800,7 @@ impl Unbloated {
             Queue { url } => {
                 let link = yt::parse_video_link(&url).ok_or_else(|| format!("not a YouTube video link: {url}"))?;
                 let (cfg, id) = (self.cfg.clone(), link.id);
-                let task = cx.background_executor().spawn(async move { yt::video(&cfg, &id) });
+                let task = blocking::unblock(move || { yt::video(&cfg, &id) });
                 cx.spawn(async move |this, cx| {
                     let res = task.await;
                     this.update(cx, |this, cx| match res {
@@ -3925,7 +3934,7 @@ impl Unbloated {
         let Some(c) = self.casting.as_mut().filter(|c| !c.polling) else { return };
         c.polling = true;
         let (remote, started) = (c.remote.clone(), c.started);
-        let task = cx.background_executor().spawn(async move { remote.status() });
+        let task = blocking::unblock(move || { remote.status() });
         cx.spawn(async move |this, cx| {
             let res = task.await;
             this.update(cx, |this, cx| {
@@ -4055,7 +4064,7 @@ impl Unbloated {
     fn stop_cast(&mut self, cx: &mut Context<Self>) {
         let Some(c) = &self.casting else { return };
         let remote = c.remote.clone();
-        cx.background_executor().spawn(async move { remote.ctl(serde_json::json!({ "action": "stop" })) }).detach();
+        blocking::unblock(move || { remote.ctl(serde_json::json!({ "action": "stop" })) }).detach();
         self.end_cast("Stopped casting", cx);
     }
 
@@ -4063,7 +4072,7 @@ impl Unbloated {
     fn cast_ctl(&mut self, body: serde_json::Value, cx: &mut Context<Self>) {
         let Some(c) = &self.casting else { return };
         let remote = c.remote.clone();
-        let task = cx.background_executor().spawn(async move { remote.ctl(body) });
+        let task = blocking::unblock(move || { remote.ctl(body) });
         cx.spawn(async move |this, cx| {
             if let Err(e) = task.await {
                 this.update(cx, |this, cx| {
@@ -4143,7 +4152,7 @@ impl Unbloated {
         let cfg = self.cfg.clone();
         let task = {
             let id = id.clone();
-            cx.background_executor().spawn(async move { yt::caption_langs(&cfg, &id) })
+            blocking::unblock(move || { yt::caption_langs(&cfg, &id) })
         };
         cx.spawn(async move |this, cx| {
             let res = task.await;
@@ -4228,7 +4237,7 @@ impl Unbloated {
         self.subs_none = None;
         let task = {
             let id = id.clone();
-            cx.background_executor().spawn(async move { yt::subtitles(&cfg, &id, &langs, auto, &dir) })
+            blocking::unblock(move || { yt::subtitles(&cfg, &id, &langs, auto, &dir) })
         };
         cx.spawn(async move |this, cx| {
             let res = task.await;
@@ -5054,6 +5063,9 @@ impl Unbloated {
             window.toggle_fullscreen();
             cx.notify();
         }
+        if was_loading && !self.loading {
+            yt::timing("video start", self.load_started);
+        }
         let changed = was_loading != self.loading
             || match (&state, &self.state) {
                 (Some(a), Some(b)) => a.position as u64 != b.position as u64 || a.paused != b.paused,
@@ -5089,7 +5101,8 @@ impl Unbloated {
     /// Cached thumbnail, kicking off a download the first time a key is seen.
     fn thumb(&mut self, key: &str, url: Option<String>, cx: &mut Context<Self>) -> Thumb {
         let path = thumbs::path(key);
-        if path.exists() {
+        if self.thumbs_ready.contains(key) || path.exists() {
+            self.thumbs_ready.insert(key.to_string());
             return Thumb::Ready(path);
         }
         if url.is_none() || self.thumbs_failed.contains(key) {
@@ -5098,7 +5111,7 @@ impl Unbloated {
         if let Some(url) = url.filter(|_| self.thumbs_requested.insert(key.to_string())) {
             let dest = path.clone();
             let key = key.to_string();
-            let task = cx.background_executor().spawn(async move { thumbs::download(&url, &dest) });
+            let task = blocking::unblock(move || { thumbs::download(&url, &dest) });
             cx.spawn(async move |this, cx| {
                 let ok = task.await.is_ok();
                 this.update(cx, |this, cx| {

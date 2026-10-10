@@ -6,6 +6,17 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Changed
+- **Faster lists.** The subscriptions feed, playlists (Watch later and Liked included),
+  recommendations and search come straight from YouTube's API, a page at a time, instead of
+  through yt-dlp; yt-dlp remains the fallback when that fails or finds nothing.
+- HTTP requests (account actions, thumbnails, dislike counts, cast receivers) share one
+  connection pool, so they skip a new connection each; at most 8 thumbnails download at once,
+  so the visible ones come first.
+- Background work that waits (yt-dlp, files, network) runs on its own thread pool and no
+  longer slows the player's polling or other loads.
+- `UNBLOATEDTUBE_TIMING=1` logs how long each list and video start took.
+
 ## 0.34.0 - 2026-10-10
 
 ### Changed

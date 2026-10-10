@@ -238,7 +238,66 @@ fn to_video(e: Entry) -> Option<Video> {
 }
 
 fn videos(cfg: &Config, target: &str, limit: usize, on: &mut dyn FnMut(Video)) -> Result<(), String> {
-    stream(cfg, &[target.to_string()], limit, |e| to_video(e).into_iter().for_each(&mut *on))
+    let start = std::time::Instant::now();
+    let r = stream(cfg, &[target.to_string()], limit, |e| to_video(e).into_iter().for_each(&mut *on));
+    timing(&format!("yt-dlp {target}"), start);
+    r
+}
+
+/// `UNBLOATEDTUBE_TIMING=1`: log how long each list took and which way it came, on stderr.
+pub fn timing(what: &str, start: std::time::Instant) {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("UNBLOATEDTUBE_TIMING").is_some_and(|v| v != "0"));
+    if *ON {
+        eprintln!("unbloatedtube: {what}: {} ms", start.elapsed().as_millis());
+    }
+}
+
+/// A list asked of YouTube's own API first (one request per page, no yt-dlp start-up), and of
+/// yt-dlp when that fails or finds nothing. Once videos arrived they are kept, never fetched twice.
+fn fast_first(
+    what: &str,
+    ask: impl FnOnce(&mut dyn FnMut(Video)) -> Result<usize, String>,
+    on: &mut dyn FnMut(Video),
+    fallback: impl FnOnce(&mut dyn FnMut(Video)) -> Result<(), String>,
+) -> Result<(), String> {
+    let start = std::time::Instant::now();
+    match ask(on) {
+        Ok(n) if n > 0 => {
+            timing(&format!("innertube {what} ({n})"), start);
+            Ok(())
+        }
+        r => {
+            if let Err(e) = r {
+                timing(&format!("innertube {what} failed ({e})"), start);
+            }
+            fallback(on)
+        }
+    }
+}
+
+/// The InnerTube browse id of a list yt-dlp would be given `url` for: the subscriptions feed and
+/// playlists. Channels and anything else stay with yt-dlp.
+fn browse_id(url: &str) -> Option<String> {
+    match url {
+        ":ytsubs" => return Some("FEsubscriptions".into()),
+        ":ytwatchlater" => return Some("VLWL".into()),
+        ":ytrec" => return Some("FEwhat_to_watch".into()),
+        _ => {}
+    }
+    let list = url.strip_prefix("https://www.youtube.com/playlist?list=")?;
+    let list = list.split('&').next()?;
+    (!list.is_empty() && list.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')).then(|| format!("VL{list}"))
+}
+
+/// A list by its yt-dlp target, via InnerTube when it has a browse id.
+fn list(cfg: &Config, target: &str, limit: usize, on: &mut dyn FnMut(Video)) -> Result<(), String> {
+    let Some(id) = browse_id(target) else { return videos(cfg, target, limit, on) };
+    fast_first(
+        target,
+        |on| crate::account::shared(cfg)?.browse_videos(&id, limit, on),
+        on,
+        |on| videos(cfg, target, limit, on),
+    )
 }
 
 fn thumb(e: &Entry) -> Option<String> {
@@ -258,7 +317,7 @@ pub fn subscriptions(cfg: &Config, on: &mut dyn FnMut(Group)) -> Result<(), Stri
 
 /// Latest uploads of all subscribed channels, newest first.
 pub fn feed(cfg: &Config, on: &mut dyn FnMut(Video)) -> Result<(), String> {
-    videos(cfg, ":ytsubs", 150, on)
+    list(cfg, ":ytsubs", 150, on)
 }
 
 /// The login-gated path works: one entry from the subscriptions feed. Used by the
@@ -285,7 +344,7 @@ pub fn history(cfg: &Config, account: Option<Arc<Account>>, on: &mut dyn FnMut(V
 }
 
 pub fn recommendations(cfg: &Config, on: &mut dyn FnMut(Video)) -> Result<(), String> {
-    videos(cfg, ":ytrec", 60, on)
+    list(cfg, ":ytrec", 60, on)
 }
 
 /// Fallback "recommendations" without login: latest uploads of the given channel.
@@ -692,7 +751,7 @@ fn tidy_auto_captions(vtt: &str) -> Option<String> {
 /// Likes and dislikes of a video from the Return YouTube Dislike API (YouTube hides dislikes; the
 /// project estimates them from its users' votes). No key; the request names the video.
 pub fn votes(id: &str) -> Result<(u64, u64), String> {
-    let v: serde_json::Value = ureq::get(&format!("https://returnyoutubedislikeapi.com/votes?videoId={id}"))
+    let v: serde_json::Value = crate::http::agent().get(&format!("https://returnyoutubedislikeapi.com/votes?videoId={id}"))
         .timeout(std::time::Duration::from_secs(10))
         .call()
         .map_err(|e| e.to_string())?
@@ -716,11 +775,13 @@ pub fn video(cfg: &Config, id: &str) -> Result<Video, String> {
 }
 
 pub fn search(cfg: &Config, query: &str, on: &mut dyn FnMut(Video)) -> Result<(), String> {
-    videos(cfg, &format!("ytsearch50:{query}"), 50, on)
+    // Signed in, results follow the account (as on the site); without a login they are anonymous.
+    let account = || if cfg.has_auth() { crate::account::shared(cfg) } else { Ok(Arc::new(Account::anonymous())) };
+    fast_first("search", |on| account()?.search_videos(query, 50, on), on, |on| videos(cfg, &format!("ytsearch50:{query}"), 50, on))
 }
 
 pub fn group_videos(cfg: &Config, url: &str, on: &mut dyn FnMut(Video)) -> Result<(), String> {
-    videos(cfg, url, 150, on)
+    list(cfg, url, 150, on)
 }
 
 /// All of a playlist (up to YouTube's 5000): saved videos go to its end.
@@ -744,11 +805,11 @@ pub fn mark_watched(cfg: &Config, id: &str) -> Result<(), String> {
 
 /// The first `n` videos of a playlist (to cast it without opening it).
 pub fn playlist_head(cfg: &Config, url: &str, n: usize, on: &mut dyn FnMut(Video)) -> Result<(), String> {
-    videos(cfg, url, n, on)
+    list(cfg, url, n, on)
 }
 
 pub fn playlist_videos(cfg: &Config, url: &str, on: &mut dyn FnMut(Video)) -> Result<(), String> {
-    videos(cfg, url, 5000, on)
+    list(cfg, url, 5000, on)
 }
 
 pub fn playlists(cfg: &Config, on: &mut dyn FnMut(Group)) -> Result<(), String> {

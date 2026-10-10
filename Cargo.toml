@@ -18,6 +18,8 @@ sha1_smol = "1"
 anyhow = "1"
 libc = "0.2"
 notify-rust = "4"
+# Blocking work (yt-dlp, HTTP, mpv's socket) runs on its own threads: already a dependency of gpui.
+blocking = "1"
 # MPRIS (media keys): already a dependency of gpui and notify-rust.
 zbus = "5"
 
