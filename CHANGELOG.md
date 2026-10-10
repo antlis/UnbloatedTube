@@ -6,6 +6,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.38.0 - 2026-10-10
+
 ### Changed
 - **Faster Description and Comments tabs.** Both come straight from YouTube's API instead of
   a yt-dlp run each (seconds before): the description as its uploader typed it, the comments in
