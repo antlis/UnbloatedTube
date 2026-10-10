@@ -6,6 +6,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.40.1 - 2026-10-10
+
 ### Fixed
 - Subtitles YouTube refuses with HTTP 429 (it limits caption requests, often only for a moment)
   are asked for once more a few seconds later, which usually gets them. If that fails too, the
