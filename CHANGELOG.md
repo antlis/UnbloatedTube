@@ -6,6 +6,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.35.1 - 2026-10-10
+
 ### Fixed
 - Lists and account actions start seconds sooner when logged in through the browser: reading
   its cookies no longer makes a request to YouTube first, and lists asked for at the same
