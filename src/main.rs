@@ -2977,11 +2977,13 @@ impl Unbloated {
                 Some(a) => a,
                 None => account::shared(&cfg)?,
             };
+            // Cookies kept from an earlier start may have been rotated since, too.
+            let cached = cached || account.from_kept;
             let mut res = f(&account);
             // A login kept for long enough stops being accepted (YouTube rotates its cookies):
             // try once more with the cookies as the browser has them now.
             if res.is_err() && cached {
-                if let Ok(fresh) = Account::load(&cfg) {
+                if let Ok(fresh) = Account::load_fresh(&cfg) {
                     account = Arc::new(fresh);
                     res = f(&account);
                 }
@@ -3089,7 +3091,7 @@ impl Unbloated {
         self.import_msg = None;
         let cfg = self.cfg.clone();
         cx.spawn(async move |this, cx| {
-            let loaded = blocking::unblock({ let cfg = cfg.clone(); move || Account::load(&cfg) }).await;
+            let loaded = blocking::unblock({ let cfg = cfg.clone(); move || Account::load_fresh(&cfg) }).await;
             let account = match loaded {
                 Ok(account) => account,
                 Err(error) => {

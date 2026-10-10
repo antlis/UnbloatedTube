@@ -343,6 +343,11 @@ checks it in three quick steps and shows your account. An exported `cookies.txt`
 imported under Advanced instead. **Log out** forgets the app's copy; for a `config.toml`
 login it comments those lines out instead (uncomment them to return).
 
+Reading a browser's cookies takes a few seconds, so the app keeps the last read for the next
+start, for up to 12 hours: in `$XDG_RUNTIME_DIR/unbloatedtube-cookies.txt` (a private folder
+of your login session, emptied when it ends), readable only by you. When YouTube no longer
+accepts them, the app reads the browser again; logging out or changing the login deletes it.
+
 While logged out, the app starts on that same **Connect YouTube** screen (or shows it after
 logging out), the header's account tabs are replaced by **Home** and **Sign in** (which opens
 Settings, with Account at the top), and the left column and Recommendations pane show an

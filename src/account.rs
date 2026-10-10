@@ -18,6 +18,8 @@ const CLIENT_VERSION: &str = "2.20260708.00.00";
 pub struct Account {
     cookie_header: String,
     sapisid: String,
+    /// Made from cookies kept from an earlier export (`kept`), which YouTube may have rotated since.
+    pub from_kept: bool,
 }
 
 /// The account the list fetches use (see `yt.rs`), so each doesn't export the browser's cookies
@@ -30,6 +32,7 @@ pub fn remember(account: &Arc<Account>) {
 
 pub fn forget() {
     *SHARED.lock().unwrap() = None;
+    let _ = std::fs::remove_file(kept_path());
 }
 
 pub fn shared(cfg: &Config) -> Result<Arc<Account>, String> {
@@ -43,6 +46,63 @@ pub fn shared(cfg: &Config) -> Result<Arc<Account>, String> {
     let a = Arc::new(Account::load(cfg)?);
     remember(&a);
     Ok(a)
+}
+
+/// `f` with the shared account; once more with cookies read from the browser now when kept ones
+/// were refused (`f` must not have delivered anything when it fails).
+pub fn with_shared<R>(cfg: &Config, mut f: impl FnMut(&Account) -> Result<R, String>) -> Result<R, String> {
+    let a = shared(cfg)?;
+    match f(&a) {
+        Err(_) if a.from_kept => f(&*refresh(cfg)?),
+        r => r,
+    }
+}
+
+/// The account with cookies read from the browser now (kept ones were refused), for the lists too.
+pub fn refresh(cfg: &Config) -> Result<Arc<Account>, String> {
+    let a = Arc::new(Account::load_fresh(cfg)?);
+    remember(&a);
+    Ok(a)
+}
+
+/// Reading the browser's cookies takes seconds (yt-dlp, the keyring), so the last export is kept
+/// for the next start: in the session's private runtime folder (gone at logout), readable only by
+/// the user, for at most `KEEP`, and only for the same browser. A login change deletes it.
+const KEEP: std::time::Duration = std::time::Duration::from_secs(12 * 3600);
+
+fn kept_path() -> std::path::PathBuf {
+    match std::env::var_os("XDG_RUNTIME_DIR") {
+        Some(dir) => std::path::PathBuf::from(dir).join("unbloatedtube-cookies.txt"),
+        None => dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("unbloatedtube").join("cookies.txt"),
+    }
+}
+
+fn kept(browser: &str) -> Option<String> {
+    let path = kept_path();
+    let age = std::fs::metadata(&path).ok()?.modified().ok()?.elapsed().ok()?;
+    let text = std::fs::read_to_string(&path).ok()?;
+    let (first, rest) = text.split_once('\n')?;
+    (age < KEEP && first == format!("# browser: {browser}")).then(|| rest.to_string())
+}
+
+fn keep(browser: &str, text: &str) {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let path = kept_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let tmp = path.with_extension("tmp");
+    let _ = std::fs::remove_file(&tmp);
+    let written = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)
+        .and_then(|mut f| write!(f, "# browser: {browser}\n{text}"));
+    if written.is_ok() {
+        let _ = std::fs::rename(&tmp, &path);
+    }
 }
 
 /// The signed-in account as far as YouTube's guide endpoint shows it: handle like
@@ -78,13 +138,27 @@ pub struct SaveOption {
 }
 
 impl Account {
-    /// Read the YouTube cookies: from a cookies file, or exported once from the browser via
-    /// yt-dlp into a private runtime file that is deleted right after reading.
+    /// Read the YouTube cookies: from a cookies file, or from the browser (see `load_fresh`),
+    /// using the ones kept from the last export when there are.
     pub fn load(cfg: &Config) -> Result<Self, String> {
+        if let Auth::Browser(browser) = &cfg.auth {
+            if let Some(Ok(a)) = kept(browser).map(|text| Self::from_cookies(&text)) {
+                return Ok(Self { from_kept: true, ..a });
+            }
+        }
+        Self::load_fresh(cfg)
+    }
+
+    /// Read the YouTube cookies: from a cookies file, or exported from the browser via yt-dlp
+    /// into a private runtime file that is deleted right after reading (and kept, see `KEEP`).
+    pub fn load_fresh(cfg: &Config) -> Result<Self, String> {
         let text = match &cfg.auth {
             Auth::CookiesFile(f) => std::fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?,
             Auth::Browser(browser) => {
+                let start = std::time::Instant::now();
                 let (text, spec) = export_browser_cookies(browser)?;
+                crate::yt::timing(&format!("cookies from {spec}"), start);
+                keep(browser, &text);
                 // yt-dlp sometimes needs a keyring suffix ("brave+gnomekeyring") to read
                 // Chromium's encrypted cookies. Remember the spec that worked so every
                 // later call agrees — but only when auth.json (not config.toml) is the
@@ -103,7 +177,7 @@ impl Account {
 
     /// No login: what YouTube answers anyone (search, public playlists).
     pub fn anonymous() -> Self {
-        Self { cookie_header: String::new(), sapisid: String::new() }
+        Self { cookie_header: String::new(), sapisid: String::new(), from_kept: false }
     }
 
     /// Parse a Netscape cookies.txt; needs at least one YouTube login cookie.
@@ -122,7 +196,7 @@ impl Account {
         // YouTube itself falls back to __Secure-3PAPISID when SAPISID is missing.
         let sapisid = get("SAPISID").or_else(|| get("__Secure-3PAPISID")).ok_or("no YouTube login cookies")?;
         let cookie_header = cookies.iter().map(|(n, v)| format!("{n}={v}")).collect::<Vec<_>>().join("; ");
-        Ok(Self { cookie_header, sapisid })
+        Ok(Self { cookie_header, sapisid, from_kept: false })
     }
 
     /// Who is signed in: the guide endpoint's entry for your own channel. A missing handle

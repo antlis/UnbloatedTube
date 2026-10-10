@@ -10,7 +10,11 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 - Lists and account actions start seconds sooner when logged in through the browser: reading
   its cookies no longer makes a request to YouTube first, and lists asked for at the same
   time (feed and recommendations at start) share one read instead of each doing their own.
-- The timing log also shows when a list's first videos appeared.
+- The browser's cookies are kept between starts (up to 12 hours, in the private runtime folder,
+  readable only by you), so lists don't wait for the browser at every start; when YouTube
+  stops accepting them they are read again. Logging out or a login change deletes them.
+- The timing log also shows when a list's first videos appeared, and how long reading the
+  browser's cookies took.
 
 ## 0.35.0 - 2026-10-10
 

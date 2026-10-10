@@ -300,7 +300,8 @@ fn list(cfg: &Config, target: &str, limit: usize, on: &mut dyn FnMut(Video)) -> 
     let Some(id) = browse_id(target) else { return videos(cfg, target, limit, on) };
     fast_first(
         target,
-        |on| crate::account::shared(cfg)?.browse_videos(&id, limit, on),
+        // Nothing at all may mean kept cookies that YouTube no longer takes as a login.
+        |on| crate::account::with_shared(cfg, |a| a.browse_videos(&id, limit, on).and_then(|n| if n > 0 { Ok(n) } else { Err("empty".into()) })),
         on,
         |on| videos(cfg, target, limit, on),
     )
@@ -338,7 +339,7 @@ pub fn auth_probe(cfg: &Config) -> Result<(), String> {
 pub fn history(cfg: &Config, account: Option<Arc<Account>>, on: &mut dyn FnMut(Video)) -> Result<(), String> {
     let list = match account {
         Some(a) => a.history(150),
-        None => crate::account::shared(cfg).and_then(|a| a.history(150)),
+        None => crate::account::with_shared(cfg, |a| a.history(150)),
     };
     match list {
         Ok(list) if !list.is_empty() => {
@@ -782,8 +783,11 @@ pub fn video(cfg: &Config, id: &str) -> Result<Video, String> {
 
 pub fn search(cfg: &Config, query: &str, on: &mut dyn FnMut(Video)) -> Result<(), String> {
     // Signed in, results follow the account (as on the site); without a login they are anonymous.
-    let account = || if cfg.has_auth() { crate::account::shared(cfg) } else { Ok(Arc::new(Account::anonymous())) };
-    fast_first("search", |on| account()?.search_videos(query, 50, on), on, |on| videos(cfg, &format!("ytsearch50:{query}"), 50, on))
+    let ask = |on: &mut dyn FnMut(Video)| match cfg.has_auth() {
+        true => crate::account::with_shared(cfg, |a| a.search_videos(query, 50, on)),
+        false => Account::anonymous().search_videos(query, 50, on),
+    };
+    fast_first("search", ask, on, |on| videos(cfg, &format!("ytsearch50:{query}"), 50, on))
 }
 
 pub fn group_videos(cfg: &Config, url: &str, on: &mut dyn FnMut(Video)) -> Result<(), String> {
