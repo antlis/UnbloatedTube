@@ -25,6 +25,7 @@ pub struct Account {
 /// The account the list fetches use (see `yt.rs`), so each doesn't export the browser's cookies
 /// again: the last one the app loaded, else a fresh load. Forgotten when the login changes.
 static SHARED: Mutex<Option<Arc<Account>>> = Mutex::new(None);
+static LOADING: Mutex<()> = Mutex::new(());
 
 pub fn remember(account: &Arc<Account>) {
     *SHARED.lock().unwrap() = Some(account.clone());
@@ -38,7 +39,6 @@ pub fn forget() {
 pub fn shared(cfg: &Config) -> Result<Arc<Account>, String> {
     // Lists asked for together (feed and recommendations at start) wait for one cookie export
     // instead of each running their own.
-    static LOADING: Mutex<()> = Mutex::new(());
     let _one = LOADING.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(a) = SHARED.lock().unwrap().clone() {
         return Ok(a);
@@ -53,13 +53,21 @@ pub fn shared(cfg: &Config) -> Result<Arc<Account>, String> {
 pub fn with_shared<R>(cfg: &Config, mut f: impl FnMut(&Account) -> Result<R, String>) -> Result<R, String> {
     let a = shared(cfg)?;
     match f(&a) {
-        Err(_) if a.from_kept => f(&*refresh(cfg)?),
+        Err(e) if a.from_kept => {
+            crate::yt::timing(&format!("kept cookies refused ({e})"), std::time::Instant::now());
+            f(&*refresh(cfg, &a)?)
+        }
         r => r,
     }
 }
 
-/// The account with cookies read from the browser now (kept ones were refused), for the lists too.
-pub fn refresh(cfg: &Config) -> Result<Arc<Account>, String> {
+/// The account with cookies read from the browser now, because `stale` was refused; for the
+/// lists too. Lists refused together wait for one read.
+pub fn refresh(cfg: &Config, stale: &Arc<Account>) -> Result<Arc<Account>, String> {
+    let _one = LOADING.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(a) = SHARED.lock().unwrap().clone().filter(|a| !Arc::ptr_eq(a, stale)) {
+        return Ok(a);
+    }
     let a = Arc::new(Account::load_fresh(cfg)?);
     remember(&a);
     Ok(a)

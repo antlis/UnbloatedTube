@@ -315,6 +315,9 @@ pub fn run_shim() -> ! {
         }
         std::process::exit(code)
     };
+    // One lookup of a video at a time: a click while it is being looked up ahead waits for that
+    // answer instead of starting a second lookup that takes as long again.
+    let _turn = ask.as_ref().and_then(|(id, format)| wait_turn(&file(id, format)));
     let mut json = ask.as_ref().map(|(id, format)| file(id, format)).filter(|p| fresh(p)).and_then(|p| std::fs::read(p).ok());
     if json.is_some() {
         if args.iter().any(|a| a == "--mark-watched") {
@@ -350,6 +353,22 @@ pub fn run_shim() -> ! {
     }
     log("full lookup");
     done(code)
+}
+
+/// Wait (up to 15 s) until no other lookup of the video whose answer goes to `answer` runs, and
+/// hold off others until the returned lock file is closed (this process ends).
+fn wait_turn(answer: &Path) -> Option<File> {
+    std::fs::create_dir_all(dir()).ok()?;
+    let lock = File::options().create(true).truncate(false).write(true).open(answer.with_extension("lock")).ok()?;
+    let start = std::time::Instant::now();
+    // SAFETY: flock on a descriptor this function owns.
+    while unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        if start.elapsed() > Duration::from_secs(15) {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Some(lock)
 }
 
 /// `args` with `--cookies-from-browser` replaced by a copy of the cookies the app kept from that
