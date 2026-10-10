@@ -6,6 +6,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.41.0 - 2026-10-10
+
 ### Added
 - **Settings → Network**, for where YouTube is blocked or slowed down:
   - **Bypass slowdown**: one switch, nothing to install. The first packet of each connection
