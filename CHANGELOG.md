@@ -16,6 +16,9 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 - Videos start about two seconds sooner (and are looked up ahead sooner): yt-dlp gets the kept
   cookies instead of reading the browser's on every lookup. If YouTube refuses them, the lookup
   runs again with the browser's own.
+- **Videos start seconds sooner with SponsorBlock on**: its setting replaced the option that
+  makes mpv use the app as its yt-dlp, so mpv ran yt-dlp itself for every video and never used
+  what was looked up ahead of time (pointer resting on a row, Next, the list's first rows).
 - A video whose lookup ahead of time fails (upcoming, members only, removed…) is no longer looked
   up again every few seconds while it stays on screen.
 - The timing log also shows when a list's first videos appeared, how long reading the
