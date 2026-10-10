@@ -8,6 +8,7 @@ use crate::yt::Video;
 use serde_json::{Value, json};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const ORIGIN: &str = "https://www.youtube.com";
@@ -17,6 +18,27 @@ const CLIENT_VERSION: &str = "2.20260708.00.00";
 pub struct Account {
     cookie_header: String,
     sapisid: String,
+}
+
+/// The account the list fetches use (see `yt.rs`), so each doesn't export the browser's cookies
+/// again: the last one the app loaded, else a fresh load. Forgotten when the login changes.
+static SHARED: Mutex<Option<Arc<Account>>> = Mutex::new(None);
+
+pub fn remember(account: &Arc<Account>) {
+    *SHARED.lock().unwrap() = Some(account.clone());
+}
+
+pub fn forget() {
+    *SHARED.lock().unwrap() = None;
+}
+
+pub fn shared(cfg: &Config) -> Result<Arc<Account>, String> {
+    if let Some(a) = SHARED.lock().unwrap().clone() {
+        return Ok(a);
+    }
+    let a = Arc::new(Account::load(cfg)?);
+    remember(&a);
+    Ok(a)
 }
 
 /// The signed-in account as far as YouTube's guide endpoint shows it: handle like
@@ -75,6 +97,11 @@ impl Account {
         Self::from_cookies(&text)
     }
 
+    /// No login: what YouTube answers anyone (search, public playlists).
+    pub fn anonymous() -> Self {
+        Self { cookie_header: String::new(), sapisid: String::new() }
+    }
+
     /// Parse a Netscape cookies.txt; needs at least one YouTube login cookie.
     /// Also used to validate a cookies.txt before importing it.
     pub fn from_cookies(text: &str) -> Result<Self, String> {
@@ -112,15 +139,20 @@ impl Account {
 
     fn post(&self, endpoint: &str, mut body: Value) -> Result<Value, String> {
         body["context"] = json!({ "client": { "clientName": "WEB", "clientVersion": CLIENT_VERSION, "hl": "en" } });
-        let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        let hash = sha1_smol::Sha1::from(format!("{ts} {} {ORIGIN}", self.sapisid)).digest().to_string();
-        let resp = ureq::post(&format!("{ORIGIN}/youtubei/v1/{endpoint}?prettyPrint=false"))
-            .set("Cookie", &self.cookie_header)
-            .set("Authorization", &format!("SAPISIDHASH {ts}_{hash}"))
+        let mut req = crate::http::agent()
+            .post(&format!("{ORIGIN}/youtubei/v1/{endpoint}?prettyPrint=false"))
             .set("Origin", ORIGIN)
             .set("X-Origin", ORIGIN)
-            .set("X-Goog-AuthUser", "0")
-            .set("X-YouTube-Client-Name", "1")
+            .set("X-YouTube-Client-Name", "1");
+        if !self.sapisid.is_empty() {
+            let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+            let hash = sha1_smol::Sha1::from(format!("{ts} {} {ORIGIN}", self.sapisid)).digest().to_string();
+            req = req
+                .set("Cookie", &self.cookie_header)
+                .set("Authorization", &format!("SAPISIDHASH {ts}_{hash}"))
+                .set("X-Goog-AuthUser", "0");
+        }
+        let resp = req
             .set("X-YouTube-Client-Version", CLIENT_VERSION)
             .send_json(body)
             .map_err(|e| match e {
@@ -185,6 +217,49 @@ impl Account {
         out.retain(|v| seen.insert(v.id.clone()));
         out.truncate(limit);
         Ok(out)
+    }
+
+    /// The videos of a browse page ("FEsubscriptions", "FEwhat_to_watch", "VL<playlist id>"),
+    /// handed to `on` page by page as they arrive, until `limit`. The number delivered.
+    pub fn browse_videos(&self, browse_id: &str, limit: usize, on: &mut dyn FnMut(Video)) -> Result<usize, String> {
+        self.paged("browse", json!({ "browseId": browse_id }), limit, on)
+    }
+
+    /// Search results (videos only, like yt-dlp's `ytsearch`), page by page, until `limit`.
+    pub fn search_videos(&self, query: &str, limit: usize, on: &mut dyn FnMut(Video)) -> Result<usize, String> {
+        self.paged("search", json!({ "query": query, "params": "EgIQAQ==" }), limit, on)
+    }
+
+    /// Follow a list's continuation pages. Stops at `limit`, at the end, or at a page that adds
+    /// nothing new; a failed later page keeps what arrived.
+    fn paged(&self, endpoint: &str, first: Value, limit: usize, on: &mut dyn FnMut(Video)) -> Result<usize, String> {
+        let mut seen = std::collections::HashSet::new();
+        let mut resp = self.post(endpoint, first)?;
+        for _ in 0..200 {
+            let before = seen.len();
+            for v in collect_videos(&resp) {
+                if seen.len() < limit && seen.insert(v.id.clone()) {
+                    on(v);
+                }
+            }
+            if seen.len() >= limit || seen.len() == before {
+                break;
+            }
+            // The page's last continuation is its "more" one (earlier ones are filter chips).
+            let mut token = None;
+            walk(&resp, &mut |key, v| {
+                if key == "continuationCommand" {
+                    token = v["token"].as_str().map(String::from).or(token.take());
+                }
+            });
+            let Some(token) = token else { break };
+            match self.post(endpoint, json!({ "continuation": token })) {
+                Ok(next) => resp = next,
+                Err(_) if !seen.is_empty() => break,
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(seen.len())
     }
 
     pub fn subscribe(&self, channel_id: &str, on: bool) -> Result<(), String> {
@@ -319,9 +394,14 @@ fn history_video(v: &Value, day: &str) -> Option<Video> {
             channel_id = v["browseId"].as_str().map(String::from);
         }
     });
+    let mut live = false;
     walk(v, &mut |key, v| {
-        if key == "thumbnailBadgeViewModel" && duration.is_none() {
-            duration = v["text"].as_str().and_then(parse_duration);
+        if key == "thumbnailBadgeViewModel" {
+            let text = v["text"].as_str().unwrap_or_default();
+            live |= text.eq_ignore_ascii_case("live") || v["badgeStyle"].as_str().is_some_and(|s| s.contains("LIVE"));
+            if duration.is_none() {
+                duration = parse_duration(text);
+            }
         }
     });
     Some(Video {
@@ -332,9 +412,60 @@ fn history_video(v: &Value, day: &str) -> Option<Video> {
         short: false,
         views: parts[1]["text"]["content"].as_str().and_then(parse_views),
         watched: Some(day.to_string()).filter(|d| !d.is_empty()),
-        live: false,
+        live,
         id,
     })
+}
+
+/// The videos of a list page, in order, in whichever of YouTube's shapes it uses: the newer
+/// `lockupViewModel` (as History has), `videoRenderer` and its grid/compact forms (search,
+/// feeds), `playlistVideoRenderer` (playlists), and Shorts.
+fn collect_videos(page: &Value) -> Vec<Video> {
+    let mut out = Vec::new();
+    walk(page, &mut |key, v| match key {
+        "lockupViewModel" => out.extend(history_video(v, "")),
+        "shortsLockupViewModel" => out.extend(history_short(v, "")),
+        "videoRenderer" | "gridVideoRenderer" | "compactVideoRenderer" | "playlistVideoRenderer" => out.extend(renderer_video(v)),
+        _ => {}
+    });
+    out
+}
+
+/// A `videoRenderer`-like node; None without an id and a title (or for an unplayable playlist
+/// entry, "[Deleted video]").
+fn renderer_video(v: &Value) -> Option<Video> {
+    let id = v["videoId"].as_str().filter(|id| id.len() == 11)?.to_string();
+    if v["isPlayable"] == false {
+        return None;
+    }
+    let title = full_text(&v["title"])?;
+    let byline = ["ownerText", "longBylineText", "shortBylineText"].iter().map(|k| &v[*k]).find(|b| b["runs"].is_array());
+    let channel = byline.and_then(|b| b["runs"][0]["text"].as_str()).map(String::from);
+    let channel_id = byline.and_then(|b| b["runs"][0]["navigationEndpoint"]["browseEndpoint"]["browseId"].as_str());
+    let live = v["badges"].as_array().is_some_and(|b| b.iter().any(|b| b["metadataBadgeRenderer"]["style"] == "BADGE_STYLE_TYPE_LIVE_NOW"))
+        || v["thumbnailOverlays"].as_array().is_some_and(|o| o.iter().any(|o| o["thumbnailOverlayTimeStatusRenderer"]["style"] == "LIVE"));
+    let duration = v.get("lengthText").and_then(renderer_text).and_then(|t| parse_duration(&t)).or_else(|| v["lengthSeconds"].as_str()?.parse().ok());
+    let views = v.get("viewCountText").and_then(full_text).or_else(|| v["videoInfo"]["runs"][0]["text"].as_str().map(String::from));
+    Some(Video {
+        title,
+        channel,
+        channel_url: channel_id.map(|c| format!("https://www.youtube.com/channel/{c}")),
+        duration,
+        short: v["navigationEndpoint"]["reelWatchEndpoint"].is_object(),
+        views: views.as_deref().and_then(parse_views),
+        watched: None,
+        live,
+        id,
+    })
+}
+
+/// All of a text node: a SimpleText, or its runs joined.
+fn full_text(v: &Value) -> Option<String> {
+    if let Some(s) = v["simpleText"].as_str() {
+        return Some(s.to_string());
+    }
+    let text: String = v["runs"].as_array()?.iter().filter_map(|r| r["text"].as_str()).collect();
+    (!text.is_empty()).then_some(text)
 }
 
 fn history_short(v: &Value, day: &str) -> Option<Video> {
@@ -358,9 +489,10 @@ fn parse_duration(s: &str) -> Option<f64> {
     s.trim().split(':').try_fold(0u64, |acc, p| Some(acc * 60 + p.parse::<u64>().ok()?)).map(|n| n as f64)
 }
 
-/// "17K views", "1.2M views", "218 views" as a number.
+/// "17K views", "1.2M views", "218 views", "1,234 watching" as a number.
 fn parse_views(s: &str) -> Option<u64> {
-    let n = s.trim().strip_suffix("views")?.trim();
+    let s = s.trim();
+    let n = s.strip_suffix("views").or_else(|| s.strip_suffix("view")).or_else(|| s.strip_suffix("watching"))?.trim();
     let (num, mult) = match n.chars().last()? {
         'K' | 'k' => (&n[..n.len() - 1], 1e3),
         'M' | 'm' => (&n[..n.len() - 1], 1e6),
