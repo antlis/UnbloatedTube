@@ -323,10 +323,11 @@ pub fn options(cfg: &Config, s: &Settings, pip: bool) -> Vec<String> {
     out.push(format!("--sub-scale={}", s.sub_scale));
     if let (true, Some(script)) = (s.sponsorblock, sponsorblock_script()) {
         out.push(format!("--script={script}"));
-        out.push(format!("--script-opts=sponsorblock_minimal-categories={}", s.skip_segments.join(";")));
+        // `-append`: a plain `--script-opts=` would replace the list, dropping the yt-dlp path
+        // above (mpv would run yt-dlp itself and never use the answers looked up ahead).
+        out.push(format!("--script-opts-append=sponsorblock_minimal-categories={}", s.skip_segments.join(";")));
     }
-    // The app's hover bar, independent of mpv's own controls above. After SponsorBlock's
-    // `--script-opts=`, which would replace this one; `--script=` adds to the scripts.
+    // The app's hover bar, independent of mpv's own controls above.
     if let (false, true, Some(script)) = (pip, s.video_controls, controls_script()) {
         out.push(format!("--script={script}"));
         out.push("--script-opts-append=unbloated-controls-accent=454EFF".into());

@@ -343,6 +343,12 @@ checks it in three quick steps and shows your account. An exported `cookies.txt`
 imported under Advanced instead. **Log out** forgets the app's copy; for a `config.toml`
 login it comments those lines out instead (uncomment them to return).
 
+Reading a browser's cookies takes a few seconds, so the app keeps the last read for the next
+start, for up to 12 hours: in `$XDG_RUNTIME_DIR/unbloatedtube-cookies.txt` (a private folder
+of your login session, emptied when it ends), readable only by you. When YouTube no longer
+accepts them, the app reads the browser again; logging out or changing the login deletes it.
+yt-dlp (the app's and mpv's) gets a copy of them too, made for each run and deleted after it.
+
 While logged out, the app starts on that same **Connect YouTube** screen (or shows it after
 logging out), the header's account tabs are replaced by **Home** and **Sign in** (which opens
 Settings, with Account at the top), and the left column and Recommendations pane show an
@@ -560,6 +566,9 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   request, handing it the caller's stdout and stderr, so a request starts in milliseconds. The
   helper ends with the app. With the standalone yt-dlp binary (or the AppImage's copy) there is
   nothing to load, and every request starts yt-dlp as before.
+  The helper also keeps YouTube's player script and deno's preprocessing of it on disk (in
+  yt-dlp's cache folder, per player version, two weeks), which every lookup otherwise downloads
+  and redoes before solving YouTube's JavaScript challenge.
 - **Faster lookup for ordinary videos, never for live ones.** A single video is looked up first
   with the HLS and DASH manifests skipped, which saves half a second. That answer is used only if
   yt-dlp says `live_status` is `not_live` and it has a length and streams; a live stream, a

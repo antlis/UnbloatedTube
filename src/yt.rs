@@ -245,11 +245,32 @@ fn videos(cfg: &Config, target: &str, limit: usize, on: &mut dyn FnMut(Video)) -
 }
 
 /// `UNBLOATEDTUBE_TIMING=1`: log how long each list took and which way it came, on stderr.
+/// The yt-dlp runs mpv starts write to the app's stderr too (`TIMING_TO`).
 pub fn timing(what: &str, start: std::time::Instant) {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("UNBLOATEDTUBE_TIMING").is_some_and(|v| v != "0"));
-    if *ON {
-        eprintln!("unbloatedtube: {what}: {} ms", start.elapsed().as_millis());
+    if !timing_on() {
+        return;
     }
+    let line = format!("unbloatedtube: {what}: {} ms\n", start.elapsed().as_millis());
+    let open = |path: std::ffi::OsString| std::fs::OpenOptions::new().append(true).create(true).open(path).ok();
+    // A run the app can't be reached from (mpv's, if /proc says no) notes it in the cache folder.
+    let fallback = || open(crate::store::cache_dir().join("timing.log").into());
+    let file = match std::env::var_os(TIMING_TO) {
+        Some(to) => open(to).or_else(fallback),
+        // A yt-dlp run whose stderr nobody reads (mpv keeps it).
+        None if std::env::var_os(crate::prefetch::ENV).is_some() => fallback(),
+        None => None,
+    };
+    match file {
+        Some(mut f) => drop(std::io::Write::write_all(&mut f, line.as_bytes())),
+        None => eprint!("{line}"),
+    }
+}
+
+pub const TIMING_TO: &str = "UNBLOATEDTUBE_TIMING_TO";
+
+pub fn timing_on() -> bool {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("UNBLOATEDTUBE_TIMING").is_some_and(|v| v != "0"));
+    *ON
 }
 
 /// A list asked of YouTube's own API first (one request per page, no yt-dlp start-up), and of
@@ -261,9 +282,15 @@ fn fast_first(
     fallback: impl FnOnce(&mut dyn FnMut(Video)) -> Result<(), String>,
 ) -> Result<(), String> {
     let start = std::time::Instant::now();
-    match ask(on) {
+    let mut first = None;
+    let mut counted = |v: Video| {
+        first.get_or_insert_with(|| start.elapsed().as_millis());
+        on(v)
+    };
+    let r = ask(&mut counted);
+    match r {
         Ok(n) if n > 0 => {
-            timing(&format!("innertube {what} ({n})"), start);
+            timing(&format!("innertube {what} ({n}, first shown after {} ms)", first.unwrap_or(0)), start);
             Ok(())
         }
         r => {
@@ -294,7 +321,8 @@ fn list(cfg: &Config, target: &str, limit: usize, on: &mut dyn FnMut(Video)) -> 
     let Some(id) = browse_id(target) else { return videos(cfg, target, limit, on) };
     fast_first(
         target,
-        |on| crate::account::shared(cfg)?.browse_videos(&id, limit, on),
+        // Nothing at all may mean kept cookies that YouTube no longer takes as a login.
+        |on| crate::account::with_shared(cfg, |a| a.browse_videos(&id, limit, on).and_then(|n| if n > 0 { Ok(n) } else { Err("empty".into()) })),
         on,
         |on| videos(cfg, target, limit, on),
     )
@@ -332,7 +360,7 @@ pub fn auth_probe(cfg: &Config) -> Result<(), String> {
 pub fn history(cfg: &Config, account: Option<Arc<Account>>, on: &mut dyn FnMut(Video)) -> Result<(), String> {
     let list = match account {
         Some(a) => a.history(150),
-        None => Account::load(cfg).and_then(|a| a.history(150)),
+        None => crate::account::with_shared(cfg, |a| a.history(150)),
     };
     match list {
         Ok(list) if !list.is_empty() => {
@@ -776,8 +804,11 @@ pub fn video(cfg: &Config, id: &str) -> Result<Video, String> {
 
 pub fn search(cfg: &Config, query: &str, on: &mut dyn FnMut(Video)) -> Result<(), String> {
     // Signed in, results follow the account (as on the site); without a login they are anonymous.
-    let account = || if cfg.has_auth() { crate::account::shared(cfg) } else { Ok(Arc::new(Account::anonymous())) };
-    fast_first("search", |on| account()?.search_videos(query, 50, on), on, |on| videos(cfg, &format!("ytsearch50:{query}"), 50, on))
+    let ask = |on: &mut dyn FnMut(Video)| match cfg.has_auth() {
+        true => crate::account::with_shared(cfg, |a| a.search_videos(query, 50, on)),
+        false => Account::anonymous().search_videos(query, 50, on),
+    };
+    fast_first("search", ask, on, |on| videos(cfg, &format!("ytsearch50:{query}"), 50, on))
 }
 
 pub fn group_videos(cfg: &Config, url: &str, on: &mut dyn FnMut(Video)) -> Result<(), String> {

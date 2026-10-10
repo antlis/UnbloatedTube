@@ -2665,19 +2665,12 @@ impl Unbloated {
         self.prefetched.insert(id.to_string(), Instant::now());
         self.prefetching += 1;
         let (cfg, format, id) = (self.cfg.clone(), player::format(&self.settings), id.to_string());
-        let task = {
-            let id = id.clone();
-            blocking::unblock(move || { prefetch::fetch(&cfg, &id, &format) })
-        };
+        let task = blocking::unblock(move || prefetch::fetch(&cfg, &id, &format));
         cx.spawn(async move |this, cx| {
-            let res = task.await;
-            this.update(cx, |this, _| {
-                this.prefetching -= 1;
-                if res.is_err() {
-                    this.prefetched.remove(&id);
-                }
-            })
-            .ok();
+            // A video whose lookup failed (members only, upcoming, removed…) isn't asked again
+            // until the entry expires: it would fail again, seconds each time, over and over.
+            let _ = task.await;
+            this.update(cx, |this, _| this.prefetching -= 1).ok();
         })
         .detach();
     }
@@ -2975,13 +2968,15 @@ impl Unbloated {
             let cached = account.is_some();
             let mut account = match account {
                 Some(a) => a,
-                None => Arc::new(Account::load(&cfg)?),
+                None => account::shared(&cfg)?,
             };
+            // Cookies kept from an earlier start may have been rotated since, too.
+            let cached = cached || account.from_kept;
             let mut res = f(&account);
             // A login kept for long enough stops being accepted (YouTube rotates its cookies):
             // try once more with the cookies as the browser has them now.
             if res.is_err() && cached {
-                if let Ok(fresh) = Account::load(&cfg) {
+                if let Ok(fresh) = Account::load_fresh(&cfg) {
                     account = Arc::new(fresh);
                     res = f(&account);
                 }
@@ -3089,7 +3084,7 @@ impl Unbloated {
         self.import_msg = None;
         let cfg = self.cfg.clone();
         cx.spawn(async move |this, cx| {
-            let loaded = blocking::unblock({ let cfg = cfg.clone(); move || Account::load(&cfg) }).await;
+            let loaded = blocking::unblock({ let cfg = cfg.clone(); move || Account::load_fresh(&cfg) }).await;
             let account = match loaded {
                 Ok(account) => account,
                 Err(error) => {
@@ -8570,6 +8565,7 @@ fn main() {
     store::migrate_old_dirs();
     std::thread::spawn(prefetch::sweep);
     prefetch::start_helper();
+    std::thread::spawn(|| account::refresh_kept(&Config::load()));
     Application::new().with_assets(icons::Assets).run(move |cx: &mut App| {
         // At 1280x800, but no bigger than the screen: with display scaling that can be larger than it,
         // and the bottom of the window (and anything there) would be off-screen.

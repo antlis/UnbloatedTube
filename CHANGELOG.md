@@ -6,6 +6,31 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Fixed
+- Lists and account actions start seconds sooner when logged in through the browser: reading
+  its cookies no longer makes a request to YouTube first, and lists asked for at the same
+  time (feed and recommendations at start) share one read instead of each doing their own.
+- The browser's cookies are kept between starts (up to 12 hours, in the private runtime folder,
+  readable only by you), so lists don't wait for the browser at every start. They are read again
+  in the background right away (a running browser renews them, and YouTube soon stops taking the
+  old ones), and a list they were refused for waits for that read. Logging out or a login change deletes them.
+- Videos start about two seconds sooner (and are looked up ahead sooner): yt-dlp gets the kept
+  cookies instead of reading the browser's on every lookup. If YouTube refuses them, the lookup
+  runs again with the browser's own.
+- **Videos start seconds sooner with SponsorBlock on**: its setting replaced the option that
+  makes mpv use the app as its yt-dlp, so mpv ran yt-dlp itself for every video and never used
+  what was looked up ahead of time (pointer resting on a row, Next, the list's first rows).
+- Video lookups skip work yt-dlp repeated every time: YouTube's player script is kept on disk
+  instead of downloaded again for each video, and so is deno's preprocessing of it, which the
+  challenge solving otherwise redoes from scratch (with yt-dlp installed as a Python program, as
+  on Nix, pip and most distributions). Old player versions are cleaned up after two weeks.
+- Playing a video that is still being looked up ahead of time waits for that lookup instead of
+  starting a second one that takes as long again.
+- A video whose lookup ahead of time fails (upcoming, members only, removed…) is no longer looked
+  up again every few seconds while it stays on screen.
+- The timing log also shows when a list's first videos appeared, how long reading the
+  browser's cookies took, and each video lookup (from a kept answer, the quick or the full one).
+
 ## 0.35.0 - 2026-10-10
 
 ### Changed
