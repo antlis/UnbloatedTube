@@ -133,6 +133,16 @@ fn finished(json: &[u8]) -> bool {
         && (v["requested_formats"].as_array().is_some_and(|f| !f.is_empty()) || v["url"].as_str().is_some())
 }
 
+/// Drop the kept answers for a video (every format): the app found their streams unplayable.
+pub fn forget(id: &str) {
+    for entry in std::fs::read_dir(dir()).into_iter().flatten().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.strip_prefix(id).is_some_and(|rest| rest.starts_with('-') && rest.ends_with(".json")) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// Drop answers and helper sockets nobody can use any more (background thread, at startup).
 pub fn sweep() {
     for entry in std::fs::read_dir(dir()).into_iter().flatten().flatten() {
