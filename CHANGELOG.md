@@ -6,6 +6,21 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Added
+- **Settings → Network**, for where YouTube is blocked or slowed down:
+  - **Bypass slowdown**: one switch, nothing to install. The first packet of each connection
+    goes out split, so filters that slow YouTube down by recognising it in the traffic (as in
+    Russia) let it through at full speed. Three methods, as providers differ; *TLS split*, the
+    default, is the one that got through on a Russian provider in testing. Connections try IPv4
+    first (IPv6 to YouTube goes nowhere on some networks).
+  - **Proxy**: everything through Tor, ByeDPI, a V2Ray/Xray/VPN client's local port or any
+    SOCKS5/HTTP proxy, with presets for Tor and ByeDPI.
+  - **Test connection** checks that YouTube answers and how fast, or says what failed, within 12 s.
+
+  Lists, thumbnails, yt-dlp and the video stream all follow it, over OpenSSL (on a Russian
+  network, filters stopped mpv's and the app's other TLS even when split); cast receivers on your
+  network stay direct.
+
 ## 0.40.1 - 2026-10-10
 
 ### Fixed

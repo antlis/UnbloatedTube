@@ -10,6 +10,7 @@ mod links;
 mod mpris;
 mod player;
 mod prefetch;
+mod proxy;
 mod store;
 mod thumbs;
 mod yt;
@@ -198,13 +199,43 @@ const REPO_URL: &str = "https://github.com/antlis/UnbloatedTube";
 const SPEEDS: [f32; 6] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
 
 /// Settings text fields: label, hint, field.
-const TEXT_FIELDS: [(&str, &str, fn(&mut Settings) -> &mut String); 5] = [
+const TEXT_FIELDS: [(&str, &str, fn(&mut Settings) -> &mut String); 6] = [
     ("Cast command", "catt -d \"Living Room\" cast {url}", |s| &mut s.cast_command),
     ("Subtitle language", "Code, e.g. en or ru, or several (en,ru); empty uses your system language", |s| &mut s.sub_lang),
     ("Extra mpv options", "e.g. --volume=70 --deband", |s| &mut s.mpv_args),
     ("Download folder", "Empty for your Downloads folder; ~/ works", |s| &mut s.download_dir),
     ("Hide videos with words", "Comma-separated, e.g. reaction, prank, #shorts: hidden from feeds, channels, recommendations and search", |s| &mut s.hide_words),
+    ("Proxy address", "socks5://127.0.0.1:9050 (Tor), socks5://127.0.0.1:1080 (ByeDPI), or http://host:port; user:password@ before the host if it needs a login", |s| &mut s.proxy),
 ];
+
+/// Settings → Network → Connection: label, value.
+const CONNECTIONS: [(&str, &str); 3] = [("Direct", "direct"), ("Bypass slowdown", "bypass"), ("Proxy", "proxy")];
+/// How Bypass splits the first packet: label, value.
+const BYPASS_METHODS: [(&str, &str); 3] = [("TLS split (recommended)", "tls"), ("TLS + TCP split", "both"), ("TCP split", "tcp")];
+/// Proxy presets: label, address (the programs' default ports).
+const PROXY_PRESETS: [(&str, &str); 2] = [("Tor", "socks5://127.0.0.1:9050"), ("ByeDPI", "socks5://127.0.0.1:1080")];
+
+/// Route the app's connections as Settings → Network says (see proxy.rs).
+fn apply_network(s: &Settings) -> Result<(), String> {
+    let route = match s.connection.as_str() {
+        "bypass" => proxy::Route::Bypass(match s.bypass_method.as_str() {
+            "both" => proxy::Split::Both,
+            "tcp" => proxy::Split::Tcp,
+            _ => proxy::Split::Tls,
+        }),
+        "proxy" if s.proxy.trim().is_empty() => return Ok(proxy::set_route(proxy::Route::Direct)),
+        "proxy" => match proxy::parse_upstream(&s.proxy) {
+            Ok(up) => proxy::Route::Upstream(up),
+            Err(e) => {
+                proxy::set_route(proxy::Route::Direct);
+                return Err(format!("Proxy address: {e}"));
+            }
+        },
+        _ => proxy::Route::Direct,
+    };
+    proxy::set_route(route);
+    Ok(())
+}
 
 const BUTTON_TOGGLES: [Toggle; 13] = [
     ("Back / forward", "Arrows to the video you played before, and back again (Alt+← / Alt+→); the player's own previous / next follow the list", |s| &mut s.history_buttons),
@@ -533,6 +564,8 @@ struct Unbloated {
     quality: Option<(String, u32)>,
     /// Likes and dislikes of the video `votes.0` (None while they load, or when there are none).
     votes: Option<(String, Option<(u64, u64)>)>,
+    /// Settings → Network → Test connection's result.
+    net_test: Option<String>,
     /// DeArrow's answer per video id; None while asked (or after a failure, not asked again).
     dearrow: HashMap<String, Option<dearrow::Branding>>,
     /// The player menu's quality list is open.
@@ -697,6 +730,10 @@ impl Unbloated {
         let nav: Vec<Video> = history.items.iter().take(50).rev().map(|w| w.video.clone()).collect();
         let nav_pos = nav.len().checked_sub(1);
         let settings = Settings::load();
+        // Before anything goes out: lists, thumbnails and mpv follow Settings → Network.
+        if let Err(e) = apply_network(&settings) {
+            eprintln!("unbloatedtube: {e}");
+        }
         let cfg = Arc::new(Config::load());
         let volume = settings.volume;
         LIGHT.store(settings.light_theme, std::sync::atomic::Ordering::Relaxed);
@@ -808,6 +845,7 @@ impl Unbloated {
             player_menu: false,
             quality: None,
             votes: None,
+            net_test: None,
             dearrow: HashMap::new(),
             quality_menu: false,
             sleep: None,
@@ -5685,6 +5723,9 @@ impl Unbloated {
     /// Apply player settings to the running video now: speed directly; anything else that
     /// changes mpv's options reloads the current video at the same position.
     fn apply_player_settings(&mut self, cx: &mut Context<Self>) {
+        if let Err(e) = apply_network(&self.settings) {
+            self.notice = Some(e);
+        }
         self.player.set_speed(self.settings.speed);
         let options = player::options(&self.cfg, &self.settings, self.pip);
         let changed = !self.player.options().is_empty() && self.player.options() != options.as_slice();
@@ -5765,6 +5806,99 @@ impl Unbloated {
                         this.apply_player_settings(cx);
                     })
             }))
+    }
+
+    /// Settings → Network: the connection, then the bypass method or the proxy's address, presets
+    /// and a test.
+    fn network_rows(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let matches = |label: &str, hint: &str| query.is_empty() || format!("{label} {hint}").to_lowercase().contains(query);
+        let mut rows = Vec::new();
+        if !matches("Connection", "network proxy bypass blocked slowdown russia tor byedpi vpn") {
+            return rows;
+        }
+        let conn = self.settings.connection.clone();
+        rows.push(
+            self.choice_row("Connection", CONNECTIONS.iter().map(|(l, v)| (l.to_string(), *v == conn)).collect(), |s, i| s.connection = CONNECTIONS[i].1.into(), cx)
+                .into_any_element(),
+        );
+        let hint = |text: &'static str| div().px_4().pb_2().text_xs().text_color(themed(MUTED)).child(text).into_any_element();
+        match conn.as_str() {
+            "bypass" => {
+                rows.push(hint(
+                    "For where YouTube is slowed down or filtered (Russia, for one): the first packet of each connection goes out split, so the filter doesn't see it's YouTube. Nothing to install; no other server involved. Doesn't help where YouTube's addresses are blocked outright: use a proxy then. If videos stay slow, try another method.",
+                ));
+                let method = self.settings.bypass_method.clone();
+                rows.push(
+                    self.choice_row("Method", BYPASS_METHODS.iter().map(|(l, v)| (l.to_string(), *v == method)).collect(), |s, i| s.bypass_method = BYPASS_METHODS[i].1.into(), cx)
+                        .into_any_element(),
+                );
+            }
+            "proxy" => {
+                rows.push(hint(
+                    "Everything goes through a proxy running on your computer or elsewhere: Tor, ByeDPI, a V2Ray/Xray/sing-box or VPN client's local port, a server of your own. The program itself has to be running.",
+                ));
+                let current = self.settings.proxy.trim().to_string();
+                rows.push(
+                    self.choice_row("Preset", PROXY_PRESETS.iter().map(|(l, v)| (l.to_string(), *v == current)).collect(), |s, i| s.proxy = PROXY_PRESETS[i].1.into(), cx)
+                        .into_any_element(),
+                );
+                let field = TEXT_FIELDS.iter().position(|(l, _, _)| *l == "Proxy address").unwrap();
+                rows.push(self.text_field(field, window, cx).into_any_element());
+            }
+            _ => {}
+        }
+        if conn != "direct" {
+            let result = self.net_test.clone();
+            rows.push(
+                div()
+                    .px_4()
+                    .pb_3()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(self.chip("net-test", "Test connection", false).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.test_connection(cx)))
+                    .when_some(result, |d, r| d.child(div().text_xs().text_color(themed(MUTED)).child(r)))
+                    .into_any_element(),
+            );
+        }
+        rows
+    }
+
+    /// Settings → Network → Test connection: one request to YouTube the way the app sends them.
+    fn test_connection(&mut self, cx: &mut Context<Self>) {
+        self.net_test = Some("Testing…".into());
+        let through_proxy = proxy::url().is_some();
+        let task = blocking::unblock(move || {
+            let start = Instant::now();
+            // First whether the proxy gets through at all, with its reason when it doesn't (the
+            // HTTP client only knows "Proxy failed to connect").
+            if through_proxy {
+                if let Err(e) = proxy::check("www.youtube.com") {
+                    return (Err(e), start.elapsed());
+                }
+            }
+            let res = http::agent_with_timeout(Duration::from_secs(12)).get("https://www.youtube.com/generate_204").call();
+            // The proxy says why in its answer's status line ("502 1.2.3.4:443: timed out").
+            let res = res.map(drop).map_err(|e| match e {
+                ureq::Error::Status(code, resp) => format!("{code} {}", resp.status_text()),
+                e if e.to_string().contains("timed out") => "no answer within 12 s".to_string(),
+                e => e.to_string(),
+            });
+            (res, start.elapsed())
+        });
+        cx.spawn(async move |this, cx| {
+            let (res, took) = task.await;
+            this.update(cx, |this, cx| {
+                this.net_test = Some(match res {
+                    Ok(()) => format!("YouTube answers: {} ms", took.as_millis()),
+                    Err(e) => format!("Doesn't work: {e}"),
+                });
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
     }
 
     /// One of TEXT_FIELDS: click to focus, type, Enter/Esc to finish. Saved on every change.
@@ -6162,7 +6296,8 @@ impl Unbloated {
         }
         let mut sub_rows: Vec<AnyElement> = Vec::new();
         for (i, (label, hint, _)) in TEXT_FIELDS.iter().enumerate() {
-            if matches(label, hint) {
+            // The proxy's address goes with the rest of Network.
+            if matches(label, hint) && *label != "Proxy address" {
                 let row = self.text_field(i, window, cx).into_any_element();
                 if *label == "Subtitle language" { sub_rows.push(row) } else { player.push(row) }
             }
@@ -6188,6 +6323,8 @@ impl Unbloated {
             );
             sections[4].1.push(row.into_any_element());
         }
+        let net = self.network_rows(&query, window, cx);
+        sections.push(("NETWORK", net));
         let show_account = matches("Connect YouTube", "account login logged in sign in browser connect cookies import");
         let nothing = sections.iter().all(|(_, rows)| rows.is_empty())
             && !show_account
@@ -8815,6 +8952,14 @@ fn main() {
         })
         .detach();
         cx.on_app_quit(|_| async { prefetch::cleanup() }).detach();
-        cx.on_window_closed(|cx| cx.quit()).detach();
+        // Quit once GPUI is done closing the window: quitting from inside its close handling
+        // panics in its X11 client ("RefCell already borrowed").
+        cx.on_window_closed(|cx| {
+            cx.spawn(async |cx| {
+                cx.update(|cx| cx.quit()).ok();
+            })
+            .detach();
+        })
+        .detach();
     });
 }
