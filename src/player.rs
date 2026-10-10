@@ -238,6 +238,8 @@ impl Player {
     /// Load a subtitle file and show it.
     pub fn add_subtitle(&self, file: &Path) {
         let _ = self.command(json!(["sub-add", file.display().to_string(), "select"]));
+        // Added to be seen: also after the CC button hid the previous track.
+        let _ = self.command(json!(["set_property", "sub-visibility", true]));
     }
 
     /// Show the subtitle track `id`, or hide the subtitles.

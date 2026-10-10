@@ -133,6 +133,10 @@ list, your playlists, your history, search and a player.
   dislikes"), from the [Return YouTube Dislike](https://returnyoutubedislike.com) project: YouTube
   hides dislikes, so the number is the project's estimate. Works logged out too. The request
   tells the project which video you watch; Settings → Likes and dislikes turns it off.
+- **Subtitle language picker**: right-click the video → Subtitles: … lists the video's own
+  caption tracks, its auto-generated one, and auto-translations into your languages (Settings →
+  Subtitle language); a pick shows those captions at once, for this video only, and the
+  Transcript tab follows it. Off hides them.
 - **Sleep timer**: right-click the video → Sleep: Off, End of this video, or 15 to 90 minutes.
   When the time is up the video pauses (the receiver too while casting); "End of this video"
   lets it finish without autoplay or Up next starting another. The corner shows what it waits
@@ -560,8 +564,6 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
     dotfiles next to the desktop entries.
 - **Subtitles: picker and more.** The CC toggle and the Settings → Subtitles section work. Still
   open:
-  - a picker for the language of the playing video (the app downloads one language at a time),
-    and for translating captions to another language
   - the CC button on the hover bar over the video (`controls.lua`), next to the player buttons
   - subtitle style beyond size (position, background)
   - videos YouTube refuses to give captions to without a login (HTTP 429): a clearer hint, or a
@@ -734,8 +736,8 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
     existing ones); reorder videos in a playlist you own; choose public, unlisted or private when
     creating one; move or copy a video between playlists; remove all watched videos from Watch
     later in one click
-  - *Playback*: save the Up next queue as a playlist, and reorder it by dragging; a subtitles
-    toggle and picker (see *Subtitles* above); a loop or repeat button
+  - *Playback*: save the Up next queue as a playlist, and reorder it by dragging; a loop or repeat
+    button
   - *Browsing*: a Watch later button on every row (today via the save picker); hide watched
     videos in the New uploads feed; search filters for duration, upload date and type
   - *Maintenance*: export and import settings, groups and channel flags. Groups live in one file

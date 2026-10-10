@@ -526,6 +526,13 @@ struct Unbloated {
     /// The player menu's quality list is open.
     quality_menu: bool,
     sleep: Option<Sleep>,
+    /// Captions picked for one video in the player menu: its id, the language code and whether
+    /// generated; the subtitles and the Transcript tab use them instead of Settings → Subtitles.
+    sub_pick: Option<(String, String, bool)>,
+    /// The player menu's subtitle list is open.
+    sub_menu: bool,
+    /// The caption tracks of the video `caption_langs.0` (None while they load).
+    caption_langs: Option<(String, Option<Result<Vec<yt::CaptionLang>, String>>)>,
     /// The player menu's sleep timer list is open.
     sleep_menu: bool,
     /// The pointer is over the menu (it closes 2 seconds after the pointer is away).
@@ -782,6 +789,9 @@ impl Unbloated {
             votes: None,
             quality_menu: false,
             sleep: None,
+            sub_pick: None,
+            sub_menu: false,
+            caption_langs: None,
             sleep_menu: false,
             menu_lists: None,
             menu_hovered: false,
@@ -1810,6 +1820,7 @@ impl Unbloated {
         self.player_menu = false;
         self.quality_menu = false;
         self.sleep_menu = false;
+        self.sub_menu = false;
         self.sync_embed();
         cx.notify();
     }
@@ -2037,7 +2048,7 @@ impl Unbloated {
         const MENU_W: f32 = 240.;
         const ROW_H: f32 = 36.;
         const EDGE: f32 = 48.;
-        let fixed_h = 28. + ROW_H * if downloaded { 3. } else { 2. } + if self.menu_queue.is_some() && self.cast_available() { ROW_H * self.cast_targets().len() as f32 } else { 0. } + if auth { ROW_H + 9. + 24. } else { 0. } + if self.player_menu { ROW_H * (8. + if self.quality_menu { 10. } else { 0. } + if self.sleep_menu { 7. } else { 0. }) + 9. } else { 0. };
+        let fixed_h = 28. + ROW_H * if downloaded { 3. } else { 2. } + if self.menu_queue.is_some() && self.cast_available() { ROW_H * self.cast_targets().len() as f32 } else { 0. } + if auth { ROW_H + 9. + 24. } else { 0. } + if self.player_menu { ROW_H * (8. + if self.quality_menu { 10. } else { 0. } + if self.sleep_menu { 7. } else { 0. } + if self.sub_menu { self.sub_choices().len() as f32 } else { 0. }) + 9. } else { 0. };
         let win = window.viewport_size();
         let (win_w, mut win_h) = (f32::from(win.width), f32::from(win.height));
         if let Some(display) = window.display(cx) {
@@ -2063,6 +2074,39 @@ impl Unbloated {
             (_, Some(h)) => format!("{h}p"),
             _ => "…".to_string(),
         };
+        // Subtitles: the language list (see `sub_choices`); the row says what shows now.
+        let sub_choices = if self.sub_menu { self.sub_choices() } else { Vec::new() };
+        let sub_label = match &self.sub_pick {
+            _ if !self.state.as_ref().is_some_and(|s| s.sub_on) => "off".to_string(),
+            Some((v, code, _)) if self.current.as_ref().is_some_and(|c| c.id == *v) => code.clone(),
+            _ => "on".to_string(),
+        };
+        let sub_rows: Vec<_> = sub_choices
+            .into_iter()
+            .enumerate()
+            .map(|(i, (label, choice, ticked))| {
+                let info = choice == SubChoice::Info;
+                div()
+                    .id(("video-menu-sub-option", i))
+                    .pl_6()
+                    .pr_3()
+                    .py_2()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_sm()
+                    .text_color(if info { themed(MUTED) } else { themed(TEXT) })
+                    .when(!info, |d| d.cursor_pointer().hover(|d| d.bg(themed(BORDER))))
+                    .child(div().w(px(14.)).flex_none().when(ticked, |d| d.child(svg().path(icons::path("check")).size(px(14.)).text_color(themed(ACCENT)))))
+                    .child(div().min_w_0().truncate().child(label.clone()))
+                    .when(!info, |d| {
+                        d.on_click(cx.listener(move |this, _, _, cx| {
+                            this.close_video_menu(cx);
+                            this.pick_sub(choice.clone(), label.clone(), cx);
+                        }))
+                    })
+            })
+            .collect();
         // Sleep timer: off, end of this video (not while casting: the receiver goes on by
         // itself), or minutes; ticked: the end-of-video choice when set.
         let sleep_label = self.sleep_status().map_or("off".to_string(), |s| s.trim_start_matches("Sleep ").to_string());
@@ -2230,10 +2274,14 @@ impl Unbloated {
                                 cx.notify();
                             })))
                             .children(sleep_rows)
-                            .child(row("video-menu-subs").child("Subtitles on / off").on_click(cx.listener(|this, _, _, cx| {
-                                this.close_video_menu(cx);
-                                this.toggle_subtitles(cx);
+                            .child(row("video-menu-subs").child(format!("Subtitles: {sub_label} ›")).on_click(cx.listener(|this, _, _, cx| {
+                                this.sub_menu = !this.sub_menu;
+                                if this.sub_menu {
+                                    this.load_caption_langs(cx);
+                                }
+                                cx.notify();
                             })))
+                            .children(sub_rows)
                             .child(row("video-menu-stats").child("Stats for nerds").on_click(cx.listener(|this, _, _, cx| {
                                 this.close_video_menu(cx);
                                 this.player.toggle_stats();
@@ -4076,9 +4124,103 @@ impl Unbloated {
             .unwrap_or_else(|| "en".into())
     }
 
+    /// The caption languages and kind for video `id`: a pick from the player menu, else
+    /// Settings → Subtitles.
+    fn video_sub_langs(&self, id: &str) -> (String, bool) {
+        match &self.sub_pick {
+            Some((v, code, auto)) if v == id => (code.clone(), *auto),
+            _ => (self.sub_langs(), self.settings.sub_auto),
+        }
+    }
+
+    /// Ask yt-dlp which caption tracks the current video has (once per video).
+    fn load_caption_langs(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.current.as_ref().map(|v| v.id.clone()) else { return };
+        if self.caption_langs.as_ref().is_some_and(|(v, r)| *v == id && !matches!(r, Some(Err(_)))) {
+            return;
+        }
+        self.caption_langs = Some((id.clone(), None));
+        let cfg = self.cfg.clone();
+        let task = {
+            let id = id.clone();
+            cx.background_executor().spawn(async move { yt::caption_langs(&cfg, &id) })
+        };
+        cx.spawn(async move |this, cx| {
+            let res = task.await;
+            this.update(cx, |this, cx| {
+                if let Some((_, slot)) = this.caption_langs.as_mut().filter(|(v, _)| *v == id) {
+                    *slot = Some(res);
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The player menu's subtitle list: Off, the video's own tracks, its generated one, and
+    /// generated translations into the languages of Settings → Subtitles (YouTube offers ~100;
+    /// those are the ones you read). Label, choice, ticked.
+    fn sub_choices(&self) -> Vec<(String, SubChoice, bool)> {
+        let Some(video) = &self.current else { return Vec::new() };
+        let on = self.state.as_ref().is_some_and(|s| s.sub_on);
+        let picked = self.sub_pick.as_ref().filter(|(v, _, _)| *v == video.id).map(|(_, c, a)| (c.clone(), *a));
+        let mut out = vec![("Off".to_string(), SubChoice::Off, !on)];
+        match self.caption_langs.as_ref().filter(|(v, _)| *v == video.id).map(|(_, r)| r) {
+            Some(Some(Ok(langs))) => {
+                let mut push = |label: String, code: &str, auto: bool| {
+                    let ticked = on && picked.as_ref().is_some_and(|(c, a)| c == code && *a == auto);
+                    out.push((label, SubChoice::Lang(code.to_string(), auto), ticked));
+                };
+                for l in langs.iter().filter(|l| !l.auto) {
+                    push(l.name.clone(), &l.code, false);
+                }
+                for l in langs.iter().filter(|l| l.auto && l.code.ends_with("-orig")) {
+                    push(format!("{} (auto-generated)", l.name.trim_end_matches(" (Original)")), &l.code, true);
+                }
+                let has_auto = langs.iter().any(|l| l.auto);
+                for want in self.sub_langs().split(',').map(str::trim) {
+                    let own = langs.iter().any(|l| !l.auto && l.code == want);
+                    if let Some(l) = langs.iter().find(|l| has_auto && l.auto && l.code == want).filter(|_| !own) {
+                        push(format!("{} (auto-translated)", l.name), &l.code, true);
+                    }
+                }
+                if out.len() == 1 {
+                    out.push(("No captions for this video".into(), SubChoice::Info, false));
+                }
+            }
+            Some(Some(Err(e))) => out.push((e.clone(), SubChoice::Info, false)),
+            _ => out.push(("Loading languages…".into(), SubChoice::Info, false)),
+        }
+        out
+    }
+
+    /// Show the captions picked in the player menu for the current video (fetched like the
+    /// subtitles), or hide them.
+    fn pick_sub(&mut self, choice: SubChoice, label: String, cx: &mut Context<Self>) {
+        let Some(id) = self.current.as_ref().map(|v| v.id.clone()) else { return };
+        match choice {
+            SubChoice::Off => {
+                self.player.show_subtitles(false, None);
+                self.notice = Some("Subtitles off".into());
+            }
+            SubChoice::Lang(code, auto) => {
+                self.sub_pick = Some((id.clone(), code, auto));
+                self.subs_none = None;
+                self.subs_pending = None;
+                self.subs_wanted = Some(id);
+                // The Transcript tab follows the pick.
+                self.transcript_for = None;
+                self.notice = Some(format!("Subtitles: {label}"));
+            }
+            SubChoice::Info => {}
+        }
+        cx.notify();
+    }
+
     /// Download the captions of video `id` (yt-dlp, cached); they are added to mpv by `poll_subtitles`.
     fn fetch_subtitles(&mut self, id: String, cx: &mut Context<Self>) {
-        let (cfg, langs, auto) = (self.cfg.clone(), self.sub_langs(), self.settings.sub_auto);
+        let (cfg, (langs, auto)) = (self.cfg.clone(), self.video_sub_langs(&id));
         let dir = store::cache_dir().join("captions");
         // The first version cached the captions as YouTube writes them, in a "subs" folder.
         let _ = std::fs::remove_dir_all(store::cache_dir().join("subs"));
@@ -7179,8 +7321,8 @@ impl Unbloated {
             self.transcript = Load::Idle;
             self.transcript_shown = None;
             self.transcript_query.clear();
-            let (langs, auto, dir) = (self.sub_langs(), self.settings.sub_auto, store::cache_dir().join("captions"));
             let id = id.unwrap_or_default();
+            let ((langs, auto), dir) = (self.video_sub_langs(&id), store::cache_dir().join("captions"));
             self.fetch(cx, "transcript", |s| &mut s.transcript, None, move |cfg, on| yt::transcript(cfg, &id, &langs, auto, &dir, on));
         }
         let q = self.transcript_query.trim().to_lowercase();
@@ -7503,6 +7645,16 @@ impl Saved {
         list.retain(|s| std::path::Path::new(&s.path).exists());
         list
     }
+}
+
+/// A row of the player menu's subtitle list.
+#[derive(Clone, PartialEq)]
+enum SubChoice {
+    Off,
+    /// A caption track: its language code and whether it is generated.
+    Lang(String, bool),
+    /// A line that says something (loading, an error), not a choice.
+    Info,
 }
 
 /// The sleep timer: pause at a time, or let the playing video end without starting another.
