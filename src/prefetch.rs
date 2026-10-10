@@ -142,6 +142,24 @@ fn finished(json: &[u8]) -> bool {
         && (v["requested_formats"].as_array().is_some_and(|f| !f.is_empty()) || v["url"].as_str().is_some())
 }
 
+/// The network route the kept answers were looked up through changed (Settings → Network): drop
+/// them all. Their stream links carry the address they were asked from (`ip=`), and the video
+/// servers refuse them from any other, e.g. links from with a VPN once it is off. `route` is
+/// remembered next to them, so a change between runs counts too.
+pub fn network_changed(route: &str) {
+    let mark = dir().join("network");
+    if std::fs::read_to_string(&mark).ok().as_deref() == Some(route) {
+        return;
+    }
+    for entry in std::fs::read_dir(dir()).into_iter().flatten().flatten() {
+        if entry.path().extension().is_some_and(|e| e == "json") {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    let _ = std::fs::create_dir_all(dir());
+    let _ = std::fs::write(mark, route);
+}
+
 /// Drop the kept answers for a video (every format): the app found their streams unplayable.
 pub fn forget(id: &str) {
     for entry in std::fs::read_dir(dir()).into_iter().flatten().flatten() {

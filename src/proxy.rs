@@ -86,6 +86,8 @@ pub fn set_route(route: Route) {
     if route != Route::Direct {
         PORT.get_or_init(start);
     }
+    // Kept stream links are tied to the address they were looked up from.
+    crate::prefetch::network_changed(&format!("{route:?}"));
     *ROUTE.write().unwrap() = route;
     crate::http::rebuild(url().as_deref());
     if let Some(url) = url().filter(|_| crate::yt::timing_on()) {
