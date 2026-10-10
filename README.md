@@ -133,6 +133,10 @@ list, your playlists, your history, search and a player.
   dislikes"), from the [Return YouTube Dislike](https://returnyoutubedislike.com) project: YouTube
   hides dislikes, so the number is the project's estimate. Works logged out too. The request
   tells the project which video you watch; Settings → Likes and dislikes turns it off.
+- **Sleep timer**: right-click the video → Sleep: Off, End of this video, or 15 to 90 minutes.
+  When the time is up the video pauses (the receiver too while casting); "End of this video"
+  lets it finish without autoplay or Up next starting another. The corner shows what it waits
+  for ("Sleep in 23 min"); the same menu turns it off.
 - **Quality picker**: right-click the video → Quality: 1080p shows the playing quality and a
   list (Auto, 2160p … 144p, Audio only); a pick reloads the video at once from where it was, for
   this video only (the next one plays at Settings → Max quality again). A height is a maximum:
@@ -731,7 +735,7 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
     creating one; move or copy a video between playlists; remove all watched videos from Watch
     later in one click
   - *Playback*: save the Up next queue as a playlist, and reorder it by dragging; a subtitles
-    toggle and picker (see *Subtitles* above); a loop or repeat button; a sleep timer
+    toggle and picker (see *Subtitles* above); a loop or repeat button
   - *Browsing*: a Watch later button on every row (today via the save picker); hide watched
     videos in the New uploads feed; search filters for duration, upload date and type
   - *Maintenance*: export and import settings, groups and channel flags. Groups live in one file
