@@ -26,6 +26,8 @@ pub struct Account {
 /// again: the last one the app loaded, else a fresh load. Forgotten when the login changes.
 static SHARED: Mutex<Option<Arc<Account>>> = Mutex::new(None);
 static LOADING: Mutex<()> = Mutex::new(());
+/// Held while the browser's cookies are read again (`refresh`, `refresh_kept`).
+static REFRESHING: Mutex<()> = Mutex::new(());
 
 pub fn remember(account: &Arc<Account>) {
     *SHARED.lock().unwrap() = Some(account.clone());
@@ -64,13 +66,31 @@ pub fn with_shared<R>(cfg: &Config, mut f: impl FnMut(&Account) -> Result<R, Str
 /// The account with cookies read from the browser now, because `stale` was refused; for the
 /// lists too. Lists refused together wait for one read.
 pub fn refresh(cfg: &Config, stale: &Arc<Account>) -> Result<Arc<Account>, String> {
-    let _one = LOADING.lock().unwrap_or_else(|e| e.into_inner());
+    let _one = REFRESHING.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(a) = SHARED.lock().unwrap().clone().filter(|a| !Arc::ptr_eq(a, stale)) {
         return Ok(a);
     }
     let a = Arc::new(Account::load_fresh(cfg)?);
     remember(&a);
     Ok(a)
+}
+
+/// At start: read the browser's cookies again in the background when kept ones are in use. A
+/// browser that is running rotates them, and YouTube soon stops taking the old ones; lists start
+/// with the kept ones meanwhile, and one they turn out refused for waits for this read.
+pub fn refresh_kept(cfg: &Config) {
+    let Auth::Browser(browser) = &cfg.auth else { return };
+    if kept(browser).is_none() {
+        return;
+    }
+    let _one = REFRESHING.lock().unwrap_or_else(|e| e.into_inner());
+    // A refused list may have read them first.
+    if SHARED.lock().unwrap().as_ref().is_some_and(|a| !a.from_kept) {
+        return;
+    }
+    if let Ok(a) = Account::load_fresh(cfg) {
+        remember(&Arc::new(a));
+    }
 }
 
 /// Reading the browser's cookies takes seconds (yt-dlp, the keyring), so the last export is kept

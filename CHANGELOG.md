@@ -11,8 +11,9 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
   its cookies no longer makes a request to YouTube first, and lists asked for at the same
   time (feed and recommendations at start) share one read instead of each doing their own.
 - The browser's cookies are kept between starts (up to 12 hours, in the private runtime folder,
-  readable only by you), so lists don't wait for the browser at every start; when YouTube
-  stops accepting them they are read again. Logging out or a login change deletes them.
+  readable only by you), so lists don't wait for the browser at every start. They are read again
+  in the background right away (a running browser renews them, and YouTube soon stops taking the
+  old ones), and a list they were refused for waits for that read. Logging out or a login change deletes them.
 - Videos start about two seconds sooner (and are looked up ahead sooner): yt-dlp gets the kept
   cookies instead of reading the browser's on every lookup. If YouTube refuses them, the lookup
   runs again with the browser's own.

@@ -8565,6 +8565,7 @@ fn main() {
     store::migrate_old_dirs();
     std::thread::spawn(prefetch::sweep);
     prefetch::start_helper();
+    std::thread::spawn(|| account::refresh_kept(&Config::load()));
     Application::new().with_assets(icons::Assets).run(move |cx: &mut App| {
         // At 1280x800, but no bigger than the screen: with display scaling that can be larger than it,
         // and the bottom of the window (and anything there) would be off-screen.
