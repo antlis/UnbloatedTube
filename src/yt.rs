@@ -253,10 +253,16 @@ pub fn timing(what: &str, start: std::time::Instant) {
     let line = format!("unbloatedtube: {what}: {} ms\n", start.elapsed().as_millis());
     let open = |path: std::ffi::OsString| std::fs::OpenOptions::new().append(true).create(true).open(path).ok();
     // A run the app can't be reached from (mpv's, if /proc says no) notes it in the cache folder.
-    let file = std::env::var_os(TIMING_TO).map(|to| open(to).or_else(|| open(crate::store::cache_dir().join("timing.log").into())));
+    let fallback = || open(crate::store::cache_dir().join("timing.log").into());
+    let file = match std::env::var_os(TIMING_TO) {
+        Some(to) => open(to).or_else(fallback),
+        // A yt-dlp run whose stderr nobody reads (mpv keeps it).
+        None if std::env::var_os(crate::prefetch::ENV).is_some() => fallback(),
+        None => None,
+    };
     match file {
-        Some(Some(mut f)) => drop(std::io::Write::write_all(&mut f, line.as_bytes())),
-        _ => eprint!("{line}"),
+        Some(mut f) => drop(std::io::Write::write_all(&mut f, line.as_bytes())),
+        None => eprint!("{line}"),
     }
 }
 

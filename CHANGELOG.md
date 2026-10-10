@@ -16,6 +16,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 - Videos start about two seconds sooner (and are looked up ahead sooner): yt-dlp gets the kept
   cookies instead of reading the browser's on every lookup. If YouTube refuses them, the lookup
   runs again with the browser's own.
+- A video whose lookup ahead of time fails (upcoming, members only, removed…) is no longer looked
+  up again every few seconds while it stays on screen.
 - The timing log also shows when a list's first videos appeared, how long reading the
   browser's cookies took, and each video lookup (from a kept answer, the quick or the full one).
 

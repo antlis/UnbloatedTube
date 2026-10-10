@@ -2665,19 +2665,12 @@ impl Unbloated {
         self.prefetched.insert(id.to_string(), Instant::now());
         self.prefetching += 1;
         let (cfg, format, id) = (self.cfg.clone(), player::format(&self.settings), id.to_string());
-        let task = {
-            let id = id.clone();
-            blocking::unblock(move || { prefetch::fetch(&cfg, &id, &format) })
-        };
+        let task = blocking::unblock(move || prefetch::fetch(&cfg, &id, &format));
         cx.spawn(async move |this, cx| {
-            let res = task.await;
-            this.update(cx, |this, _| {
-                this.prefetching -= 1;
-                if res.is_err() {
-                    this.prefetched.remove(&id);
-                }
-            })
-            .ok();
+            // A video whose lookup failed (members only, upcoming, removed…) isn't asked again
+            // until the entry expires: it would fail again, seconds each time, over and over.
+            let _ = task.await;
+            this.update(cx, |this, _| this.prefetching -= 1).ok();
         })
         .detach();
     }
