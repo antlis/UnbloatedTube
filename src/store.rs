@@ -156,6 +156,14 @@ impl History {
         self.items.truncate(1000);
     }
 
+    /// Fill in the channel of an entry that came without one (Shorts in YouTube's history).
+    pub fn set_channel(&mut self, id: &str, name: &str, url: &str) {
+        if let Some(w) = self.items.iter_mut().find(|w| w.video.id == id && w.video.channel_url.is_none()) {
+            w.video.channel = Some(name.to_string());
+            w.video.channel_url = Some(url.to_string());
+        }
+    }
+
     pub fn set_position(&mut self, id: &str, position: f64, finished: bool) {
         if let Some(w) = self.items.iter_mut().find(|w| w.video.id == id) {
             w.position = position;

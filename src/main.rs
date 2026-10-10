@@ -3358,16 +3358,46 @@ impl Unbloated {
     /// Fetch whether the current video is liked and its channel subscribed.
     fn load_status(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.current.as_ref().map(|v| v.id.clone()) else { return };
-        if !(self.account_buttons() || self.info_wanted()) || self.status_requested.as_ref() == Some(&id) {
+        // Also for a video that came without its channel (a Short from YouTube's history): the
+        // watch page names it.
+        let no_channel = self.cfg.has_auth() && self.current.as_ref().is_some_and(|v| v.channel_url.is_none());
+        if !(self.account_buttons() || self.info_wanted() || no_channel) || self.status_requested.as_ref() == Some(&id) {
             return;
         }
         self.status_requested = Some(id.clone());
         let vid = id.clone();
         self.with_account(cx, move |a| a.status(&vid), move |this, res, _| match res {
-            Ok(st) if this.current.as_ref().is_some_and(|v| v.id == id) => this.status = Some((id, st)),
+            Ok(st) if this.current.as_ref().is_some_and(|v| v.id == id) => {
+                this.fill_channel(&id, &st);
+                this.status = Some((id, st));
+            }
             Ok(_) => {}
             Err(e) => this.notice = Some(e),
         });
+    }
+
+    /// A video without its channel (a Short from YouTube's history) gets it from its watch page:
+    /// the playing one (so the channel button shows), and its rows in History.
+    fn fill_channel(&mut self, id: &str, st: &account::VideoStatus) {
+        let (Some(name), Some(channel)) = (&st.channel, &st.channel_id) else { return };
+        let url = format!("https://www.youtube.com/channel/{channel}");
+        let fill = |v: &mut Video| {
+            if v.id == id && v.channel_url.is_none() {
+                v.channel = Some(name.clone());
+                v.channel_url = Some(url.clone());
+            }
+        };
+        if let Some(v) = self.current.as_mut() {
+            fill(v);
+        }
+        if let Load::Ready(list) | Load::Loading(list) = &mut self.yt_history {
+            if list.iter().any(|v| v.id == id && v.channel_url.is_none()) {
+                list.iter_mut().for_each(fill);
+                store::save_list("history", list);
+            }
+        }
+        self.history.set_channel(id, name, &url);
+        self.history.save();
     }
 
     /// DeArrow's title and thumbnail for a video, when either is turned on: asked once, the first

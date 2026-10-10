@@ -6,6 +6,11 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Fixed
+- Shorts from your YouTube history had no channel: playing one now looks it up (from the
+  same request as the like and subscribe buttons), so the channel button shows under it, and its
+  row in History names the channel from then on.
+
 ## 0.39.0 - 2026-10-10
 
 ### Added

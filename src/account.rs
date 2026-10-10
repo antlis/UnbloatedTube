@@ -154,6 +154,8 @@ pub struct Me {
 #[derive(Clone, Debug, Default)]
 pub struct VideoStatus {
     pub channel_id: Option<String>,
+    /// The channel's name, as the watch page shows it.
+    pub channel: Option<String>,
     pub subscribed: bool,
     pub liked: bool,
     pub disliked: bool,
@@ -294,8 +296,10 @@ impl Account {
             _ => {}
         });
         let sub = sub.unwrap_or_default();
+        let owner_id = owner.as_ref().and_then(|o| o["navigationEndpoint"]["browseEndpoint"]["browseId"].as_str()).filter(|id| id.starts_with("UC"));
         Ok(VideoStatus {
-            channel_id: sub["channelId"].as_str().map(String::from),
+            channel_id: sub["channelId"].as_str().or(owner_id).map(String::from),
+            channel: owner.as_ref().and_then(|o| full_text(&o["title"])),
             subscribed: sub["subscribed"].as_bool().unwrap_or(false),
             liked: like.as_deref() == Some("LIKE"),
             disliked: like.as_deref() == Some("DISLIKE"),
