@@ -408,6 +408,9 @@ struct Unbloated {
     tab: Tab,
     subs: Browser,
     yt_history: Load<Video>,
+    /// When YouTube's history was last asked for in this session (the startup list is the one
+    /// saved last time).
+    yt_history_asked: Option<Instant>,
     playlists: Browser,
     recs: Load<Video>,
     /// Watch later, for its tab under the player; fetched when the tab is first shown.
@@ -765,6 +768,7 @@ impl Unbloated {
             tab,
             subs: Browser::new(),
             yt_history: Load::Idle,
+            yt_history_asked: None,
             playlists: Browser::new(),
             recs: Load::Idle,
             watch_later: Load::Idle,
@@ -1086,6 +1090,7 @@ impl Unbloated {
 
     /// YouTube's watch history (cached; the cache shows until the fresh one is complete).
     fn load_yt_history(&mut self, cx: &mut Context<Self>) {
+        self.yt_history_asked = Some(Instant::now());
         let account = self.account.clone();
         self.fetch(cx, "history", |s| &mut s.yt_history, Some("history".into()), move |cfg, on| yt::history(cfg, account, on));
     }
@@ -2577,7 +2582,11 @@ impl Unbloated {
             Tab::Search | Tab::Settings | Tab::Downloads => false,
             // Logged out: only fetch the anonymous home the first time (or after a failure).
             _ if !self.cfg.has_auth() => matches!(self.anon, Load::Idle | Load::Failed(_)),
-            Tab::History => matches!(self.yt_history, Load::Idle),
+            // The list shown may be the one saved last time, or from a while ago: ask again
+            // (it stays on screen until the new one is complete).
+            Tab::History => {
+                !matches!(self.yt_history, Load::Loading(_)) && self.yt_history_asked.is_none_or(|t| t.elapsed() > Duration::from_secs(60))
+            }
             _ => matches!(self.browser(tab).groups, Load::Idle),
         };
         if idle {

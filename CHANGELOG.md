@@ -6,6 +6,11 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Fixed
+- History showed the list saved at the last start (or from earlier in the session) until you
+  pressed refresh: opening it now asks YouTube again when the list wasn't fetched in the last
+  minute, keeping the old one on screen until the new one arrives.
+
 ## 0.37.0 - 2026-10-10
 
 ### Changed
