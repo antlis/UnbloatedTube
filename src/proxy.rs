@@ -88,6 +88,9 @@ pub fn set_route(route: Route) {
     }
     *ROUTE.write().unwrap() = route;
     crate::http::rebuild(url().as_deref());
+    if let Some(url) = url().filter(|_| crate::yt::timing_on()) {
+        eprintln!("unbloatedtube: network: {:?} through {url}", ROUTE.read().unwrap());
+    }
 }
 
 /// The proxy for yt-dlp, mpv and the HTTP client: None with the Direct route (or if the
