@@ -6,6 +6,11 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Changed
+- **Faster Description and Comments tabs.** Both come straight from YouTube's API instead of
+  a yt-dlp run each (seconds before): the description as its uploader typed it, the comments in
+  YouTube's "Top comments" order, a page at a time. yt-dlp remains the fallback.
+
 ## 0.37.0 - 2026-10-10
 
 ### Changed

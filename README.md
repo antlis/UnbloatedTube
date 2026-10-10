@@ -537,8 +537,8 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
 - **Nothing blocks the UI thread.** yt-dlp runs, InnerTube requests and mpv queries all happen
   on background threads; results come back to the UI as they arrive.
 - **Lists straight from YouTube.** The subscriptions feed, playlists (Watch later and Liked
-  included), recommendations, search, channel tabs (Videos, Shorts, Live; also logged out) and
-  the list of your subscribed channels are asked of YouTube's InnerTube API, one HTTPS request
+  included), recommendations, search, channel tabs (Videos, Shorts, Live; also logged out),
+  the list of your subscribed channels, a video's description and its comments are asked of YouTube's InnerTube API, one HTTPS request
   per page of about 20–100 videos, instead of starting yt-dlp, which takes seconds for the same
   list. If that fails or finds nothing, yt-dlp fetches the list as before.
 - **One HTTP client.** InnerTube, thumbnails, dislike counts and cast receivers share one
