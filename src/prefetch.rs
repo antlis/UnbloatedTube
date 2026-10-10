@@ -357,6 +357,11 @@ pub fn run_shim() -> ! {
 /// copy's path comes back for deleting it; without kept cookies, `args` stay as they are.
 fn kept_cookies(args: &[String]) -> (Vec<String>, Option<PathBuf>) {
     let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
+    // A run that saves a jar of its own (the app reading the browser's cookies) must read the
+    // browser: with two --cookies, yt-dlp would take neither the browser nor the kept ones.
+    if args[..end].iter().any(|a| a == "--cookies" || a.starts_with("--cookies=")) {
+        return (args.to_vec(), None);
+    }
     let found = args[..end].iter().enumerate().find_map(|(i, a)| match a.strip_prefix("--cookies-from-browser") {
         Some("") => args.get(i + 1).map(|spec| (i, 2, spec.clone())),
         Some(rest) => rest.strip_prefix('=').map(|spec| (i, 1, spec.to_string())),

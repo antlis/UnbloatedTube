@@ -97,6 +97,7 @@ fn keep(browser: &str, text: &str) {
 /// its jar back to the file it is given, so each run gets its own). The caller deletes it.
 pub fn kept_copy(browser: &str) -> Option<std::path::PathBuf> {
     let text = kept(browser)?;
+    Account::from_cookies(&text).ok()?;
     let path = kept_path().with_file_name(format!("unbloatedtube-cookies-run-{}.txt", std::process::id()));
     write_private(&path, &text).ok()?;
     Some(path)
@@ -166,7 +167,6 @@ impl Account {
                 let start = std::time::Instant::now();
                 let (text, spec) = export_browser_cookies(browser)?;
                 crate::yt::timing(&format!("cookies from {spec}"), start);
-                keep(browser, &text);
                 // yt-dlp sometimes needs a keyring suffix ("brave+gnomekeyring") to read
                 // Chromium's encrypted cookies. Remember the spec that worked so every
                 // later call agrees — but only when auth.json (not config.toml) is the
@@ -180,7 +180,12 @@ impl Account {
             }
             Auth::None => return Err("not logged in".into()),
         };
-        Self::from_cookies(&text)
+        let account = Self::from_cookies(&text)?;
+        // Only a login is kept: anything else would stand in for the browser's for hours.
+        if let Auth::Browser(browser) = &cfg.auth {
+            keep(browser, &text);
+        }
+        Ok(account)
     }
 
     /// No login: what YouTube answers anyone (search, public playlists).

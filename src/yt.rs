@@ -251,9 +251,12 @@ pub fn timing(what: &str, start: std::time::Instant) {
         return;
     }
     let line = format!("unbloatedtube: {what}: {} ms\n", start.elapsed().as_millis());
-    match std::env::var_os(TIMING_TO).and_then(|to| std::fs::OpenOptions::new().append(true).open(to).ok()) {
-        Some(mut f) => drop(std::io::Write::write_all(&mut f, line.as_bytes())),
-        None => eprint!("{line}"),
+    let open = |path: std::ffi::OsString| std::fs::OpenOptions::new().append(true).create(true).open(path).ok();
+    // A run the app can't be reached from (mpv's, if /proc says no) notes it in the cache folder.
+    let file = std::env::var_os(TIMING_TO).map(|to| open(to).or_else(|| open(crate::store::cache_dir().join("timing.log").into())));
+    match file {
+        Some(Some(mut f)) => drop(std::io::Write::write_all(&mut f, line.as_bytes())),
+        _ => eprint!("{line}"),
     }
 }
 
