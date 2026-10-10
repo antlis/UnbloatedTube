@@ -6,6 +6,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.33.0 - 2026-10-10
+
 ### Added
 - **Subtitle language picker**: right-click the video → Subtitles lists the video's caption
   tracks, its auto-generated one and auto-translations into your subtitle languages. A pick
