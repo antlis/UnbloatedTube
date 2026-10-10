@@ -611,8 +611,8 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
 - **Subtitles: picker and more.** The CC toggle and the Settings → Subtitles section work. Still
   open:
   - subtitle style beyond size (position, background)
-  - videos YouTube refuses to give captions to without a login (HTTP 429): a clearer hint, or a
-    way to get them (yt-dlp's PO token plugins)
+  - captions YouTube keeps refusing (HTTP 429) even after the retry: a way to get them anyway
+    (yt-dlp's PO token plugins)
 - **Feature ideas** (none started; roughly smallest first):
   - *A daily watch-time limit*: a budget, a quiet counter and a soft stop when it runs out,
     optionally only at certain hours or for certain groups

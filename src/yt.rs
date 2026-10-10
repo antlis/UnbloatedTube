@@ -632,28 +632,39 @@ pub fn subtitles(cfg: &Config, id: &str, langs: &str, auto: bool, dir: &std::pat
             let _ = std::fs::remove_file(entry.path());
         }
     }
-    let out = crate::prefetch::ytdlp()
-        .env("PYCRYPTODOME_DISABLE_GMP", "1")
-        .args(["--no-update", "--no-warnings", "--skip-download", "--no-playlist", "--write-subs"])
-        .args(auto.then_some("--write-auto-subs"))
-        .args(["--sub-format", "vtt", "--sub-langs", &langs.join(",")])
-        .arg("-o")
-        .arg(dir.join("%(id)s.%(ext)s"))
-        .args(cfg.cookie_args())
-        .arg(format!("https://www.youtube.com/watch?v={id}"))
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("cannot run yt-dlp: {e}"))?;
-    if let Some(file) = find() {
-        tidy(&file);
-        return Ok(Some(file));
+    let fetch = || {
+        crate::prefetch::ytdlp()
+            .env("PYCRYPTODOME_DISABLE_GMP", "1")
+            .args(["--no-update", "--no-warnings", "--skip-download", "--no-playlist", "--write-subs"])
+            .args(auto.then_some("--write-auto-subs"))
+            .args(["--sub-format", "vtt", "--sub-langs", &langs.join(",")])
+            .arg("-o")
+            .arg(dir.join("%(id)s.%(ext)s"))
+            .args(cfg.cookie_args())
+            .arg(format!("https://www.youtube.com/watch?v={id}"))
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("cannot run yt-dlp: {e}"))
+    };
+    // YouTube answers HTTP 429 when it limits caption requests, often only for a moment: one
+    // more try a few seconds later usually gets them.
+    for retry in [false, true] {
+        if retry {
+            std::thread::sleep(std::time::Duration::from_secs(4));
+        }
+        let out = fetch()?;
+        if let Some(file) = find() {
+            tidy(&file);
+            return Ok(Some(file));
+        }
+        if !String::from_utf8_lossy(&out.stderr).contains("429") {
+            return Ok(None);
+        }
     }
-    let err = String::from_utf8_lossy(&out.stderr);
-    if err.contains("429") {
-        Err("YouTube refused the captions (HTTP 429); signing in helps".into())
-    } else {
-        Ok(None)
-    }
+    Err(match cfg.has_auth() {
+        true => "YouTube is limiting caption requests right now (HTTP 429); try again in a minute".into(),
+        false => "YouTube refused the captions (HTTP 429); signing in helps".into(),
+    })
 }
 
 /// A caption track a video offers: its language code (what `subtitles` takes), YouTube's name
