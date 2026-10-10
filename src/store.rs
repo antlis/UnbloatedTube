@@ -255,6 +255,12 @@ pub struct Settings {
     /// Like and dislike counts of the playing video, from the Return YouTube Dislike API.
     pub show_votes: bool,
     pub show_subs: bool,
+    /// Settings → Network: "direct", "bypass" (split the first packet, see proxy.rs) or "proxy".
+    pub connection: String,
+    /// How Bypass splits: "both", "tls" or "tcp".
+    pub bypass_method: String,
+    /// The proxy for "proxy": socks5://… or http://….
+    pub proxy: String,
     /// DeArrow: community titles and thumbnails instead of clickbait ones (see dearrow.rs).
     pub dearrow_titles: bool,
     pub dearrow_thumbs: bool,
@@ -345,6 +351,9 @@ impl Default for Settings {
             show_date: true,
             show_votes: true,
             show_subs: true,
+            connection: "direct".into(),
+            bypass_method: "both".into(),
+            proxy: String::new(),
             dearrow_titles: false,
             dearrow_thumbs: false,
             autoplay: true,

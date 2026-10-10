@@ -311,6 +311,11 @@ fn window_options(cfg: &Config, s: &Settings, own_window: bool, corner: bool) ->
         Auth::Browser(b) => raw.push(format!("cookies-from-browser={b}")),
         Auth::None => raw.clear(),
     }
+    // Settings → Network: mpv's streams and its yt-dlp through the app's proxy.
+    if let Some(proxy) = crate::proxy::url() {
+        out.push(format!("--http-proxy={proxy}"));
+        raw.push(format!("proxy={proxy}"));
+    }
     if !raw.is_empty() {
         out.push(format!("--ytdl-raw-options={}", raw.join(",")));
     }

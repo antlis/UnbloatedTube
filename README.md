@@ -221,6 +221,29 @@ At the very bottom of the page, a **GitHub** button opens the project's page and
 Window layout (column width, player height, Continue watching height) is set by dragging and
 remembered.
 
+### Where YouTube is blocked or slowed down
+
+Settings → Network → **Connection**:
+
+- **Direct**: as usual.
+- **Bypass slowdown**: for countries that slow YouTube down or filter it by looking at the traffic
+  (Russia since 2024, and some providers elsewhere). The first packet of every connection names
+  the server it is for; the app sends it split in two, so the filter doesn't recognise YouTube,
+  the way ByeDPI, zapret and GoodbyeDPI do. Nothing to install, no other server involved, full
+  speed. Three **methods** (TLS + TCP split, TLS split, TCP split): providers' filters differ, so
+  if videos stay slow, try another. It can't help where YouTube's addresses are blocked
+  outright: use a proxy there.
+- **Proxy**: everything through a proxy you have running: **Tor** (`socks5://127.0.0.1:9050`),
+  **ByeDPI** (`socks5://127.0.0.1:1080`), the local port of a V2Ray, Xray, sing-box or VPN
+  client, or a server of your own (`socks5://` or `http://`, with `user:password@` if it needs a
+  login). Tor gets through nearly anything, but slowly, and YouTube often answers it with "Sign in
+  to confirm you're not a bot".
+
+**Test connection** asks YouTube once, the way the app does, and says how long it took. With
+Bypass or Proxy, everything goes through a small proxy inside the app: lists, thumbnails, yt-dlp
+and the video itself (mpv only speaks HTTP proxies; this way SOCKS ones work for it too).
+Addresses on your own network (cast receivers) always go direct.
+
 ### Keyboard
 
 `?` shows every shortcut. Defaults:
@@ -536,6 +559,7 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
 | `embed.rs` | Creates an X11 child window inside the app's window for `mpv --wid`, and keeps it positioned over the player area. |
 | `store.rs` | `config.toml`, `settings.json`, watch history with resume positions, seen videos, groups, cached lists. |
 | `thumbs.rs` | Downloads and caches thumbnails and avatars. |
+| `proxy.rs` | The local proxy behind Settings → Network: Bypass (the TLS ClientHello split into two records and/or two TCP segments, inside the server name) or an upstream SOCKS5/HTTP proxy; local addresses direct. |
 | `icons.rs` | Small single-color SVG icons compiled into the binary. |
 
 ### Design notes

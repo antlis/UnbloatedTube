@@ -81,9 +81,18 @@ pub fn self_exe() -> Option<PathBuf> {
 
 /// yt-dlp for the app's own requests: this program as the shim, so they get the helper too.
 pub fn ytdlp() -> Command {
-    let Some(exe) = self_exe() else { return Command::new("yt-dlp") };
-    let mut cmd = Command::new(exe);
-    cmd.envs(environment());
+    let mut cmd = match self_exe() {
+        Some(exe) => {
+            let mut cmd = Command::new(exe);
+            cmd.envs(environment());
+            cmd
+        }
+        None => Command::new("yt-dlp"),
+    };
+    // Settings → Network: through the app's proxy.
+    if let Some(proxy) = crate::proxy::url() {
+        cmd.args(["--proxy", &proxy]);
+    }
     cmd
 }
 
