@@ -99,6 +99,24 @@ pub fn url() -> Option<String> {
     PORT.get().copied().flatten().map(|port| format!("http://127.0.0.1:{port}"))
 }
 
+/// Settings → Network → Test connection: can the proxy reach `host`, and in how long? The
+/// proxy's own answer, which says why when it can't. Blocking.
+pub fn check(host: &str) -> Result<Duration, String> {
+    let start = std::time::Instant::now();
+    let Some(port) = PORT.get().copied().flatten() else { return Err("the app's proxy didn't start".into()) };
+    let mut s = TcpStream::connect(("127.0.0.1", port)).map_err(|e| e.to_string())?;
+    s.set_read_timeout(Some(Duration::from_secs(12))).map_err(|e| e.to_string())?;
+    s.write_all(format!("CONNECT {host}:443 HTTP/1.1\r\nHost: {host}:443\r\n\r\n").as_bytes()).map_err(|e| e.to_string())?;
+    let mut answer = [0u8; 512];
+    let n = s.read(&mut answer).map_err(|e| if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut { "no answer within 12 s".to_string() } else { e.to_string() })?;
+    let line = String::from_utf8_lossy(&answer[..n]).lines().next().unwrap_or("").to_string();
+    match line.split_once(' ').map(|(_, rest)| rest) {
+        Some(rest) if rest.starts_with("200") => Ok(start.elapsed()),
+        Some(rest) => Err(rest.trim_start_matches("502 ").to_string()),
+        None => Err("no answer".into()),
+    }
+}
+
 fn start() -> Option<u16> {
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| eprintln!("unbloatedtube: proxy: {e}")).ok()?;
     let port = listener.local_addr().ok()?.port();
@@ -139,7 +157,11 @@ fn serve(mut client: TcpStream) -> io::Result<()> {
         let Some((host, port)) = host_port(target, 443) else { return reply(&mut client, "400 Bad Request") };
         let server = match connect(&route, &host, port) {
             Ok(s) => s,
-            Err(e) => return reply(&mut client, &format!("502 {e}")),
+            Err(e) => {
+                // The app's HTTP client keeps only "Proxy failed to connect": say why here.
+                eprintln!("unbloatedtube: proxy: can't reach {host}:{port}: {e}");
+                return reply(&mut client, &format!("502 {e}"));
+            }
         };
         client.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")?;
         let split = match route {

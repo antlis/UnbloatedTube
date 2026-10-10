@@ -5867,8 +5867,16 @@ impl Unbloated {
     /// Settings → Network → Test connection: one request to YouTube the way the app sends them.
     fn test_connection(&mut self, cx: &mut Context<Self>) {
         self.net_test = Some("Testing…".into());
-        let task = blocking::unblock(|| {
+        let through_proxy = proxy::url().is_some();
+        let task = blocking::unblock(move || {
             let start = Instant::now();
+            // First whether the proxy gets through at all, with its reason when it doesn't (the
+            // HTTP client only knows "Proxy failed to connect").
+            if through_proxy {
+                if let Err(e) = proxy::check("www.youtube.com") {
+                    return (Err(e), start.elapsed());
+                }
+            }
             let res = http::agent_with_timeout(Duration::from_secs(12)).get("https://www.youtube.com/generate_204").call();
             // The proxy says why in its answer's status line ("502 1.2.3.4:443: timed out").
             let res = res.map(drop).map_err(|e| match e {
