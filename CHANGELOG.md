@@ -6,6 +6,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.39.0 - 2026-10-10
+
 ### Added
 - **CC button on the hover bar** over the video, between ±10 s and the speed: subtitles on or off
   for the video, like V (filled while they show). It replaces the CC button under the player,
