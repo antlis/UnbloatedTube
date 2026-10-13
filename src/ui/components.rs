@@ -1,7 +1,6 @@
 use gpui::{
-    canvas, div, prelude::*, App, ClickEvent, Context, ElementId, FontWeight,
-    KeyDownEvent, Pixels, Rgba, SharedString, Stateful, Styled, AnimationExt,
-    UniformListScrollHandle, Window, svg,
+    div, px, prelude::*, FontWeight, KeyDownEvent, SharedString, Stateful, Styled,
+    UniformListScrollHandle, svg, AnimationExt,
 };
 use std::rc::Rc;
 use std::sync::Arc;
@@ -168,44 +167,6 @@ pub fn edit_text(
     edit
 }
 
-/// Hover tooltip content.
-/// `left`: opens to the left of the pointer, for things at the left column's right edge,
-/// where a tooltip would run under the (always on top) video.
-struct Tip(SharedString, bool);
-
-impl crate::Render for Tip {
-    fn render(&mut self, _: &mut crate::Window, _: &mut crate::Context<Self>) -> impl gpui::IntoElement {
-        let tip = crate::div()
-            .whitespace_nowrap()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(themed(crate::HOVER))
-            .border_1()
-            .border_color(themed(crate::BORDER))
-            .text_xs()
-            .text_color(themed(crate::TEXT))
-            .child(self.0.clone());
-        if self.1 {
-            // A zero-width anchor at the pointer, with the tooltip hanging off to its left.
-            crate::div().relative().w_0().child(tip.absolute().right(crate::px(8.)).top_0())
-        } else {
-            tip
-        }
-    }
-}
-
-/// Tooltip opening to the right of the pointer.
-pub fn tip(text: impl Into<SharedString>) -> impl Fn(&mut crate::Window, &mut crate::App) -> gpui::AnyView + 'static {
-    let text = text.into();
-    move |_, cx| cx.new(|_| Tip(text.clone(), false)).into()
-}
-
-/// Tooltip opening to the left of the pointer.
-pub fn tip_left(text: impl Into<SharedString>) -> impl Fn(&mut crate::Window, &mut crate::App) -> gpui::AnyView + 'static {
-    let text = text.into();
-    move |_, cx| cx.new(|_| Tip(text.clone(), true)).into()
-}
 
 /// The red "LIVE" tag on live streams (small on thumbnails, `big` beside the playing video).
 pub fn live_badge(big: bool) -> gpui::Div {
@@ -219,38 +180,6 @@ pub fn live_badge(big: bool) -> gpui::Div {
         .text_size(crate::px(if big { 11. } else { 9. }))
         .font_weight(FontWeight::BOLD)
         .child("LIVE")
-}
-
-/// Square icon button with a hover tooltip; `enabled: false` greys it out.
-pub fn icon_button(
-    id: impl Into<gpui::ElementId>,
-    icon: &str,
-    tooltip: impl Into<SharedString>,
-    enabled: bool,
-) -> gpui::Stateful<gpui::Div> {
-    crate::div()
-        .id(id)
-        .mr_2()
-        .p(crate::px(7.))
-        .rounded_md()
-        .bg(themed(crate::HOVER))
-        .child(svg().path(icons::path(icon)).size(crate::px(16.)).text_color(if enabled { themed(crate::TEXT) } else { themed(crate::BORDER) }))
-        .when(enabled, |d| d.cursor_pointer().hover(|d| d.bg(themed(crate::BORDER))))
-        .tooltip(tip(tooltip))
-}
-
-/// First visible row and how many rows fit, for a uniform list of `row_h`-tall rows.
-/// `fallback_h` is used until the list has been laid out once.
-pub fn scroll_window(
-    handle: &UniformListScrollHandle,
-    row_h: f32,
-    fallback_h: f32,
-) -> (usize, usize) {
-    let state = handle.0.borrow();
-    let top = (f32::from(-state.base_handle.offset().y) / row_h).max(0.).floor() as usize;
-    let h = f32::from(state.base_handle.bounds().size.height);
-    let visible = (if h > 0. { h } else { fallback_h } / row_h).floor().max(1.) as usize;
-    (top, visible)
 }
 
 /// Tab button: active shows accent underline, inactive muted.
@@ -271,54 +200,27 @@ pub fn tab_button(label: impl Into<SharedString>, active: bool) -> gpui::Statefu
         .child(label)
 }
 
-/// Red pulse animation for recording/live indicators.
-pub fn pulse(id: impl Into<gpui::ElementId>, el: gpui::Div) -> gpui::AnyElement {
-    el.with_animation(
-        id.into(),
-        gpui::Animation::new(std::time::Duration::from_millis(1400)).repeat().with_easing(gpui::pulsating_between(0.35, 0.9)),
-        |d, t| d.opacity(t),
-    )
-    .into_any_element()
-}
-
-/// Skeleton placeholder for unloaded lists.
-pub fn skeleton(rows: Rows) -> gpui::Div {
+/// A small rounded chip (filter bar, group editor).
+pub fn chip(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<SharedString>,
+    on: bool,
+) -> gpui::Stateful<gpui::Div> {
+    let label: SharedString = label.into();
     crate::div()
+        .id(id)
+        .px_3()
+        .py_1()
+        .rounded_sm()
+        .text_xs()
+        .cursor_pointer()
+        .bg(if on { themed(crate::ACCENT) } else { themed(crate::HOVER) })
+        .text_color(if on { themed(crate::ON_ACCENT) } else { themed(crate::TEXT) })
+        .hover(|d| d.bg(themed(crate::BORDER)))
         .flex()
-        .flex_col()
+        .items_center()
         .gap_1()
-        .children((0..6).map(|_| {
-            crate::div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(crate::ui::render::skeleton_thumb())
-                .child(
-                    crate::div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(crate::ui::render::skeleton_line())
-                        .child(crate::ui::render::skeleton_line()),
-                )
-        }))
-}
-
-/// Loading bar for the player.
-pub fn loading_bar(id: &'static str) -> impl gpui::IntoElement {
-    crate::div().relative().w_full().h(crate::px(2.)).overflow_hidden().child(
-        crate::div()
-            .absolute()
-            .top_0()
-            .h_full()
-            .w(gpui::relative(0.3))
-            .bg(themed(crate::ACCENT))
-            .with_animation(
-                id,
-                gpui::Animation::new(std::time::Duration::from_millis(1200)).repeat(),
-                |d, t| d.left(gpui::relative(t * 1.3 - 0.3)),
-            ),
-    )
+        .child(label)
 }
 
 /// Clear a failed load state to Idle so it can be retried.
@@ -346,24 +248,4 @@ pub fn session_hint(error: String) -> String {
     } else {
         error
     }
-}
-
-/// Divider for a split (columns or player).
-pub fn divider(id: &'static str, split: Split, cx: &mut Context<Unbloated>) -> gpui::Stateful<gpui::Div> {
-    let bar = crate::div()
-        .id(id)
-        .flex_none()
-        .bg(themed(crate::BORDER))
-        .hover(|d| d.bg(themed(crate::MUTED)));
-    let bar = match split {
-        Split::Columns => bar.w(crate::px(5.)).h_full().cursor(gpui::CursorStyle::ResizeLeftRight),
-        Split::Player | Split::Continue => bar.h(crate::px(5.)).w_full().cursor(gpui::CursorStyle::ResizeUpDown),
-    };
-    bar.on_mouse_down(
-        gpui::MouseButton::Left,
-        cx.listener(move |this, e: &gpui::MouseDownEvent, _, _| {
-            this.dragging = Some(split);
-            this.drag_from = (f32::from(e.position.y), this.settings.continue_height);
-        }),
-    )
 }

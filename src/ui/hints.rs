@@ -84,36 +84,3 @@ pub trait OnClickHinted: gpui::StatefulInteractiveElement + gpui::ParentElement 
 }
 
 impl OnClickHinted for gpui::Stateful<gpui::Div> {}
-
-/// Hint mode overlay: a yellow label on each target still matching what was typed.
-pub fn hint_labels(
-    targets: &[HintTarget],
-    typed: &str,
-) -> gpui::Div {
-    let labels = hint_label_list(targets.len());
-    div()
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
-        .children(
-            targets
-                .iter()
-                .zip(hint_label_list(targets.len()))
-                .filter(|(_, l)| l.starts_with(typed))
-                .map(|((b, _), label)| {
-                    div()
-                        .absolute()
-                        .left(b.origin.x)
-                        .top(b.origin.y)
-                        .px_1()
-                        .py(px(1.))
-                        .rounded_sm()
-                        .bg(themed(crate::ACCENT))
-                        .text_color(themed(crate::ON_ACCENT))
-                        .text_xs()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .child(label)
-                }),
-        )
-}

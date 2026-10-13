@@ -2,6 +2,7 @@ use gpui::{div, px, prelude::*, rgb, Rgba, Transformation, radians, AnimationExt
 
 use crate::themed;
 
+/// Skeleton placeholder for a thumbnail.
 pub fn skeleton_thumb() -> impl gpui::IntoElement {
     gpui::div()
         .flex_none()
