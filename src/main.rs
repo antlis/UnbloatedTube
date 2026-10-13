@@ -2880,6 +2880,23 @@ impl Unbloated {
         let moving = state.filter(|s| s.playing && !s.paused && !s.ended && !s.idle && Some(s.path.as_str()) == url);
         let (Some(s), Some(video), None, false) = (moving, self.current.clone(), &self.casting, self.loading) else {
             self.stall = None;
+            // If mpv went idle while we were loading (or just after), the streams likely failed
+            // (e.g. 403 on cached URLs). Drop the prefetch cache and retry once.
+            if let (Some(_), Some(video), None, false) = (
+                state.filter(|s| s.idle && !s.ended),
+                self.current.clone(),
+                &self.casting,
+                self.loading,
+            ) {
+                if self.stall_retried.as_ref().is_none_or(|(id, _)| id != &video.id) {
+                    self.stall_retried = Some((video.id.clone(), true));
+                    prefetch::forget(&video.id);
+                    self.link_start = Some(0.);
+                    self.start(video, false);
+                    cx.notify();
+                    return;
+                }
+            }
             return;
         };
         match self.stall {

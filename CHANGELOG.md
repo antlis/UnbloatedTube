@@ -17,6 +17,8 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 - Text selection was broken after the initial drag: releasing the mouse button didn't stop
   the selection from growing on subsequent mouse moves. The root `on_mouse_down` handler
   consumed the `text_press` flag meant to track whether a drag was in progress.
+- Videos with stale stream URLs in the prefetch cache (403 Forbidden) now automatically
+  clear the cache and retry. Previously they showed 0:00 duration and wouldn't play.
 
 ## 0.41.0 - 2026-10-10
 
