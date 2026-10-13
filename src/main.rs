@@ -14,6 +14,7 @@ mod proxy;
 mod store;
 mod textsel;
 mod thumbs;
+mod ui;
 mod yt;
 
 use account::{Account, Me, VideoStatus};
@@ -35,6 +36,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use store::{ChannelFlags, ChannelGroup, Config, History, Seen, Settings};
+use ui::{components::*, render::*, hints::*};
 use yt::{Comment, Group, Video, fmt_count, fmt_duration};
 
 const BG: u32 = 0x0f0f0f;
