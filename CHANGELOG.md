@@ -6,12 +6,11 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.42.0 - 2026-10-14
+
 ### Added
-- **Text selection**: drag the mouse over the video's title, its description, a comment or a
-  transcript line to highlight the text it covers, then Ctrl+C to copy it. Escape, a press
-  elsewhere or starting another video lets go of it. Dragging over a transcript line selects
-  rather than seeks (a plain click still seeks), and a drag over a link selects it instead of
-  opening it.
+- **Per-video quality**: pick a quality for a video and it's remembered across restarts
+  (Settings → Quality or right-click video → Quality).
 
 ### Fixed
 - Text selection was broken after the initial drag: releasing the mouse button didn't stop
@@ -23,10 +22,17 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 ### Changed
 - **Prefetch TTL** reduced from 1 hour to 20 minutes, avoiding most 403s from expired
   stream URLs.
-- **Per-video quality** now persists: pick a quality for a video and it's remembered
-  across restarts (Settings → Quality or right-click video → Quality).
 - **mpv error handling** detects HTTP 403 (and other errors) from stale cached URLs and
   automatically clears the cache and retries, without waiting for a stall.
+
+## 0.41.1 - 2026-10-13
+
+### Added
+- **Text selection**: drag the mouse over the video's title, its description, a comment or a
+  transcript line to highlight the text it covers, then Ctrl+C to copy it. Escape, a press
+  elsewhere or starting another video lets go of it. Dragging over a transcript line selects
+  rather than seeks (a plain click still seeks), and a drag over a link selects it instead of
+  opening it.
 
 ## 0.41.0 - 2026-10-10
 
