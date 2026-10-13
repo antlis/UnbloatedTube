@@ -44,6 +44,8 @@ pub struct State {
     pub sub_on: bool,
     /// Height of the video stream playing (None: audio only, or not known yet).
     pub height: Option<u32>,
+    /// mpv's last error string (e.g. HTTP 403), if any.
+    pub error: Option<String>,
 }
 
 /// Where a right click happened, in mpv's window pixels, from its `menu ...` action: the hover
@@ -409,7 +411,7 @@ pub fn sponsorblock_script() -> Option<String> {
 pub fn query(socket: &Path) -> Option<State> {
     let mut s = UnixStream::connect(socket).ok()?;
     s.set_read_timeout(Some(Duration::from_secs(2))).ok();
-    let props = ["time-pos", "duration", "pause", "fullscreen", "path", "idle-active", "eof-reached", "chapter-list", "user-data/unbloated/help", "mute", "volume", "user-data/unbloated/action", "track-list", "sub-visibility"];
+    let props = ["time-pos", "duration", "pause", "fullscreen", "path", "idle-active", "eof-reached", "chapter-list", "user-data/unbloated/help", "mute", "volume", "user-data/unbloated/action", "track-list", "sub-visibility", "error"];
     for (i, p) in props.iter().enumerate() {
         writeln!(s, "{}", json!({ "command": ["get_property", p], "request_id": i })).ok()?;
     }
@@ -455,6 +457,7 @@ pub fn query(socket: &Path) -> Option<State> {
         sub_id: ours.first().and_then(|t| t["id"].as_i64()),
         sub_on: vals[13].as_bool().unwrap_or(false) && ours.iter().any(|t| t["selected"] == true),
         height: tracks.iter().find(|t| t["type"] == "video" && t["selected"] == true).and_then(|t| t["demux-h"].as_u64()).map(|h| h as u32),
+        error: vals[14].as_str().map(String::from).filter(|s| !s.is_empty()),
     })
 }
 

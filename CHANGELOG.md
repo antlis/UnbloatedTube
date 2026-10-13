@@ -20,6 +20,14 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 - Videos with stale stream URLs in the prefetch cache (403 Forbidden) now automatically
   clear the cache and retry. Previously they showed 0:00 duration and wouldn't play.
 
+### Changed
+- **Prefetch TTL** reduced from 1 hour to 20 minutes, avoiding most 403s from expired
+  stream URLs.
+- **Per-video quality** now persists: pick a quality for a video and it's remembered
+  across restarts (Settings → Quality or right-click video → Quality).
+- **mpv error handling** detects HTTP 403 (and other errors) from stale cached URLs and
+  automatically clears the cache and retries, without waiting for a stall.
+
 ## 0.41.0 - 2026-10-10
 
 ### Added

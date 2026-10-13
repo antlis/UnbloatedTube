@@ -296,6 +296,9 @@ pub struct Settings {
     pub sub_auto: bool,
     /// Subtitle size, as mpv's `sub-scale` (1 = normal).
     pub sub_scale: f32,
+    /// Per-video quality override (video_id -> height). 0 = audio only.
+    #[serde(default)]
+    pub quality_override: std::collections::HashMap<String, u32>,
     /// Extra mpv command-line options, space separated.
     pub mpv_args: String,
     /// Where downloads go; empty = the system Downloads folder. `~/` is expanded.
@@ -383,6 +386,7 @@ impl Default for Settings {
             player: 0.62,
             continue_height: 4. * crate::ROW_H,
             welcome_seen: false,
+            quality_override: std::collections::HashMap::new(),
         }
     }
 }

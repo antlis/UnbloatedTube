@@ -2858,6 +2858,14 @@ impl Unbloated {
         if self.quality.as_ref().is_some_and(|(id, _)| *id != video.id) {
             self.quality = None;
         }
+        // Load persisted per-video quality if no manual override is active.
+        if self.quality.is_none() {
+            if let Some(h) = self.settings.quality_override.get(&video.id) {
+                if *h > 0 || self.settings.quality_override.contains_key(&video.id) {
+                    self.quality = Some((video.id.clone(), *h));
+                }
+            }
+        }
         if !restarts {
             self.player.set_format(&player::format_at(&self.settings, self.quality.as_ref().map(|(_, h)| *h)));
         }
@@ -2884,6 +2892,22 @@ impl Unbloated {
             // (e.g. 403 on cached URLs). Drop the prefetch cache and retry once.
             if let (Some(_), Some(video), None, false) = (
                 state.filter(|s| s.idle && !s.ended),
+                self.current.clone(),
+                &self.casting,
+                self.loading,
+            ) {
+                if self.stall_retried.as_ref().is_none_or(|(id, _)| id != &video.id) {
+                    self.stall_retried = Some((video.id.clone(), true));
+                    prefetch::forget(&video.id);
+                    self.link_start = Some(0.);
+                    self.start(video, false);
+                    cx.notify();
+                    return;
+                }
+            }
+            // Also retry on mpv error (e.g. HTTP 403 on stale cached URLs).
+            if let (Some(_), Some(video), None, false) = (
+                state.filter(|s| s.error.as_ref().is_some_and(|e| e.contains("403"))),
                 self.current.clone(),
                 &self.casting,
                 self.loading,
@@ -2947,7 +2971,11 @@ impl Unbloated {
     /// The quality picked for the current video (a height, or 0 for audio only), if any.
     fn picked_quality(&self) -> Option<u32> {
         let id = &self.current.as_ref()?.id;
-        self.quality.as_ref().filter(|(q, _)| q == id).map(|(_, h)| *h)
+        self.quality
+            .as_ref()
+            .filter(|(q, _)| q == id)
+            .map(|(_, h)| *h)
+            .or_else(|| self.settings.quality_override.get(id).copied())
     }
 
     /// Play the current video again at another quality (None: the settings' maximum again), from
@@ -2955,6 +2983,13 @@ impl Unbloated {
     fn pick_quality(&mut self, pick: Option<u32>, cx: &mut Context<Self>) {
         let Some(video) = self.current.clone() else { return };
         let Some((position, paused)) = self.state.as_ref().filter(|s| s.playing).map(|s| (s.position, s.paused)) else { return };
+        // Persist the per-video quality choice.
+        if let Some(h) = pick {
+            self.settings.quality_override.insert(video.id.clone(), h);
+        } else {
+            self.settings.quality_override.remove(&video.id);
+        }
+        self.settings.save();
         self.quality = pick.map(|h| (video.id.clone(), h));
         self.link_start = Some(position);
         self.start(video, paused);

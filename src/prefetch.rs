@@ -37,7 +37,8 @@ pub const SOCK_ENV: &str = "UNBLOATED_YTDL_SOCK";
 pub const RELAY_ENV: &str = "UNBLOATED_YTDL_RELAY";
 
 /// How long an answer is used; the stream links in it last hours.
-pub const TTL: Duration = Duration::from_secs(3600);
+/// YouTube's signed URLs often expire sooner (6-12h); 20 min avoids most 403s.
+pub const TTL: Duration = Duration::from_secs(1200);
 
 const HELPER: &str = include_str!("ytdl_helper.py");
 
