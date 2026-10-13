@@ -6,6 +6,13 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Added
+- **Text selection**: drag the mouse over the video's title, its description, a comment or a
+  transcript line to highlight the text it covers, then Ctrl+C to copy it. Escape, a press
+  elsewhere or starting another video lets go of it. Dragging over a transcript line selects
+  rather than seeks (a plain click still seeks), and a drag over a link selects it instead of
+  opening it.
+
 ## 0.41.0 - 2026-10-10
 
 ### Added

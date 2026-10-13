@@ -12,6 +12,7 @@ mod player;
 mod prefetch;
 mod proxy;
 mod store;
+mod textsel;
 mod thumbs;
 mod yt;
 
@@ -19,7 +20,7 @@ use account::{Account, Me, VideoStatus};
 use auth::{Auth, BROWSERS};
 use embed::Embed;
 use gpui::{
-    Animation, AnimationExt, HighlightStyle, InteractiveText, StyledText, UnderlineStyle, Pixels, AnyElement, App, Application, ClipboardItem, Bounds, Context, CursorStyle, ElementId, FocusHandle, Hsla, KeyDownEvent, MouseButton,
+    Animation, AnimationExt, HighlightStyle, Pixels, AnyElement, App, Application, ClipboardItem, Bounds, Context, CursorStyle, ElementId, FocusHandle, Hsla, KeyDownEvent, MouseButton,
     MouseMoveEvent, ObjectFit, SharedString, Stateful, Task,
     Transformation, TitlebarOptions, Window, WindowBounds, WindowOptions, canvas, div, img, prelude::*, px, radians, relative, rgb, size, svg,
     uniform_list, ScrollStrategy, UniformListScrollHandle, Bounds as GBounds, Pixels as GPixels,
@@ -514,6 +515,12 @@ struct Unbloated {
     filter_focus: FocusHandle,
     /// Cursor and selection of the text field being edited.
     caret: Caret,
+    /// The mouse's selection over a text block (title, description, comment): which block,
+    /// its text, and where the press and the pointer are in it (see `textsel`).
+    text_sel: Option<textsel::TextSel>,
+    /// Set while the press that started `text_sel` is still down, so the root's own press
+    /// handler — which runs after the block's, as the ancestor — doesn't clear it.
+    text_press: bool,
     /// Search mode: the header shows a full-width search field instead of the tabs.
     searching: bool,
     /// Tab to return to when leaving search.
@@ -862,6 +869,8 @@ impl Unbloated {
             list_filter: String::new(),
             filter_focus: cx.focus_handle(),
             caret: Caret::default(),
+            text_sel: None,
+            text_press: false,
             prev_tab: Tab::Subscriptions,
             recent_searches: store::load_data("searches").unwrap_or_default(),
             groups: store::load_data("groups").unwrap_or_default(),
@@ -2690,6 +2699,8 @@ impl Unbloated {
 
     /// Play `video`; `queue` is the list it was picked from (None keeps the current one).
     fn play(&mut self, video: Video, queue: Option<Arc<[Video]>>, cx: &mut Context<Self>) {
+        // The old video's text is gone; a selection over it means nothing now.
+        self.text_sel = None;
         if let Some(queue) = queue {
             self.queue = queue;
         }
@@ -4598,10 +4609,31 @@ impl Unbloated {
                 _ => self.kb_focus = None,
             }
         }
+        // Escape lets go of a selection — unless Escape is spoken for by something else on
+        // screen (a dialog, search mode, the key list), which each take it below.
+        let escape = k.key == "escape";
+        let escape_busy = self.saving
+            || self.searching
+            || self.show_keys
+            || self.hints.is_some()
+            || (matches!(self.tab, Tab::Subscriptions | Tab::Playlists) && self.browser(self.tab).open.is_some());
+        if escape && !escape_busy && self.text_sel.take().is_some() {
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         if self.settings.vim && self.vim_key(ev, window, cx) {
             cx.stop_propagation();
             cx.notify();
             return;
+        }
+        if k.modifiers.control && k.key == "c" && !k.modifiers.shift && !k.modifiers.alt {
+            // Ctrl+C over text the mouse selected (a text field's own copy runs first, there).
+            if let Some(sel) = self.text_sel.as_ref() && !sel.range().is_empty() {
+                cx.write_to_clipboard(ClipboardItem::new_string(sel.text().to_string()));
+                cx.stop_propagation();
+                return;
+            }
         }
         if k.modifiers.control && k.key == "v" {
             // Ctrl+V outside a text field: play the YouTube link on the clipboard.
@@ -7011,7 +7043,7 @@ impl Unbloated {
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child(div().text_color(themed(TEXT)).line_clamp(2).child(title))
+                    .child(div().text_color(themed(TEXT)).line_clamp(2).child(self.linked_text(format!("title-{}", video.id), title, cx)))
                     .when_some(original, |d, o| d.child(div().text_xs().text_color(themed(MUTED)).truncate().child(format!("Original title: {o}"))))
             })
             .child(info)
@@ -7579,30 +7611,31 @@ impl Unbloated {
             .gap_2()
             // One element per paragraph: GPUI keeps single line breaks, blank lines separate them.
             .children(text.split("\n\n").enumerate().map(|(i, p)| {
-                div().text_sm().text_color(themed(TEXT)).child(self.linked_text(("description-text", i), p.trim().to_string(), cx))
+                div().text_sm().text_color(themed(TEXT)).child(self.linked_text(format!("description-text-{i}"), p.trim().to_string(), cx))
             }))
             .into_any_element()
     }
 
-    /// `text` with its links, timestamps, #tags and @handles clickable (see `open_text_link`).
-    fn linked_text(&self, id: impl Into<ElementId>, text: String, cx: &mut Context<Self>) -> AnyElement {
+    /// `text` with its links, timestamps, #tags and @handles clickable (see `open_text_link`)
+    /// and with the mouse's selection over it drawn (see `textsel`).
+    fn linked_text(&self, key: String, text: String, cx: &mut Context<Self>) -> gpui::Div {
         let (ranges, targets): (Vec<_>, Vec<_>) = links::find(&text).into_iter().unzip();
-        if ranges.is_empty() {
-            return div().child(text).into_any_element();
-        }
-        let style = HighlightStyle {
-            color: Some(themed(ACCENT).into()),
-            underline: Some(UnderlineStyle { thickness: px(1.), ..Default::default() }),
-            ..Default::default()
-        };
-        let styled = StyledText::new(text).with_highlights(ranges.iter().map(|r| (r.clone(), style)));
         let this = cx.entity().downgrade();
-        InteractiveText::new(id, styled)
-            .on_click(ranges, move |i, _, cx| {
+        textsel::text(
+            key,
+            text,
+            ranges,
+            Vec::new(),
+            self.text_sel.as_ref(),
+            move |i, cx| {
                 let target = targets[i].clone();
                 this.update(cx, |this, cx| this.open_text_link(target, cx)).ok();
-            })
-            .into_any_element()
+            },
+            cx,
+        )
+        // An I-beam over prose: it can be dragged over (a transcript row points instead, its
+        // press seeks).
+        .cursor_text()
     }
 
     /// A link clicked in the description or a comment: a YouTube link (and an @handle) opens in
@@ -7720,7 +7753,6 @@ impl Unbloated {
                         let lower = text.to_lowercase();
                         let found = (!q.is_empty() && lower.len() == text.len()).then(|| lower.find(&q)).flatten().map(|at| at..at + q.len());
                         let mark = HighlightStyle { background_color: Some(gpui::rgba((ACCENT << 8) | 0x66).into()), ..Default::default() };
-                        let line = StyledText::new(text.clone()).with_highlights(found.map(|r| (r, mark)));
                         div()
                             .id(i)
                             .w_full()
@@ -7740,8 +7772,25 @@ impl Unbloated {
                                     .text_color(if is_current { themed(ACCENT) } else { themed(MUTED) })
                                     .child(fmt_duration(start)),
                             )
-                            .child(div().flex_1().min_w_0().truncate().text_sm().text_color(themed(TEXT)).child(line))
-                            .on_click_hinted(&this.hint_reg(), cx, move |this, _, _, cx| this.seek_link(start, cx))
+                            .child(div().flex_1().min_w_0().truncate().text_sm().text_color(themed(TEXT)).child(
+                                textsel::text(
+                                    format!("transcript-line-{i}"),
+                                    text.clone(),
+                                    Vec::new(),
+                                    found.into_iter().map(|r| (r, mark)).collect(),
+                                    this.text_sel.as_ref(),
+                                    |_, _| {},
+                                    cx,
+                                ),
+                            ))
+                            .on_click_hinted(&this.hint_reg(), cx, move |this, _, _, cx| {
+                                // Pressed to drag-select rather than to seek (the selection is
+                                // still up: the root's press handler runs after this one).
+                                if this.text_sel.as_ref().is_some_and(|sel| !sel.range().is_empty()) {
+                                    return;
+                                }
+                                this.seek_link(start, cx)
+                            })
                     })
                     .collect()
             }),
@@ -7844,7 +7893,7 @@ impl Unbloated {
                     .border_b_1()
                     .border_color(themed(BORDER))
                     .child(div().text_xs().text_color(themed(MUTED)).child(meta))
-                    .child(div().text_sm().text_color(themed(TEXT)).child(self.linked_text(("comment-text", i), c.text.clone(), cx)))
+                    .child(div().text_sm().text_color(themed(TEXT)).child(self.linked_text(format!("comment-text-{}-{i}", self.comments_for.clone().unwrap_or_default()), c.text.clone(), cx)))
             }))
             .when(more, |d| {
                 d.child(
@@ -8788,6 +8837,12 @@ impl Render for Unbloated {
                     if this.kb_focus.take().is_some() {
                         cx.notify();
                     }
+                    // Pressed off any text: the selection goes (a press on text sets its own
+                    // first — that block is deeper in the tree, and presses bubble outwards).
+                    let on_text = std::mem::take(&mut this.text_press);
+                    if !on_text && this.text_sel.take().is_some() {
+                        cx.notify();
+                    }
                 }),
             )
             .bg(themed(BG))
@@ -8806,6 +8861,11 @@ impl Render for Unbloated {
             .children(welcome)
             // While dragging, X keeps sending us pointer events even over mpv's window.
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, window, cx| {
+                // A text selection grows with the drag wherever the pointer goes — past the
+                // block's edges, where the block's own handler can't follow it.
+                if this.text_sel.as_mut().is_some_and(|sel| sel.drag_to(e.position)) {
+                    cx.notify();
+                }
                 let Some(split) = this.dragging else { return };
                 let size = window.viewport_size();
                 match split {
@@ -8835,6 +8895,11 @@ impl Render for Unbloated {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, _, _, _| {
+                    // The press is over: a press that never dragged selects nothing.
+                    this.text_press = false;
+                    if this.text_sel.as_ref().is_some_and(|sel| sel.range().is_empty()) {
+                        this.text_sel = None;
+                    }
                     if this.dragging.take().is_some() {
                         this.settings.save();
                     }
