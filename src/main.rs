@@ -8839,7 +8839,8 @@ impl Render for Unbloated {
                     }
                     // Pressed off any text: the selection goes (a press on text sets its own
                     // first — that block is deeper in the tree, and presses bubble outwards).
-                    let on_text = std::mem::take(&mut this.text_press);
+                    // Read text_press without consuming it; the root's mouse-up will clear it.
+                    let on_text = this.text_press;
                     if !on_text && this.text_sel.take().is_some() {
                         cx.notify();
                     }
@@ -8862,8 +8863,9 @@ impl Render for Unbloated {
             // While dragging, X keeps sending us pointer events even over mpv's window.
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, window, cx| {
                 // A text selection grows with the drag wherever the pointer goes — past the
-                // block's edges, where the block's own handler can't follow it.
-                if this.text_sel.as_mut().is_some_and(|sel| sel.drag_to(e.position)) {
+                // block's edges, where the block's own handler can't follow it. Only while
+                // the press is down (text_press); a plain move after release must not extend.
+                if this.text_press && this.text_sel.as_mut().is_some_and(|sel| sel.drag_to(e.position)) {
                     cx.notify();
                 }
                 let Some(split) = this.dragging else { return };

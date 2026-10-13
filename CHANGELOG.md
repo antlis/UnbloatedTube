@@ -13,6 +13,11 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
   rather than seeks (a plain click still seeks), and a drag over a link selects it instead of
   opening it.
 
+### Fixed
+- Text selection was broken after the initial drag: releasing the mouse button didn't stop
+  the selection from growing on subsequent mouse moves. The root `on_mouse_down` handler
+  consumed the `text_press` flag meant to track whether a drag was in progress.
+
 ## 0.41.0 - 2026-10-10
 
 ### Added
