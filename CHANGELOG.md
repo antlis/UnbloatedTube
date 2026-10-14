@@ -6,6 +6,28 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.43.0 - 2026-10-14
+
+### Changed
+- **Code refactoring**: extracted UI components and navigation logic into separate modules
+  - `src/ui/components.rs`: Caret, edit_text, clear_failed, looks_like_login_error, session_hint, tab_button, live_badge, chip
+  - `src/ui/render.rs`: skeleton_thumb, skeleton_line, skeleton_group, spinner (fixed animation)
+  - `src/ui/hints.rs`: HintReg, hint_label_list, hint_labels, OnClickHinted trait
+  - `src/nav.rs`: next_video, nav_neighbor, nav_push, resume_pos, prefetch_next, play_next, enqueue_all, enqueue, dequeue
+
+### Fixed
+- Text selection was broken after the initial drag: releasing the mouse button didn't stop
+  the selection from growing on subsequent mouse moves. The root `on_mouse_down` handler
+  consumed the `text_press` flag meant to track whether a drag was in progress.
+- Videos with stale stream URLs in the prefetch cache (403 Forbidden) now automatically
+  clear the cache and retry. Previously they showed 0:00 duration and wouldn't play.
+
+### Changed
+- **Prefetch TTL** reduced from 1 hour to 20 minutes, avoiding most 403s from expired
+  stream URLs.
+- **mpv error handling** detects HTTP 403 (and other errors) from stale cached URLs and
+  automatically clears the cache and retries, without waiting for a stall.
+
 ## 0.42.0 - 2026-10-14
 
 ### Added
