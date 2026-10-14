@@ -4,6 +4,16 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Added
+- **Sign in again** in Settings → Account, next to Try again when the login has failed: it drops
+  the app's own copies of the login and opens YouTube's sign-in page in the browser the login is
+  read from (the system's default when that can't be told, such as a Firefox profile by path).
+  Sign in there, then press Try again. A hint under the buttons says how to clear a browser's
+  youtube.com and google.com cookies when signing in keeps failing; the app can't clear a
+  browser's cookies itself.
+
 ## 0.43.2 - 2026-10-15
 
 ### Fixed

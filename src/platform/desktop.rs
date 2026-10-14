@@ -10,6 +10,18 @@ pub(crate) fn open_url(url: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Open `url` with the first of `programs` that starts (a browser's executable, which opens it in
+/// that browser, in its running window if it has one), else in the default browser.
+pub(crate) fn open_url_in(programs: &[&str], url: &str) -> std::io::Result<()> {
+    for program in programs {
+        if let Ok(mut child) = Command::new(program).arg(url).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+            drop(std::thread::spawn(move || child.wait()));
+            return Ok(());
+        }
+    }
+    open_url(url)
+}
+
 /// The default browser's desktop file id ("firefox.desktop"): `$XDG_DEFAULT_BROWSER`, then
 /// `xdg-settings`.
 pub(crate) fn default_browser_id() -> Option<String> {
