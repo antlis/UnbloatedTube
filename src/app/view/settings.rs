@@ -343,6 +343,9 @@ impl Unbloated {
                                     this.start_connect(cx);
                                 }
                             }))
+                            .child(self.cta("connect-signin", "Sign in again", false).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                                this.sign_in_again(cx);
+                            }))
                             .when(!from_toml, |d| {
                                 d.child(self.cta("connect-other", "Choose another browser", false).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
                                     this.choose_another_browser(cx);
@@ -353,6 +356,11 @@ impl Unbloated {
                                     this.logout(cx);
                                 }))
                             }),
+                    )
+                    .child(
+                        div().px_4().pb_2().text_xs().text_color(themed(MUTED)).child(
+                            "Signing in keeps failing, or the browser says you are signed out? Clear the cookies of youtube.com and google.com in the browser (its Settings → Privacy → Cookies and site data), then sign in again. The app can't clear a browser's cookies for you.",
+                        ),
                     );
             }
             Connect::Done { me } => {

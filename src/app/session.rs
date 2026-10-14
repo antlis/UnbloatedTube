@@ -320,6 +320,20 @@ impl Unbloated {
 
     /// Log out: forget the app-managed login; for a config.toml login, comment its two
     /// lines out instead (the rest of the file is untouched, uncomment to return).
+    /// "Sign in again": drop the app's own copies of the login, so nothing stale is reused, and
+    /// open YouTube's sign-in in the browser the login is read from. Signing in there and pressing
+    /// "Try again" reads the new session. (The browser's own cookies are not the app's to clear.)
+    pub(crate) fn sign_in_again(&mut self, cx: &mut Context<Self>) {
+        account::forget();
+        self.account = None;
+        let url = "https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fwww.youtube.com%2F";
+        self.notice = Some(match platform::desktop::open_url_in(self.cfg.auth.browser_programs(), url) {
+            Ok(()) => "Sign in to YouTube in the browser that opened, then press Try again.".to_string(),
+            Err(e) => format!("Couldn't open the browser: {e}"),
+        });
+        cx.notify();
+    }
+
     pub(crate) fn logout(&mut self, cx: &mut Context<Self>) {
         let from_toml = self.cfg.cookies_file.is_some() || self.cfg.cookies_from_browser.is_some();
         let word = if from_toml {

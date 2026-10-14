@@ -36,6 +36,19 @@ impl Auth {
         spec.split([':', '+']).next().unwrap_or(spec)
     }
 
+    /// The programs that open the configured browser (to send the user to YouTube's sign-in in the
+    /// browser the login is read from). Empty for a cookies file or a profile given by path
+    /// ("firefox:/path"), where which browser it is can't be told: the system's default opens it.
+    pub fn browser_programs(&self) -> &'static [&'static str] {
+        match self {
+            Auth::Browser(spec) if !spec.contains(':') => {
+                let name = Self::browser_name(spec);
+                BROWSERS.iter().find(|(_, yt_dlp, _)| *yt_dlp == name).map_or(&[], |(_, _, programs)| *programs)
+            }
+            _ => &[],
+        }
+    }
+
     /// config.toml's `cookies_file` / `cookies_from_browser` first, then auth.json.
     pub fn resolve(cookies_file: Option<String>, cookies_from_browser: Option<String>) -> Auth {
         match (cookies_file, cookies_from_browser) {
@@ -120,5 +133,21 @@ impl Auth {
     pub fn clear() {
         let _ = std::fs::remove_file(Self::path());
         let _ = std::fs::remove_file(Self::imported_cookies_path());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_configured_browser_opens_the_sign_in() {
+        assert_eq!(Auth::Browser("brave+gnomekeyring".into()).browser_programs(), &["brave-browser", "brave"]);
+        assert_eq!(Auth::Browser("firefox".into()).browser_programs(), &["firefox", "firefox-bin"]);
+        // A profile by path could be any Firefox-based browser (Zen, LibreWolf): the default opens it.
+        assert!(Auth::Browser("firefox:/home/x/.config/zen/profile".into()).browser_programs().is_empty());
+        assert!(Auth::Browser("vivaldi".into()).browser_programs().is_empty());
+        assert!(Auth::None.browser_programs().is_empty());
+        assert!(Auth::CookiesFile("/tmp/c.txt".into()).browser_programs().is_empty());
     }
 }

@@ -96,6 +96,11 @@ So `post` turns such an answer into `SIGNED_OUT` for requests that need the logi
 pages), and the callers (`with_shared` for lists, `with_account` for actions) re-read the browser
 once and try again; if that fails too, the Settings page shows the failed step.
 
+The app never owns the login, it borrows the browser's, so it can only be as fresh as what the
+browser wrote to disk. The README's *Limits of the cookie login* lists what can go wrong; "Sign in
+again" (`sign_in_again` in `app/session.rs`) drops the app's copies and sends the user to
+YouTube's sign-in in the browser the login is read from.
+
 ## Casting
 
 `backend/cast.rs` talks to a receiver: a command from `config.toml` (`catt` and the like) or the
