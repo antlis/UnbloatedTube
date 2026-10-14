@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
-use crate::cli::Command;
+use crate::backend::cli::Command;
 
 const PATH: &str = "/org/mpris/MediaPlayer2";
 const NAME: &str = "org.mpris.MediaPlayer2.unbloatedtube";

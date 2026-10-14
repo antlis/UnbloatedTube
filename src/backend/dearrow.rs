@@ -39,7 +39,7 @@ pub fn branding(id: &str) -> Result<Branding, String> {
 
 fn fetch(id: &str) -> Result<Branding, String> {
     let hash = Sha256::digest(id.as_bytes()).iter().map(|b| format!("{b:02x}")).collect::<String>();
-    let json: Value = match crate::http::agent().get(&format!("{API}/api/branding/{}", &hash[..4])).query("fetchAll", "true").call() {
+    let json: Value = match crate::backend::http::agent().get(&format!("{API}/api/branding/{}", &hash[..4])).query("fetchAll", "true").call() {
         Ok(resp) => resp.into_json().map_err(|e| e.to_string())?,
         // Nothing submitted for any video in the bucket.
         Err(ureq::Error::Status(404, _)) => return Ok(Branding::default()),

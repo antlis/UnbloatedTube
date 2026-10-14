@@ -1,256 +1,177 @@
-#![allow(dead_code)]
+use std::path::PathBuf;
+use std::time::Duration;
 
 use gpui::{
-    prelude::*, FontWeight, KeyDownEvent, SharedString, Styled,
+    Animation, AnimationExt, AnyElement, App, Context, ElementId, Hsla, SharedString, Stateful, UniformListScrollHandle, Window, div,
+    prelude::*, px, relative, svg,
 };
 
-use crate::{Unbloated, themed};
-/// Text field caret position and selection anchor.
-#[allow(dead_code)]
-#[derive(Clone, Default)]
+use super::*;
+use crate::ui::icons;
 
-pub struct Caret {
-    pub id: &'static str,
-    pub pos: usize,
-    pub anchor: usize,
+pub(crate) enum Thumb {
+    Ready(PathBuf),
+    /// Downloading: shown as a skeleton.
+    Pending,
+    /// No image, or the download failed.
+    Missing,
 }
 
-impl Caret {
-    /// (pos, anchor) in field `id`; a field the caret wasn't in starts with it at the end.
-    pub fn get(&self, id: &'static str, text: &str) -> (usize, usize) {
-        let fix = |p: usize| {
-            if p <= text.len() && text.is_char_boundary(p) {
-                p
-            } else {
-                text.len()
-            }
-        };
-        if self.id == id {
-            (fix(self.pos), fix(self.anchor))
+/// Shape of skeleton rows for a list that hasn't loaded yet.
+#[derive(Clone, Copy)]
+pub(crate) enum Rows {
+    Videos,
+    Groups,
+    Comments,
+}
+
+/// Fade an element in and out, as a loading placeholder.
+pub(crate) fn pulse(id: impl Into<ElementId>, el: gpui::Div) -> AnyElement {
+    el.with_animation(
+        id,
+        Animation::new(Duration::from_millis(1400)).repeat().with_easing(gpui::pulsating_between(0.35, 0.9)),
+        |d, t| d.opacity(t),
+    )
+    .into_any_element()
+}
+
+/// Grey rows shaped like the real ones, pulsing while a list loads.
+pub(crate) fn skeleton(rows: Rows) -> AnyElement {
+    let bar = |w: f32, h: f32| div().w(relative(w)).h(px(h)).rounded_sm().bg(themed(HOVER));
+    let widths = [0.7, 0.55, 0.8, 0.45, 0.65, 0.6, 0.75, 0.5];
+    let list = div().flex().flex_col().children((0..12).map(|i| {
+        let w = widths[i % widths.len()];
+        match rows {
+            Rows::Videos => div()
+                .h(px(ROW_H))
+                .px_3()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(div().w(px(96.)).h(px(54.)).flex_none().rounded(px(4.)).bg(themed(HOVER)))
+                .child(div().flex_1().flex().flex_col().gap_2().child(bar(w, 12.)).child(bar(w * 0.45, 10.))),
+            Rows::Comments => div().px_3().py_2().flex().flex_col().gap_2().child(bar(0.3, 10.)).child(bar(w, 12.)).child(bar(w * 0.6, 12.)),
+            Rows::Groups => div()
+                .h(px(44.))
+                .px_3()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(div().size(px(28.)).flex_none().rounded_full().bg(themed(HOVER)))
+                .child(div().flex_1().child(bar(w * 0.5, 12.))),
+        }
+    }));
+    pulse("skeleton", list)
+}
+
+/// Indeterminate progress: a short accent bar sweeping left to right.
+pub(crate) fn loading_bar(id: &'static str) -> impl IntoElement {
+    div().relative().w_full().h(px(2.)).overflow_hidden().child(
+        div()
+            .absolute()
+            .top_0()
+            .h_full()
+            .w(relative(0.3))
+            .bg(themed(ACCENT))
+            .with_animation(id, Animation::new(Duration::from_millis(1200)).repeat(), |d, t| {
+                d.left(relative(t * 1.3 - 0.3))
+            }),
+    )
+}
+
+/// Hover tooltip content.
+/// `left`: opens to the left of the pointer, for things at the left column's right edge,
+/// where a tooltip would run under the (always on top) video.
+pub(crate) struct Tip(SharedString, bool);
+
+impl Render for Tip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let tip = div()
+            .whitespace_nowrap()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(themed(HOVER))
+            .border_1()
+            .border_color(themed(BORDER))
+            .text_xs()
+            .text_color(themed(TEXT))
+            .child(self.0.clone());
+        if self.1 {
+            // A zero-width anchor at the pointer, with the tooltip hanging off to its left.
+            div().relative().w_0().child(tip.absolute().right(px(8.)).top_0())
         } else {
-            (text.len(), text.len())
+            tip
         }
     }
 }
 
-fn prev_char(t: &str, p: usize) -> usize {
-    t[..p].char_indices().next_back().map_or(0, |(i, _)| i)
+pub(crate) fn tip(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView + 'static {
+    let text = text.into();
+    move |_, cx| cx.new(|_| Tip(text.clone(), false)).into()
 }
 
-fn next_char(t: &str, p: usize) -> usize {
-    t[p..].chars().next().map_or(p, |c| p + c.len_utf8())
+pub(crate) fn tip_left(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView + 'static {
+    let text = text.into();
+    move |_, cx| cx.new(|_| Tip(text.clone(), true)).into()
 }
 
-fn prev_word(t: &str, p: usize) -> usize {
-    t[..p].trim_end_matches(' ').rfind(' ').map_or(0, |i| i + 1)
-}
-
-fn next_word(t: &str, p: usize) -> usize {
-    let rest = &t[p..];
-    let word = rest.trim_start_matches(' ');
-    p + (rest.len() - word.len()) + word.find(' ').unwrap_or(word.len())
-}
-
-/// Edit result from a text field.
-#[allow(dead_code)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Edit {
-    Submit,
-    Cancel,
-    Moved,
-    Changed,
-    Ignored,
-}
-
-/// Shared key handling for text fields: typing, Home/End, arrows (Ctrl: by word), Shift to
-/// select, Ctrl+A/C/X/V, Backspace/Delete.
-#[allow(dead_code)]
-pub fn edit_text(
-    caret: &mut Caret,
-    id: &'static str,
-    text: &mut String,
-    ev: &KeyDownEvent,
-    cx: &mut Context<Unbloated>,
-) -> Edit {
-    let k = &ev.keystroke;
-    let m = &k.modifiers;
-    let (mut pos, mut anchor) = caret.get(id, text);
-    let (start, end) = (pos.min(anchor), pos.max(anchor));
-    let selected = start != end;
-    let mut edit = Edit::Changed;
-
-    let mut move_to = |to: usize, pos: &mut usize, anchor: &mut usize| {
-        *pos = to;
-        if !m.shift {
-            *anchor = to;
-        }
-        edit = Edit::Moved;
-    };
-
-    match k.key.as_str() {
-        "enter" => return Edit::Submit,
-        "escape" => return Edit::Cancel,
-        "home" => move_to(0, &mut pos, &mut anchor),
-        "end" => move_to(text.len(), &mut pos, &mut anchor),
-        "left" if selected && !m.shift => move_to(start, &mut pos, &mut anchor),
-        "right" if selected && !m.shift => move_to(end, &mut pos, &mut anchor),
-        "left" => move_to(
-            if m.control {
-                prev_word(text, pos)
-            } else {
-                prev_char(text, pos)
-            },
-            &mut pos,
-            &mut anchor,
-        ),
-        "right" => move_to(
-            if m.control {
-                next_word(text, pos)
-            } else {
-                next_char(text, pos)
-            },
-            &mut pos,
-            &mut anchor,
-        ),
-        "a" if m.control => {
-            (anchor, pos) = (0, text.len());
-            edit = Edit::Moved;
-        }
-        "c" if m.control => {
-            if selected {
-                cx.write_to_clipboard(crate::ClipboardItem::new_string(text[start..end].to_string()));
-            }
-            edit = Edit::Moved;
-        }
-        "x" if m.control && selected => {
-            cx.write_to_clipboard(crate::ClipboardItem::new_string(text[start..end].to_string()));
-            text.replace_range(start..end, "");
-            (pos, anchor) = (start, start);
-        }
-        "backspace" | "delete" if selected => {
-            text.replace_range(start..end, "");
-            (pos, anchor) = (start, start);
-        }
-        "backspace" => {
-            let from = if m.control {
-                prev_word(text, pos)
-            } else {
-                prev_char(text, pos)
-            };
-            text.replace_range(from..pos, "");
-            (pos, anchor) = (from, from);
-        }
-        "delete" => {
-            let to = if m.control {
-                next_word(text, pos)
-            } else {
-                next_char(text, pos)
-            };
-            text.replace_range(pos..to, "");
-        }
-        key => {
-            let typed = if key == "v" && m.control {
-                cx.read_from_clipboard()
-                    .and_then(|c| c.text())
-                    .map(|c| c.lines().next().unwrap_or_default().to_string())
-            } else if !(m.control || m.alt || m.platform) {
-                k.key_char.clone()
-            } else {
-                None
-            };
-            let Some(typed) = typed else { return Edit::Ignored };
-            text.replace_range(start..end, &typed);
-            pos = start + typed.len();
-            anchor = pos;
-        }
-    }
-    *caret = Caret { id, pos, anchor };
-    edit
-}
-
+/// Square icon button with a hover tooltip; `enabled: false` greys it out (add clicks only when enabled).
 /// The red "LIVE" tag on live streams (small on thumbnails, `big` beside the playing video).
-#[allow(dead_code)]
-pub fn live_badge(big: bool) -> gpui::Div {
-    crate::div()
+pub(crate) fn live_badge(big: bool) -> gpui::Div {
+    div()
         .flex_none()
-        .px(crate::px(if big { 6. } else { 4. }))
-        .py(crate::px(1.))
-        .rounded(crate::px(3.))
-        .bg(themed(crate::ACCENT))
-        .text_color(themed(crate::ON_ACCENT))
-        .text_size(crate::px(if big { 11. } else { 9. }))
-        .font_weight(FontWeight::BOLD)
+        .px(px(if big { 6. } else { 4. }))
+        .py(px(1.))
+        .rounded(px(3.))
+        .bg(themed(ACCENT))
+        .text_color(themed(ON_ACCENT))
+        .text_size(px(if big { 11. } else { 9. }))
+        .font_weight(gpui::FontWeight::BOLD)
         .child("LIVE")
 }
 
-/// Tab button: active shows accent underline, inactive muted.
-#[allow(dead_code)]
-pub fn tab_button(label: impl Into<SharedString>, active: bool) -> gpui::Stateful<gpui::Div> {
+pub(crate) fn icon_button(
+    id: impl Into<ElementId>,
+    icon: &str,
+    tooltip: impl Into<SharedString>,
+    enabled: bool,
+) -> Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .mr_2()
+        .p(px(7.))
+        .rounded_md()
+        .bg(themed(HOVER))
+        .child(svg().path(icons::path(icon)).size(px(16.)).text_color(if enabled { themed(TEXT) } else { themed(BORDER) }))
+        .when(enabled, |d| d.cursor_pointer().hover(|d| d.bg(themed(BORDER))))
+        .tooltip(tip(tooltip))
+}
+
+/// First visible row and how many rows fit, for a uniform list of `row_h`-tall rows. (GPUI's own
+/// `logical_scroll_top` always says 0 for uniform lists.) `fallback_h` is used until the list has
+/// been laid out once.
+pub(crate) fn scroll_window(handle: &UniformListScrollHandle, row_h: f32, fallback_h: f32) -> (usize, usize) {
+    let state = handle.0.borrow();
+    let top = (f32::from(-state.base_handle.offset().y) / row_h).max(0.).floor() as usize;
+    let h = f32::from(state.base_handle.bounds().size.height);
+    let visible = (if h > 0. { h } else { fallback_h } / row_h).floor().max(1.) as usize;
+    (top, visible)
+}
+
+pub(crate) fn tab_button(label: impl Into<SharedString>, active: bool) -> Stateful<gpui::Div> {
     let label: SharedString = label.into();
     // Id from the label's first word, so "Up next (3)" keeps one id as its count changes.
     let id = SharedString::from(label.split(' ').next().unwrap_or_default().to_string());
-    crate::div()
-        .id(gpui::ElementId::Name(id))
+    div()
+        .id(ElementId::Name(id))
         .px_3()
         .py_2()
         .text_sm()
         .cursor_pointer()
         .border_b_2()
-        .border_color(if active { themed(crate::ACCENT).into() } else { crate::Hsla::transparent_black() })
-        .text_color(if active { themed(crate::TEXT) } else { themed(crate::MUTED) })
-        .hover(|d| d.text_color(themed(crate::TEXT)))
+        .border_color(if active { themed(ACCENT).into() } else { Hsla::transparent_black() })
+        .text_color(if active { themed(TEXT) } else { themed(MUTED) })
+        .hover(|d| d.text_color(themed(TEXT)))
         .child(label)
-}
-
-/// A small rounded chip (filter bar, group editor).
-#[allow(dead_code)]
-pub fn chip(
-    id: impl Into<gpui::ElementId>,
-    label: impl Into<SharedString>,
-    on: bool,
-) -> gpui::Stateful<gpui::Div> {
-    let label: SharedString = label.into();
-    crate::div()
-        .id(id)
-        .px_3()
-        .py_1()
-        .rounded_sm()
-        .text_xs()
-        .cursor_pointer()
-        .bg(if on { themed(crate::ACCENT) } else { themed(crate::HOVER) })
-        .text_color(if on { themed(crate::ON_ACCENT) } else { themed(crate::TEXT) })
-        .hover(|d| d.bg(themed(crate::BORDER)))
-        .flex()
-        .items_center()
-        .gap_1()
-        .child(label)
-}
-
-/// Clear a failed load state to Idle so it can be retried.
-#[allow(dead_code)]
-pub fn clear_failed<T>(load: &mut crate::Load<T>) {
-    if matches!(load, crate::Load::Failed(_)) {
-        *load = crate::Load::Idle;
-    }
-}
-
-/// Heuristic: does the error look like a login/cookie problem?
-#[allow(dead_code)]
-pub fn looks_like_login_error(error: &str) -> bool {
-    ["sign in", "log in", "login", "cookie", "unauthorized", "403"]
-        .iter()
-        .any(|p| error.contains(p))
-}
-
-/// Friendly session hint from a raw error string.
-pub fn session_hint(error: String) -> String {
-    if error.contains("cookies database") {
-        "Couldn't find that browser's profile: is it installed, and has it been opened once?".into()
-    } else if error.contains("no YouTube login cookies") {
-        "That browser isn't signed in to YouTube. Sign in there, then try again (Chromium-based browsers also need an unlocked keyring).".into()
-    } else if error.contains("refused") || error.to_lowercase().contains("sign in") {
-        format!("{error} — your YouTube session may have expired; sign in to YouTube in your browser, then try again")
-    } else {
-        error
-    }
 }

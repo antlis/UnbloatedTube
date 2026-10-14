@@ -11,7 +11,7 @@ static RUNNING: Mutex<usize> = Mutex::new(0);
 static FREED: Condvar = Condvar::new();
 
 pub fn path(id: &str) -> PathBuf {
-    crate::store::cache_dir().join("thumbs").join(format!("{id}.jpg"))
+    crate::backend::store::cache_dir().join("thumbs").join(format!("{id}.jpg"))
 }
 
 pub fn download(url: &str, dest: &PathBuf) -> Result<(), String> {
@@ -25,7 +25,7 @@ pub fn download(url: &str, dest: &PathBuf) -> Result<(), String> {
 }
 
 fn fetch(url: &str, dest: &PathBuf) -> Result<(), String> {
-    let resp = crate::http::agent().get(url).call().map_err(|e| e.to_string())?;
+    let resp = crate::backend::http::agent().get(url).call().map_err(|e| e.to_string())?;
     let mut bytes = Vec::new();
     resp.into_reader().take(2 << 20).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
     // DeArrow's thumbnail server answers "not rendered" with an empty reply (and no error).

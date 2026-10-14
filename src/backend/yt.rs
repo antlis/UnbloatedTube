@@ -1,8 +1,8 @@
 //! YouTube data via yt-dlp. Lists are streamed (`--flat-playlist -j`, one JSON entry per line)
 //! so the UI can show them page by page. All functions block; run them off the UI thread.
 
-use crate::account::Account;
-use crate::store::Config;
+use crate::backend::account::Account;
+use crate::backend::store::Config;
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Read};
 use std::process::{Command, Stdio};
@@ -112,7 +112,7 @@ struct Entry {
 /// PYCRYPTODOME_DISABLE_GMP: pycryptodome otherwise hunts for libgmp via ctypes' find_library,
 /// which on NixOS shells out to the C compiler and adds ~1.7s to every yt-dlp start.
 fn stream(cfg: &Config, targets: &[String], limit: usize, mut on: impl FnMut(Entry)) -> Result<(), String> {
-    let mut child = crate::prefetch::ytdlp()
+    let mut child = crate::backend::prefetch::ytdlp()
         .env("PYCRYPTODOME_DISABLE_GMP", "1")
         .args(["--no-update", "--flat-playlist", "-j", "--no-warnings"])
         .args(["--playlist-end", &limit.to_string()])
@@ -166,7 +166,7 @@ pub fn comments(cfg: &Config, video_id: &str, limit: usize, on: &mut dyn FnMut(C
         #[serde(default)]
         is_pinned: bool,
     }
-    let out = crate::prefetch::ytdlp()
+    let out = crate::backend::prefetch::ytdlp()
         .env("PYCRYPTODOME_DISABLE_GMP", "1")
         .args(["--no-update", "--no-warnings", "--skip-download", "--write-comments", "-j", "--no-playlist"])
         .args(["--extractor-args", &format!("youtube:max_comments={limit},{limit},0,0;comment_sort=top")])
@@ -207,7 +207,7 @@ pub fn description(cfg: &Config, video_id: &str, on: &mut dyn FnMut(String)) -> 
         #[serde(default)]
         description: Option<String>,
     }
-    let out = crate::prefetch::ytdlp()
+    let out = crate::backend::prefetch::ytdlp()
         .env("PYCRYPTODOME_DISABLE_GMP", "1")
         .args(["--no-update", "--no-warnings", "--skip-download", "-j", "--no-playlist"])
         .args(cfg.cookie_args())
@@ -267,11 +267,11 @@ pub fn timing(what: &str, start: std::time::Instant) {
     let line = format!("unbloatedtube: {what}: {} ms\n", start.elapsed().as_millis());
     let open = |path: std::ffi::OsString| std::fs::OpenOptions::new().append(true).create(true).open(path).ok();
     // A run the app can't be reached from (mpv's, if /proc says no) notes it in the cache folder.
-    let fallback = || open(crate::store::cache_dir().join("timing.log").into());
+    let fallback = || open(crate::backend::store::cache_dir().join("timing.log").into());
     let file = match std::env::var_os(TIMING_TO) {
         Some(to) => open(to).or_else(fallback),
         // A yt-dlp run whose stderr nobody reads (mpv keeps it).
-        None if std::env::var_os(crate::prefetch::ENV).is_some() => fallback(),
+        None if std::env::var_os(crate::backend::prefetch::ENV).is_some() => fallback(),
         None => None,
     };
     match file {
@@ -332,8 +332,8 @@ fn browse_id(url: &str) -> Option<String> {
 
 /// A channel tab's link (`…/channel/UC…/videos`, `…/@handle/shorts`, `…/c/name/streams`): the
 /// channel id, or else the channel page's link for YouTube to resolve, and the tab.
-fn channel_target(url: &str) -> Option<(String, crate::account::ChannelTab)> {
-    use crate::account::ChannelTab;
+fn channel_target(url: &str) -> Option<(String, crate::backend::account::ChannelTab)> {
+    use crate::backend::account::ChannelTab;
     let path = url.strip_prefix("https://www.youtube.com/")?;
     let (page, tab) = path.trim_end_matches('/').rsplit_once('/')?;
     let tab = match tab {
@@ -355,7 +355,7 @@ fn channel_target(url: &str) -> Option<(String, crate::account::ChannelTab)> {
 /// else none.
 fn any_account<R>(cfg: &Config, mut f: impl FnMut(&Account) -> Result<R, String>) -> Result<R, String> {
     match cfg.has_auth() {
-        true => crate::account::with_shared(cfg, f),
+        true => crate::backend::account::with_shared(cfg, f),
         false => f(&Account::anonymous()),
     }
 }
@@ -369,7 +369,7 @@ fn list(cfg: &Config, target: &str, limit: usize, on: &mut dyn FnMut(Video)) -> 
     fast_first(
         target,
         // Nothing at all may mean kept cookies that YouTube no longer takes as a login.
-        |on| crate::account::with_shared(cfg, |a| a.browse_videos(&id, limit, on).and_then(|n| if n > 0 { Ok(n) } else { Err("empty".into()) })),
+        |on| crate::backend::account::with_shared(cfg, |a| a.browse_videos(&id, limit, on).and_then(|n| if n > 0 { Ok(n) } else { Err("empty".into()) })),
         on,
         |on| videos(cfg, target, limit, on),
     )
@@ -383,7 +383,7 @@ fn thumb(e: &Entry) -> Option<String> {
 /// Subscribed channels, in YouTube's order (the UI sorts them once complete).
 pub fn subscriptions(cfg: &Config, on: &mut dyn FnMut(Group)) -> Result<(), String> {
     let start = std::time::Instant::now();
-    match crate::account::with_shared(cfg, |a| a.subscribed_channels(&mut *on).and_then(|n| if n > 0 { Ok(n) } else { Err("empty".into()) })) {
+    match crate::backend::account::with_shared(cfg, |a| a.subscribed_channels(&mut *on).and_then(|n| if n > 0 { Ok(n) } else { Err("empty".into()) })) {
         Ok(n) => return Ok(timing(&format!("innertube channels ({n})"), start)),
         Err(e) => timing(&format!("innertube channels failed ({e})"), start),
     }
@@ -412,7 +412,7 @@ pub fn auth_probe(cfg: &Config) -> Result<(), String> {
 pub fn history(cfg: &Config, account: Option<Arc<Account>>, on: &mut dyn FnMut(Video)) -> Result<(), String> {
     let list = match account {
         Some(a) => a.history(150),
-        None => crate::account::with_shared(cfg, |a| a.history(150)),
+        None => crate::backend::account::with_shared(cfg, |a| a.history(150)),
     };
     match list {
         Ok(list) if !list.is_empty() => {
@@ -633,7 +633,7 @@ pub fn subtitles(cfg: &Config, id: &str, langs: &str, auto: bool, dir: &std::pat
         }
     }
     let fetch = || {
-        crate::prefetch::ytdlp()
+        crate::backend::prefetch::ytdlp()
             .env("PYCRYPTODOME_DISABLE_GMP", "1")
             .args(["--no-update", "--no-warnings", "--skip-download", "--no-playlist", "--write-subs"])
             .args(auto.then_some("--write-auto-subs"))
@@ -679,7 +679,7 @@ pub struct CaptionLang {
 /// The caption tracks of a video: its own ones first, then the generated ones (the speech
 /// recognition track, `xx-orig`, and its translations into every language YouTube offers).
 pub fn caption_langs(cfg: &Config, id: &str) -> Result<Vec<CaptionLang>, String> {
-    let out = crate::prefetch::ytdlp()
+    let out = crate::backend::prefetch::ytdlp()
         .env("PYCRYPTODOME_DISABLE_GMP", "1")
         .args(["--no-update", "--no-warnings", "--skip-download", "-j", "--no-playlist"])
         .args(cfg.cookie_args())
@@ -842,7 +842,7 @@ fn tidy_auto_captions(vtt: &str) -> Option<String> {
 /// Likes and dislikes of a video from the Return YouTube Dislike API (YouTube hides dislikes; the
 /// project estimates them from its users' votes). No key; the request names the video.
 pub fn votes(id: &str) -> Result<(u64, u64), String> {
-    let v: serde_json::Value = crate::http::agent().get(&format!("https://returnyoutubedislikeapi.com/votes?videoId={id}"))
+    let v: serde_json::Value = crate::backend::http::agent().get(&format!("https://returnyoutubedislikeapi.com/votes?videoId={id}"))
         .timeout(std::time::Duration::from_secs(10))
         .call()
         .map_err(|e| e.to_string())?
@@ -868,7 +868,7 @@ pub fn video(cfg: &Config, id: &str) -> Result<Video, String> {
 pub fn search(cfg: &Config, query: &str, on: &mut dyn FnMut(Video)) -> Result<(), String> {
     // Signed in, results follow the account (as on the site); without a login they are anonymous.
     let ask = |on: &mut dyn FnMut(Video)| match cfg.has_auth() {
-        true => crate::account::with_shared(cfg, |a| a.search_videos(query, 50, on)),
+        true => crate::backend::account::with_shared(cfg, |a| a.search_videos(query, 50, on)),
         false => Account::anonymous().search_videos(query, 50, on),
     };
     fast_first("search", ask, on, |on| videos(cfg, &format!("ytsearch50:{query}"), 50, on))
@@ -882,7 +882,7 @@ pub fn group_videos(cfg: &Config, url: &str, on: &mut dyn FnMut(Video)) -> Resul
 /// Put a video in the account's YouTube history, as watching it does (yt-dlp's `--mark-watched`
 /// sends the same playback ping the site does). Needs the login; no download happens.
 pub fn mark_watched(cfg: &Config, id: &str) -> Result<(), String> {
-    let out = crate::prefetch::ytdlp()
+    let out = crate::backend::prefetch::ytdlp()
         .env("PYCRYPTODOME_DISABLE_GMP", "1")
         .args(["--no-update", "--no-warnings", "--skip-download", "--no-playlist", "--mark-watched"])
         .args(cfg.cookie_args())

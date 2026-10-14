@@ -1,7 +1,7 @@
 //! Config (~/.config/unbloatedtube/config.toml) and local watch history (~/.local/share/unbloatedtube/history.json).
 
-use crate::auth::Auth;
-use crate::yt::Video;
+use crate::backend::auth::Auth;
+use crate::backend::yt::Video;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::path::PathBuf;
 
@@ -205,6 +205,9 @@ pub fn save_list<T: Serialize>(key: &str, items: &[T]) {
     }
 }
 
+/// The height of one list row as the UI draws it (`ui::ROW_H`; a test keeps the two equal).
+const ROW_H: f32 = 64.;
+
 /// In-app preferences, written by unbloatedtube itself (~/.config/unbloatedtube/settings.json).
 /// Kept apart from config.toml so saving never rewrites the user's hand-edited file.
 #[derive(Clone, Serialize, Deserialize)]
@@ -384,7 +387,7 @@ impl Default for Settings {
             hide_words: String::new(),
             split: 0.5,
             player: 0.62,
-            continue_height: 4. * crate::ROW_H,
+            continue_height: 4. * ROW_H,
             welcome_seen: false,
             quality_override: std::collections::HashMap::new(),
         }
@@ -463,4 +466,12 @@ pub struct ChannelFlags {
     /// Videos already notified about, so restarts don't repeat them.
     #[serde(default)]
     pub notified: std::collections::HashSet<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_row_height_matches_the_ui() {
+        assert_eq!(super::ROW_H, crate::ui::ROW_H);
+    }
 }

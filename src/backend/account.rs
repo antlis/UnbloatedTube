@@ -2,9 +2,9 @@
 //! YouTube's internal "InnerTube" API the way yt-dlp authenticates its own requests: browser
 //! cookies plus a SAPISIDHASH Authorization header. Cookies stay in memory only.
 
-use crate::auth::Auth;
-use crate::store::Config;
-use crate::yt::{Comment, Group, Video};
+use crate::backend::auth::Auth;
+use crate::backend::store::Config;
+use crate::backend::yt::{Comment, Group, Video};
 use serde_json::{Value, json};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -56,7 +56,7 @@ pub fn with_shared<R>(cfg: &Config, mut f: impl FnMut(&Account) -> Result<R, Str
     let a = shared(cfg)?;
     match f(&a) {
         Err(e) if a.from_kept => {
-            crate::yt::timing(&format!("kept cookies refused ({e})"), std::time::Instant::now());
+            crate::backend::yt::timing(&format!("kept cookies refused ({e})"), std::time::Instant::now());
             f(&*refresh(cfg, &a)?)
         }
         r => r,
@@ -99,8 +99,8 @@ pub fn refresh_kept(cfg: &Config) {
 const KEEP: std::time::Duration = std::time::Duration::from_secs(12 * 3600);
 
 fn kept_path() -> std::path::PathBuf {
-    match std::env::var_os("XDG_RUNTIME_DIR") {
-        Some(dir) => std::path::PathBuf::from(dir).join("unbloatedtube-cookies.txt"),
+    match crate::platform::paths::session_dir() {
+        Some(dir) => dir.join("unbloatedtube-cookies.txt"),
         None => dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("unbloatedtube").join("cookies.txt"),
     }
 }
@@ -134,12 +134,11 @@ pub fn kept_copy(browser: &str) -> Option<std::path::PathBuf> {
 /// Write a new file only the user can read.
 fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
     let _ = std::fs::remove_file(path);
-    std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)?.write_all(text.as_bytes())
+    crate::platform::fs::private_file().write(true).create_new(true).open(path)?.write_all(text.as_bytes())
 }
 
 /// The signed-in account as far as YouTube's guide endpoint shows it: handle like
@@ -196,7 +195,7 @@ impl Account {
             Auth::Browser(browser) => {
                 let start = std::time::Instant::now();
                 let (text, spec) = export_browser_cookies(browser)?;
-                crate::yt::timing(&format!("cookies from {spec}"), start);
+                crate::backend::yt::timing(&format!("cookies from {spec}"), start);
                 // yt-dlp sometimes needs a keyring suffix ("brave+gnomekeyring") to read
                 // Chromium's encrypted cookies. Remember the spec that worked so every
                 // later call agrees — but only when auth.json (not config.toml) is the
@@ -260,7 +259,7 @@ impl Account {
 
     fn post(&self, endpoint: &str, mut body: Value) -> Result<Value, String> {
         body["context"] = json!({ "client": { "clientName": "WEB", "clientVersion": CLIENT_VERSION, "hl": "en" } });
-        let mut req = crate::http::agent()
+        let mut req = crate::backend::http::agent()
             .post(&format!("{ORIGIN}/youtubei/v1/{endpoint}?prettyPrint=false"))
             .set("Origin", ORIGIN)
             .set("X-Origin", ORIGIN)
@@ -845,7 +844,7 @@ fn walk(v: &Value, f: &mut impl FnMut(&str, &Value)) {
 }
 
 fn export_browser_cookies(browser: &str) -> Result<(String, String), String> {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    let dir = crate::platform::paths::runtime_dir();
     // Exports can overlap (the Connect check next to a status fetch), so each call gets
     // its own file — a shared path would let one run delete or truncate another's jar.
     static N: AtomicU64 = AtomicU64::new(0);
@@ -857,7 +856,7 @@ fn export_browser_cookies(browser: &str) -> Result<(String, String), String> {
     // yt-dlp saves its cookie jar on exit, even after a failed request. A file URL fails at
     // once, before anything goes over the network (a YouTube one cost a round trip, seconds).
     let run = |spec: &str| -> Result<(String, bool), String> {
-        let out = crate::prefetch::ytdlp()
+        let out = crate::backend::prefetch::ytdlp()
             .env("PYCRYPTODOME_DISABLE_GMP", "1")
             .args(["--no-update", "--no-warnings", "--simulate"])
             .args(["--cookies-from-browser", spec, "--cookies"])
