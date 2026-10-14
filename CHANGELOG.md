@@ -6,6 +6,20 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Fixed
+- **Next** (the key, the player's button), **autoplay** and the lookup ahead of the next video
+  play what they did before 0.43.0 again: Up next first, then the next video of the list the
+  video came from. 0.43.0's refactor had changed that to the back / forward history, so Next did
+  nothing in a list.
+
+### Changed
+- **Code structure**, no behaviour change: `main.rs` (9000 lines) is split into `app/` (the state
+  and one file per feature, `app/view/` for the drawing), `ui/` (theme, tables, widgets), `backend/`
+  (no GPUI) and `platform/`, which now holds all the OS-specific code (sockets, process control,
+  private files and locks, opening links, X11, MPRIS). `libc`, `x11rb` and `zbus` are
+  target-gated in `Cargo.toml`. This replaces 0.43.0's partial split, which left duplicate copies
+  of the UI helpers behind.
+
 ## 0.43.0 - 2026-10-14
 
 ### Changed
