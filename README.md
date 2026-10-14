@@ -525,7 +525,12 @@ login it comments those lines out instead (uncomment them to return).
 Reading a browser's cookies takes a few seconds, so the app keeps the last read for the next
 start, for up to 12 hours: in `$XDG_RUNTIME_DIR/unbloatedtube-cookies.txt` (a private folder
 of your login session, emptied when it ends), readable only by you. When YouTube no longer
-accepts them, the app reads the browser again; logging out or changing the login deletes it.
+accepts them, whether the kept ones or the ones a running app started with, the app reads the
+browser again, once; logging out or changing the login deletes the kept ones.
+
+If YouTube still refuses (lists don't load, Like says it no longer accepts your login), the
+browser's own login has gone stale: open youtube.com in that browser (log in again if it asks),
+then press **Try again** in Settings → Account.
 yt-dlp (the app's and mpv's) gets a copy of them too, made for each run and deleted after it.
 
 While logged out, the app starts on that same **Connect YouTube** screen (or shows it after
