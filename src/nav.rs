@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::{store, yt::Video, Tab, Lower};
 use gpui::Context;
 

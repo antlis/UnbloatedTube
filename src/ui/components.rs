@@ -1,13 +1,14 @@
+#![allow(dead_code)]
+
 use gpui::{
-    div, px, prelude::*, FontWeight, KeyDownEvent, SharedString, Styled,
-    svg,
+    prelude::*, FontWeight, KeyDownEvent, SharedString, Styled,
 };
-use std::time::{Duration, Instant};
 
-use crate::{Unbloated, themed, ClipboardItem, icons};
-
+use crate::{Unbloated, themed};
 /// Text field caret position and selection anchor.
+#[allow(dead_code)]
 #[derive(Clone, Default)]
+
 pub struct Caret {
     pub id: &'static str,
     pub pos: usize,
@@ -51,6 +52,7 @@ fn next_word(t: &str, p: usize) -> usize {
 }
 
 /// Edit result from a text field.
+#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Edit {
     Submit,
@@ -62,6 +64,7 @@ pub enum Edit {
 
 /// Shared key handling for text fields: typing, Home/End, arrows (Ctrl: by word), Shift to
 /// select, Ctrl+A/C/X/V, Backspace/Delete.
+#[allow(dead_code)]
 pub fn edit_text(
     caret: &mut Caret,
     id: &'static str,
@@ -166,6 +169,7 @@ pub fn edit_text(
 }
 
 /// The red "LIVE" tag on live streams (small on thumbnails, `big` beside the playing video).
+#[allow(dead_code)]
 pub fn live_badge(big: bool) -> gpui::Div {
     crate::div()
         .flex_none()
@@ -180,6 +184,7 @@ pub fn live_badge(big: bool) -> gpui::Div {
 }
 
 /// Tab button: active shows accent underline, inactive muted.
+#[allow(dead_code)]
 pub fn tab_button(label: impl Into<SharedString>, active: bool) -> gpui::Stateful<gpui::Div> {
     let label: SharedString = label.into();
     // Id from the label's first word, so "Up next (3)" keeps one id as its count changes.
@@ -198,6 +203,7 @@ pub fn tab_button(label: impl Into<SharedString>, active: bool) -> gpui::Statefu
 }
 
 /// A small rounded chip (filter bar, group editor).
+#[allow(dead_code)]
 pub fn chip(
     id: impl Into<gpui::ElementId>,
     label: impl Into<SharedString>,
@@ -221,6 +227,7 @@ pub fn chip(
 }
 
 /// Clear a failed load state to Idle so it can be retried.
+#[allow(dead_code)]
 pub fn clear_failed<T>(load: &mut crate::Load<T>) {
     if matches!(load, crate::Load::Failed(_)) {
         *load = crate::Load::Idle;
@@ -228,6 +235,7 @@ pub fn clear_failed<T>(load: &mut crate::Load<T>) {
 }
 
 /// Heuristic: does the error look like a login/cookie problem?
+#[allow(dead_code)]
 pub fn looks_like_login_error(error: &str) -> bool {
     ["sign in", "log in", "login", "cookie", "unauthorized", "403"]
         .iter()

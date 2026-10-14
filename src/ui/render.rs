@@ -1,4 +1,6 @@
-use gpui::{div, px, prelude::*, rgb, AnimationExt};
+#![allow(dead_code)]
+
+use gpui::{px, prelude::*, rgb, AnimationExt};
 
 use crate::themed;
 

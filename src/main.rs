@@ -1,3 +1,13 @@
+//! UnbloatedTube - Lightweight, configurable YouTube desktop client
+//!
+//! This binary crate contains the main application logic for the UnbloatedTube client.
+//! Modules are organized by feature area.
+//!
+//! Note: Some modules contain public APIs that are used across module boundaries.
+//! The `dead_code` lint is allowed at the module level for those modules.
+
+#![allow(dead_code)]
+
 mod account;
 mod auth;
 mod cast;

@@ -1,11 +1,12 @@
+#![allow(dead_code)]
+
 use gpui::{
-    canvas, div, prelude::*, Bounds as GBounds, IntoElement, Pixels as GPixels, Rgba, SharedString,
-    Stateful, px, AnimationExt,
+    canvas, div, prelude::*, px,
 };
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::{themed};
+use crate::themed;
 
 /// Letters used for hint labels (home row first).
 #[allow(dead_code)]
