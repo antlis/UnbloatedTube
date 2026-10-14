@@ -1,10 +1,9 @@
-use gpui::{
-    div, px, prelude::*, rgb, Rgba, Transformation, radians, AnimationExt,
-};
+use gpui::{div, px, prelude::*, rgb, AnimationExt};
 
 use crate::themed;
 
 /// Skeleton placeholder for a thumbnail.
+#[allow(dead_code)]
 pub fn skeleton_thumb() -> impl gpui::IntoElement {
     gpui::div()
         .flex_none()
@@ -20,6 +19,7 @@ pub fn skeleton_thumb() -> impl gpui::IntoElement {
 }
 
 /// Skeleton placeholder for a text line.
+#[allow(dead_code)]
 pub fn skeleton_line() -> impl gpui::IntoElement {
     gpui::div()
         .flex_1()
@@ -34,6 +34,7 @@ pub fn skeleton_line() -> impl gpui::IntoElement {
 }
 
 /// Skeleton for a group/channels row.
+#[allow(dead_code)]
 pub fn skeleton_group() -> impl gpui::IntoElement {
     gpui::div()
         .flex()
@@ -67,6 +68,7 @@ pub fn skeleton_group() -> impl gpui::IntoElement {
 }
 
 /// Loading spinner.
+#[allow(dead_code)]
 pub fn spinner() -> impl gpui::IntoElement {
     gpui::div()
         .flex_none()

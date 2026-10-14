@@ -37,6 +37,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use store::{ChannelFlags, ChannelGroup, Config, History, Seen, Settings};
+#[allow(unused_imports)]
 use ui::{components::*, render::*, hints::*};
 use yt::{Comment, Group, Video, fmt_count, fmt_duration};
 

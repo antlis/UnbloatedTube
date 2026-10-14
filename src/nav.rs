@@ -1,8 +1,5 @@
-use crate::store;
-use crate::yt::Video;
-use crate::{Tab, Lower};
+use crate::{store, yt::Video, Tab, Lower};
 use gpui::Context;
-use std::time::Instant;
 
 impl crate::Unbloated {
     /// Next video in the nav stack (forward).
@@ -12,6 +9,7 @@ impl crate::Unbloated {
     }
 
     /// Previous/next video in the nav stack (back/forward).
+    #[allow(dead_code)]
     pub fn nav_neighbor(&self, step: isize) -> Option<Video> {
         self.nav_pos.and_then(|p| {
             let i = p as isize + step;
@@ -20,6 +18,7 @@ impl crate::Unbloated {
     }
 
     /// Push a video onto the nav stack (truncating forward history).
+    #[allow(dead_code)]
     fn nav_push(&mut self, video: Video) {
         if self.nav.last().is_none_or(|v| v.id != video.id) {
             self.nav.push(video);
@@ -27,11 +26,13 @@ impl crate::Unbloated {
     }
 
     /// Start position for the next video (resume from history, else 0).
+    #[allow(dead_code)]
     fn resume_pos(&self, video: &Video) -> f64 {
         self.history.position(&video.id)
     }
 
     /// Prefetch the next video in the nav stack or queue.
+    #[allow(dead_code)]
     pub fn prefetch_next(&mut self, cx: &mut Context<Self>) {
         if let Some(next) = self.next_video() {
             self.prefetch(&next.id, cx);

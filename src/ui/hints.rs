@@ -5,15 +5,18 @@ use gpui::{
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::{Unbloated, themed};
+use crate::{themed};
 
 /// Letters used for hint labels (home row first).
+#[allow(dead_code)]
 const HINT_CHARS: &str = "asdfghjklqwertyuiopzxcvbnm";
 
 /// A click target for `f` hints: where it is on screen and what clicking it does.
+#[allow(dead_code)]
 pub type HintTarget = (crate::GBounds<crate::GPixels>, Rc<dyn Fn(&mut crate::Unbloated, &mut crate::Window, &mut crate::Context<crate::Unbloated>)>);
 
 /// Registry for clickable hint targets.
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct HintReg {
     targets: Arc<std::sync::Mutex<Vec<HintTarget>>>,
@@ -28,14 +31,17 @@ impl Default for HintReg {
 }
 
 impl HintReg {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[allow(dead_code)]
     pub fn clear(&self) {
         self.targets.lock().unwrap().clear();
     }
 
+    #[allow(dead_code)]
     pub fn targets(&self) -> Vec<HintTarget> {
         self.targets.lock().unwrap().clone()
     }
@@ -43,6 +49,7 @@ impl HintReg {
 
 /// Labels for `n` targets: single letters when they fit, else two letters for all (so no label
 /// is a prefix of another).
+#[allow(dead_code)]
 pub fn hint_label_list(n: usize) -> Vec<String> {
     let chars: Vec<char> = HINT_CHARS.chars().collect();
     if n <= chars.len() {
@@ -57,6 +64,7 @@ pub fn hint_label_list(n: usize) -> Vec<String> {
 }
 
 /// `on_click` that also registers the element for `f` hints and Tab focus, which run the same handler.
+#[allow(dead_code)]
 pub trait OnClickHinted: gpui::StatefulInteractiveElement + gpui::ParentElement + gpui::Styled + Sized {
     fn on_click_hinted(
         self,
@@ -85,7 +93,11 @@ pub trait OnClickHinted: gpui::StatefulInteractiveElement + gpui::ParentElement 
 
 impl OnClickHinted for gpui::Stateful<gpui::Div> {}
 
+/// Labels for `n` targets: single letters when they fit, else two letters for all (so no label
+/// is a prefix of another).
+
 /// Hint mode overlay: a yellow label on each target still matching what was typed.
+#[allow(dead_code)]
 pub fn hint_labels(
     targets: &[HintTarget],
     typed: &str,
