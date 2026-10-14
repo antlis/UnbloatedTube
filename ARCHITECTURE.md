@@ -87,6 +87,15 @@ the hint keys then run the same handlers. The tables of toggles and shortcuts ar
 It uses file descriptors and locks, so it is Unix by design; it is the one place outside
 `platform/` that touches them.
 
+## The account session
+
+`backend/account.rs` talks to InnerTube with the browser's cookies, read once with yt-dlp and kept
+in memory (`shared`) and, for up to 12 hours, in a private file. YouTube rotates those cookies, and
+a login it no longer accepts still gets answers, as a signed-out visitor: empty lists and 401s.
+So `post` turns such an answer into `SIGNED_OUT` for requests that need the login (not for public
+pages), and the callers (`with_shared` for lists, `with_account` for actions) re-read the browser
+once and try again; if that fails too, the Settings page shows the failed step.
+
 ## Casting
 
 `backend/cast.rs` talks to a receiver: a command from `config.toml` (`catt` and the like) or the

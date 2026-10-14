@@ -239,9 +239,32 @@ pub(crate) fn session_hint(error: String) -> String {
         "Couldn't find that browser's profile: is it installed, and has it been opened once?".into()
     } else if error.contains("no YouTube login cookies") {
         "That browser isn't signed in to YouTube. Sign in there, then try again (Chromium-based browsers also need an unlocked keyring).".into()
+    } else if error.contains("no longer valid") {
+        // yt-dlp's wording when YouTube rotated the cookies it was given.
+        crate::backend::account::SIGNED_OUT.into()
     } else if error.contains("refused") || error.to_lowercase().contains("sign in") {
         format!("{error} — your YouTube session may have expired; sign in to YouTube in your browser, then try again")
     } else {
         error
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::account::SIGNED_OUT;
+
+    #[test]
+    fn a_login_youtube_no_longer_accepts_is_a_login_problem() {
+        assert!(looks_like_login_error(SIGNED_OUT));
+        // Said once, not wrapped in a second hint.
+        assert_eq!(session_hint(SIGNED_OUT.to_string()), SIGNED_OUT);
+    }
+
+    #[test]
+    fn yt_dlps_rotated_cookies_get_the_same_message() {
+        let yt_dlp = "The provided YouTube account cookies are no longer valid";
+        assert!(looks_like_login_error(yt_dlp));
+        assert_eq!(session_hint(yt_dlp.to_string()), SIGNED_OUT);
     }
 }

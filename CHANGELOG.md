@@ -4,6 +4,23 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Fixed
+- **A login YouTube no longer accepts is now recognised and explained.** When the cookies the app
+  reads from your browser have been rotated or signed out, YouTube still answers, as for a
+  signed-out visitor: lists came back *empty* (so subscriptions, playlists or history seemed to
+  vanish) and Like, Save and the like failed with a bare "YouTube refused (401)". Now those
+  requests fail with "YouTube no longer accepts your saved login. Open youtube.com in your browser
+  (log in again if it asks), then press Try again in Settings → Account", the Settings page shows
+  the failed step, and yt-dlp's "cookies are no longer
+  valid" gets the same message. Public pages (videos, channels, search) are unaffected.
+- **A running app tries what restarting did.** The cookies were read once at start and kept for
+  the whole run, so once YouTube rotated them the lists and Like kept using dead ones until you
+  restarted. When YouTube now refuses the login, the app re-reads the browser's cookies itself,
+  once, for the lists and the actions alike (before, only cookies kept from an earlier start
+  were re-read, and Like refreshed only its own copy).
+
 ## 0.43.1 - 2026-10-15
 
 ### Fixed

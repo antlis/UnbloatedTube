@@ -125,8 +125,9 @@ impl Unbloated {
             // A login kept for long enough stops being accepted (YouTube rotates its cookies):
             // try once more with the cookies as the browser has them now.
             if res.is_err() && cached {
-                if let Ok(fresh) = Account::load_fresh(&cfg) {
-                    account = Arc::new(fresh);
+                // Shared with the lists, which would otherwise keep the cookies that were refused.
+                if let Ok(fresh) = account::refresh(&cfg, &account) {
+                    account = fresh;
                     res = f(&account);
                 }
             }

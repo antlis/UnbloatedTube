@@ -310,6 +310,10 @@ fn fast_first(
         r => {
             if let Err(e) = r {
                 timing(&format!("innertube {what} failed ({e})"), start);
+                // yt-dlp would fail on the same login, only less clearly.
+                if e == crate::backend::account::SIGNED_OUT {
+                    return Err(e);
+                }
             }
             fallback(on)
         }
@@ -385,7 +389,12 @@ pub fn subscriptions(cfg: &Config, on: &mut dyn FnMut(Group)) -> Result<(), Stri
     let start = std::time::Instant::now();
     match crate::backend::account::with_shared(cfg, |a| a.subscribed_channels(&mut *on).and_then(|n| if n > 0 { Ok(n) } else { Err("empty".into()) })) {
         Ok(n) => return Ok(timing(&format!("innertube channels ({n})"), start)),
-        Err(e) => timing(&format!("innertube channels failed ({e})"), start),
+        Err(e) => {
+            timing(&format!("innertube channels failed ({e})"), start);
+            if e == crate::backend::account::SIGNED_OUT {
+                return Err(e);
+            }
+        }
     }
     stream(cfg, &["https://www.youtube.com/feed/channels".to_string()], 5000, |e| {
         let thumb = thumb(&e);
@@ -419,6 +428,8 @@ pub fn history(cfg: &Config, account: Option<Arc<Account>>, on: &mut dyn FnMut(V
             list.into_iter().for_each(on);
             Ok(())
         }
+        // yt-dlp would fail on the same login, only less clearly.
+        Err(e) if e == crate::backend::account::SIGNED_OUT => Err(e),
         _ => videos(cfg, ":ythistory", 150, on),
     }
 }

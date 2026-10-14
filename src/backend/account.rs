@@ -55,8 +55,10 @@ pub fn shared(cfg: &Config) -> Result<Arc<Account>, String> {
 pub fn with_shared<R>(cfg: &Config, mut f: impl FnMut(&Account) -> Result<R, String>) -> Result<R, String> {
     let a = shared(cfg)?;
     match f(&a) {
-        Err(e) if a.from_kept => {
-            crate::backend::yt::timing(&format!("kept cookies refused ({e})"), std::time::Instant::now());
+        // Kept cookies, or ones read at start that YouTube has rotated since (a long-running app):
+        // read the browser's again, which is what restarting the app did.
+        Err(e) if a.from_kept || e == SIGNED_OUT => {
+            crate::backend::yt::timing(&format!("cookies refused ({e})"), std::time::Instant::now());
             f(&*refresh(cfg, &a)?)
         }
         r => r,
@@ -175,6 +177,24 @@ pub struct SaveOption {
     pub contains: bool,
 }
 
+/// What a failed account call says when YouTube no longer accepts the login (see `signed_out`).
+pub const SIGNED_OUT: &str = "YouTube no longer accepts your saved login. Open youtube.com in your browser (log in again if it asks), then press Try again in Settings → Account.";
+
+/// Whether YouTube answered as to a signed-out visitor (its responses say so in `loggedOut`).
+fn signed_out(response: &Value) -> bool {
+    response["responseContext"]["mainAppWebResponseContext"]["loggedOut"].as_bool() == Some(true)
+}
+
+/// Whether "signed out" is an error for this request: your lists and account actions need the
+/// login, public pages (a video, a channel, search) answer the same with or without it.
+fn needs_login(endpoint: &str, body: &Value) -> bool {
+    match endpoint {
+        "next" | "search" | "player" | "navigation/resolve_url" => false,
+        "browse" => matches!(body["browseId"].as_str(), Some("FEhistory" | "FEsubscriptions" | "FEchannels" | "FEplaylist_aggregation" | "VLWL" | "VLLL")),
+        _ => true,
+    }
+}
+
 impl Account {
     /// Read the YouTube cookies: from a cookies file, or from the browser (see `load_fresh`),
     /// using the ones kept from the last export when there are.
@@ -259,6 +279,7 @@ impl Account {
 
     fn post(&self, endpoint: &str, mut body: Value) -> Result<Value, String> {
         body["context"] = json!({ "client": { "clientName": "WEB", "clientVersion": CLIENT_VERSION, "hl": "en" } });
+        let account_only = needs_login(endpoint, &body);
         let mut req = crate::backend::http::agent()
             .post(&format!("{ORIGIN}/youtubei/v1/{endpoint}?prettyPrint=false"))
             .set("Origin", ORIGIN)
@@ -276,10 +297,18 @@ impl Account {
             .set("X-YouTube-Client-Version", CLIENT_VERSION)
             .send_json(body)
             .map_err(|e| match e {
+                // An account call YouTube answers with 401 is not logged in: the login is no longer accepted.
+                ureq::Error::Status(401, _) if !self.sapisid.is_empty() => SIGNED_OUT.to_string(),
                 ureq::Error::Status(code, _) => format!("YouTube refused ({code})"),
                 e => e.to_string(),
             })?;
-        resp.into_json().map_err(|e| e.to_string())
+        let json: Value = resp.into_json().map_err(|e| e.to_string())?;
+        // A login YouTube no longer accepts still gets answers, as a signed-out visitor: an empty
+        // history, no subscriptions. Taken for what it is, so those don't replace the real lists.
+        if !self.sapisid.is_empty() && account_only && signed_out(&json) {
+            return Err(SIGNED_OUT.to_string());
+        }
+        Ok(json)
     }
 
     /// Like and subscription state for a video (read-only).
@@ -887,5 +916,37 @@ fn export_browser_cookies(browser: &str) -> Result<(String, String), String> {
         }
     } else {
         Ok((text, browser.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_signed_out_answer_is_recognised() {
+        let out = json!({ "responseContext": { "mainAppWebResponseContext": { "loggedOut": true } } });
+        let ok = json!({ "responseContext": { "mainAppWebResponseContext": { "loggedOut": false } } });
+        assert!(signed_out(&out));
+        assert!(!signed_out(&ok));
+        // No flag: not taken for signed out.
+        assert!(!signed_out(&json!({})));
+    }
+
+    #[test]
+    fn only_account_requests_need_the_login() {
+        let browse = |id: &str| json!({ "browseId": id });
+        for id in ["FEhistory", "FEsubscriptions", "FEchannels", "FEplaylist_aggregation", "VLWL", "VLLL"] {
+            assert!(needs_login("browse", &browse(id)), "{id}");
+        }
+        // Public: a channel, a public playlist, a continuation, a video, search.
+        assert!(!needs_login("browse", &browse("UCX6OQ3DkcsbYNE6H8uQQuVA")));
+        assert!(!needs_login("browse", &browse("VLPLvh-SiyllblfZdT-ZNKOB5eAGz3OIIg5Y")));
+        assert!(!needs_login("browse", &json!({ "continuation": "token" })));
+        for ep in ["next", "search", "player", "navigation/resolve_url"] {
+            assert!(!needs_login(ep, &json!({})), "{ep}");
+        }
+        assert!(needs_login("like/like", &json!({})));
+        assert!(needs_login("playlist/get_add_to_playlist", &json!({})));
     }
 }
