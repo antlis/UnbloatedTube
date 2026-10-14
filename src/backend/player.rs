@@ -1,12 +1,11 @@
 //! A single long-lived mpv process, controlled over its JSON IPC socket.
 
-use crate::auth::Auth;
-use crate::store::{Config, Settings};
+use crate::backend::auth::Auth;
+use crate::backend::store::{Config, Settings};
+use crate::platform::{ipc, paths, process};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
@@ -72,15 +71,9 @@ pub struct Player {
 
 impl Player {
     pub fn new(volume: f32) -> Self {
-        let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+        let dir = paths::runtime_dir();
         // Sockets of unbloatedtube instances that were killed (and so never cleaned up after themselves).
-        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let pid = name.strip_prefix("unbloatedtube-mpv-").and_then(|n| n.strip_suffix(".sock"));
-            if pid.is_some_and(|pid| !std::path::Path::new(&format!("/proc/{pid}")).exists()) {
-                let _ = std::fs::remove_file(entry.path());
-            }
-        }
+        ipc::remove_stale_sockets(&dir, "unbloatedtube-mpv-");
         Self { socket: dir.join(format!("unbloatedtube-mpv-{}.sock", std::process::id())), child: None, options: Vec::new(), bound: false, volume }
     }
 
@@ -108,7 +101,7 @@ impl Player {
         if !self.alive() {
             let _ = std::fs::remove_file(&self.socket);
             let mut cmd = Command::new("mpv");
-            // mpv's yt-dlp inherits this; see `crate::yt` for why it matters.
+            // mpv's yt-dlp inherits this; see `crate::backend::yt` for why it matters.
             cmd.env("PYCRYPTODOME_DISABLE_GMP", "1")
                 .arg(format!("--input-ipc-server={}", self.socket.display()))
                 .args(["--idle=yes", "--force-window=yes", "--keep-open=yes", "--title=unbloatedtube"])
@@ -117,9 +110,9 @@ impl Player {
                 // Before `options`, so a --gpu-context in the user's extra options still wins.
                 .args(wid.map(|_| "--gpu-context=x11egl"))
                 // mpv's yt-dlp is this program, which answers from what was resolved ahead of time.
-                .args(crate::prefetch::self_exe().map(|exe| format!("--script-opts-append=ytdl_hook-ytdl_path={}", exe.display())))
-                .envs(crate::prefetch::environment())
-                .envs(crate::proxy::url().map(|_| (crate::prefetch::RELAY_ENV, "1")))
+                .args(process::own_exe().map(|exe| format!("--script-opts-append=ytdl_hook-ytdl_path={}", exe.display())))
+                .envs(crate::backend::prefetch::environment())
+                .envs(crate::backend::proxy::url().map(|_| (crate::backend::prefetch::RELAY_ENV, "1")))
                 .args(options)
                 .args(["--volume-max=100".to_string(), format!("--volume={}", self.volume)])
                 .arg(format!("--speed={speed}"))
@@ -132,13 +125,7 @@ impl Player {
                 .stderr(mpv_log());
             // Stop mpv when we exit: closing the window ends the process without running our
             // Drop, and a crash wouldn't either, which would leave the video playing.
-            // SAFETY: prctl is async-signal-safe, as pre_exec requires.
-            unsafe {
-                cmd.pre_exec(|| {
-                    libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
-                    Ok(())
-                });
-            }
+            process::die_with_parent(&mut cmd);
             self.child = Some(cmd.spawn().map_err(|e| format!("cannot start mpv: {e}"))?);
             self.options = options.to_vec();
             self.bound = false;
@@ -211,8 +198,8 @@ impl Player {
         let _ = self.command(json!(["set_property", "speed", speed]));
     }
 
-    fn connect(&self) -> Result<UnixStream, String> {
-        let s = UnixStream::connect(&self.socket).map_err(|e| e.to_string())?;
+    fn connect(&self) -> Result<ipc::Stream, String> {
+        let s = ipc::Stream::connect(&self.socket).map_err(|e| e.to_string())?;
         s.set_read_timeout(Some(Duration::from_millis(300))).ok();
         Ok(s)
     }
@@ -315,7 +302,7 @@ fn window_options(cfg: &Config, s: &Settings, own_window: bool, corner: bool) ->
         Auth::None => raw.clear(),
     }
     // Settings → Network: mpv's streams and its yt-dlp through the app's proxy.
-    if let Some(proxy) = crate::proxy::url() {
+    if let Some(proxy) = crate::backend::proxy::url() {
         out.push(format!("--http-proxy={proxy}"));
         raw.push(format!("proxy={proxy}"));
     }
@@ -363,9 +350,9 @@ fn window_options(cfg: &Config, s: &Settings, own_window: bool, corner: bool) ->
 pub fn play_separate(cfg: &Config, s: &Settings, url: &str, start: f64) -> Result<(), String> {
     let mut cmd = Command::new("mpv");
     cmd.env("PYCRYPTODOME_DISABLE_GMP", "1")
-        .args(crate::prefetch::self_exe().map(|exe| format!("--script-opts-append=ytdl_hook-ytdl_path={}", exe.display())))
-        .envs(crate::prefetch::environment())
-        .envs(crate::proxy::url().map(|_| (crate::prefetch::RELAY_ENV, "1")))
+        .args(process::own_exe().map(|exe| format!("--script-opts-append=ytdl_hook-ytdl_path={}", exe.display())))
+        .envs(crate::backend::prefetch::environment())
+        .envs(crate::backend::proxy::url().map(|_| (crate::backend::prefetch::RELAY_ENV, "1")))
         .args(window_options(cfg, s, true, false))
         .arg("--force-window=immediate")
         .arg(format!("--volume={}", s.volume))
@@ -376,13 +363,7 @@ pub fn play_separate(cfg: &Config, s: &Settings, url: &str, start: f64) -> Resul
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    // SAFETY: prctl is async-signal-safe, as pre_exec requires.
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
-            Ok(())
-        });
-    }
+    process::die_with_parent(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| format!("cannot start mpv: {e}"))?;
     // Reaped when it is closed, so no zombie stays behind.
     std::thread::spawn(move || child.wait());
@@ -391,8 +372,8 @@ pub fn play_separate(cfg: &Config, s: &Settings, url: &str, start: f64) -> Resul
 
 /// The hover-controls script (controls.lua), written to the cache dir so mpv can load it.
 fn controls_script() -> Option<String> {
-    let src = include_str!("controls.lua");
-    let dir = crate::store::cache_dir();
+    let src = include_str!("../controls.lua");
+    let dir = crate::backend::store::cache_dir();
     let path = dir.join("controls.lua");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(src) {
         std::fs::create_dir_all(&dir).ok()?;
@@ -409,7 +390,7 @@ pub fn sponsorblock_script() -> Option<String> {
 /// Current playback state, or None if mpv doesn't answer. Blocks while mpv is busy opening a
 /// video (it answers only after yt-dlp finishes), so never call it on the UI thread.
 pub fn query(socket: &Path) -> Option<State> {
-    let mut s = UnixStream::connect(socket).ok()?;
+    let mut s = ipc::Stream::connect(socket).ok()?;
     s.set_read_timeout(Some(Duration::from_secs(2))).ok();
     let props = ["time-pos", "duration", "pause", "fullscreen", "path", "idle-active", "eof-reached", "chapter-list", "user-data/unbloated/help", "mute", "volume", "user-data/unbloated/action", "track-list", "sub-visibility", "error"];
     for (i, p) in props.iter().enumerate() {
@@ -471,7 +452,7 @@ impl Drop for Player {
 }
 
 fn mpv_log() -> Stdio {
-    let dir = crate::store::cache_dir();
+    let dir = crate::backend::store::cache_dir();
     let _ = std::fs::create_dir_all(&dir);
     std::fs::File::create(dir.join("mpv.log")).map_or(Stdio::null(), Stdio::from)
 }

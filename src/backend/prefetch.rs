@@ -18,15 +18,14 @@
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::os::fd::{AsFd, AsRawFd, RawFd};
-use std::os::unix::net::UnixStream;
-use std::os::unix::process::CommandExt;
+use std::os::fd::{AsFd, AsRawFd};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
 
-use crate::store::{self, Config};
-use crate::yt;
+use crate::backend::store::{self, Config};
+use crate::backend::yt;
+use crate::platform::{self, ipc};
 
 /// Set in the environment of whatever runs this program as yt-dlp (see `run_shim`).
 pub const ENV: &str = "UNBLOATED_YTDL_SHIM";
@@ -40,7 +39,7 @@ pub const RELAY_ENV: &str = "UNBLOATED_YTDL_RELAY";
 /// YouTube's signed URLs often expire sooner (6-12h); 20 min avoids most 403s.
 pub const TTL: Duration = Duration::from_secs(1200);
 
-const HELPER: &str = include_str!("ytdl_helper.py");
+const HELPER: &str = include_str!("../ytdl_helper.py");
 
 fn dir() -> PathBuf {
     store::cache_dir().join("ytdl")
@@ -56,36 +55,23 @@ fn fresh(path: &Path) -> bool {
     path.metadata().and_then(|m| m.modified()).ok().and_then(|t| SystemTime::now().duration_since(t).ok()).is_some_and(|age| age < TTL)
 }
 
-fn runtime_dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir)
-}
-
 /// Where this app's helper listens (its process id keeps instances apart).
 fn socket_path() -> PathBuf {
-    runtime_dir().join(format!("unbloatedtube-ytdl-{}.sock", std::process::id()))
+    platform::paths::runtime_dir().join(format!("unbloatedtube-ytdl-{}.sock", std::process::id()))
 }
 
 /// What to give a program that should run yt-dlp through this one (mpv, `ytdlp`).
 pub fn environment() -> Vec<(&'static str, String)> {
     let mut env = vec![(ENV, "1".into()), (SOCK_ENV, socket_path().display().to_string())];
     if yt::timing_on() && std::env::var_os(yt::TIMING_TO).is_none() {
-        env.push((yt::TIMING_TO, format!("/proc/{}/fd/2", std::process::id())));
+        env.push((yt::TIMING_TO, platform::process::own_stderr_path()));
     }
     env
 }
 
-/// This program, to run again as yt-dlp. On Linux through `/proc/<pid>/exe`, which reaches the
-/// running binary even after a rebuild replaced the file (`current_exe()` then names a path that
-/// is gone, and every yt-dlp run would fail until a restart). mpv can use it too: it is the app's
-/// pid, not mpv's.
-pub fn self_exe() -> Option<PathBuf> {
-    let proc = PathBuf::from(format!("/proc/{}/exe", std::process::id()));
-    if proc.exists() { Some(proc) } else { std::env::current_exe().ok() }
-}
-
 /// yt-dlp for the app's own requests: this program as the shim, so they get the helper too.
 pub fn ytdlp() -> Command {
-    let mut cmd = match self_exe() {
+    let mut cmd = match platform::process::own_exe() {
         Some(exe) => {
             let mut cmd = Command::new(exe);
             cmd.envs(environment());
@@ -94,7 +80,7 @@ pub fn ytdlp() -> Command {
         None => Command::new("yt-dlp"),
     };
     // Settings → Network: through the app's proxy.
-    if let Some(proxy) = crate::proxy::url() {
+    if let Some(proxy) = crate::backend::proxy::url() {
         cmd.args(["--proxy", &proxy]);
     }
     cmd
@@ -195,13 +181,7 @@ pub fn sweep() {
         }
     }
     // A helper socket whose app is gone (killed, so never cleaned up).
-    for entry in std::fs::read_dir(runtime_dir()).into_iter().flatten().flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let pid = name.strip_prefix("unbloatedtube-ytdl-").and_then(|n| n.strip_suffix(".sock"));
-        if pid.is_some_and(|pid| !Path::new(&format!("/proc/{pid}")).exists()) {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
+    ipc::remove_stale_sockets(&platform::paths::runtime_dir(), "unbloatedtube-ytdl-");
 }
 
 /// The python interpreter and the script of the installed yt-dlp, found by following its
@@ -248,14 +228,9 @@ pub fn start_helper() {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        // SAFETY: prctl is async-signal-safe, as pre_exec requires. The signal comes when the thread
-        // that started the helper ends, hence the wait below: this thread lives as long as the app.
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
-                Ok(())
-            });
-        }
+        // The helper ends with the thread that started it (PR_SET_PDEATHSIG's rule), hence the wait
+        // below: this thread lives as long as the app.
+        platform::process::die_with_parent(&mut cmd);
         if let Ok(mut child) = cmd.spawn() {
             let _ = child.wait();
             let _ = std::fs::remove_file(socket);
@@ -268,37 +243,12 @@ pub fn cleanup() {
     let _ = std::fs::remove_file(socket_path());
 }
 
-/// Send `payload` and the file descriptors over a unix socket in one message.
-fn send_fds(sock: &UnixStream, payload: &[u8], fds: &[RawFd]) -> std::io::Result<()> {
-    let len = std::mem::size_of_val(fds) as u32;
-    // SAFETY: the buffers outlive the call, the control buffer is aligned and sized by CMSG_SPACE.
-    unsafe {
-        let mut iov = libc::iovec { iov_base: payload.as_ptr() as *mut _, iov_len: payload.len() };
-        let space = libc::CMSG_SPACE(len) as usize;
-        let mut control = vec![0u64; space.div_ceil(8)];
-        let mut msg: libc::msghdr = std::mem::zeroed();
-        msg.msg_iov = &mut iov;
-        msg.msg_iovlen = 1;
-        msg.msg_control = control.as_mut_ptr().cast();
-        msg.msg_controllen = space as _;
-        let header = libc::CMSG_FIRSTHDR(&msg);
-        (*header).cmsg_level = libc::SOL_SOCKET;
-        (*header).cmsg_type = libc::SCM_RIGHTS;
-        (*header).cmsg_len = libc::CMSG_LEN(len) as _;
-        std::ptr::copy_nonoverlapping(fds.as_ptr(), libc::CMSG_DATA(header).cast::<RawFd>(), fds.len());
-        if libc::sendmsg(sock.as_raw_fd(), &msg, libc::MSG_NOSIGNAL) < 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-    }
-    Ok(())
-}
-
 /// Hand a run to the helper: it writes into `out` and `err`; the exit code when `wait`.
 /// None when the helper cannot be reached (nothing was run then).
 fn helper_run(args: &[String], out: &File, err: &File, wait: bool) -> Option<i32> {
-    let mut stream = UnixStream::connect(std::env::var_os(SOCK_ENV)?).ok()?;
+    let mut stream = ipc::Stream::connect(std::env::var_os(SOCK_ENV)?).ok()?;
     let payload = serde_json::to_vec(&serde_json::json!({ "argv": args })).ok()?;
-    send_fds(&stream, &payload, &[out.as_raw_fd(), err.as_raw_fd()]).ok()?;
+    ipc::send_with_fds(&stream, &payload, &[out.as_raw_fd(), err.as_raw_fd()]).ok()?;
     if !wait {
         return Some(0);
     }
@@ -360,7 +310,7 @@ fn for_mpv(json: Vec<u8>) -> Vec<u8> {
     fn walk(v: &mut serde_json::Value) {
         match v {
             serde_json::Value::String(s) => {
-                if let Some(url) = crate::proxy::relay_url(s) {
+                if let Some(url) = crate::backend::proxy::relay_url(s) {
                     *s = url;
                 }
             }
@@ -416,7 +366,10 @@ pub fn run_shim() -> ! {
             // The ping a fresh run would have sent; nobody waits for it (nor for its output).
             if let Ok(null) = File::options().write(true).open("/dev/null") {
                 if helper_run(&args, &null, &null, false).is_none() {
-                    let _ = Command::new("yt-dlp").args(&args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).process_group(0).spawn();
+                    let mut cmd = Command::new("yt-dlp");
+                    cmd.args(&args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+                    platform::process::own_group(&mut cmd);
+                    let _ = cmd.spawn();
                 }
             }
         }
@@ -463,8 +416,7 @@ fn wait_turn(answer: &Path) -> Option<File> {
     std::fs::create_dir_all(dir()).ok()?;
     let lock = File::options().create(true).truncate(false).write(true).open(answer.with_extension("lock")).ok()?;
     let start = std::time::Instant::now();
-    // SAFETY: flock on a descriptor this function owns.
-    while unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+    while !platform::fs::try_lock_exclusive(&lock) {
         if start.elapsed() > Duration::from_secs(15) {
             return None;
         }
@@ -489,7 +441,7 @@ fn kept_cookies(args: &[String]) -> (Vec<String>, Option<PathBuf>) {
         None => None,
     });
     let Some((i, n, spec)) = found else { return (args.to_vec(), None) };
-    let Some(jar) = crate::account::kept_copy(&spec) else { return (args.to_vec(), None) };
+    let Some(jar) = crate::backend::account::kept_copy(&spec) else { return (args.to_vec(), None) };
     let mut out = args.to_vec();
     out.splice(i..i + n, ["--cookies".to_string(), jar.display().to_string()]);
     (out, Some(jar))

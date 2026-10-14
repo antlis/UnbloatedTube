@@ -9,14 +9,30 @@ every user-visible change).
 - Building needs the nix-shell environment (linking fails without it):
   `source .nix-env && cargo build` (debug) or `cargo build --release`. `./run` starts the newest build.
 - Debug and release are separate binaries: rebuild the one the user runs.
-- There are no automated tests; verify UI changes by running the app (see below).
+- `cargo test` runs the unit tests (parsing, cast, platform helpers); there are none for the UI: verify
+  UI changes by running the app (see below).
 
 ## Layout
-- `src/main.rs`: the whole GPUI app (views, state, keys, settings page). `yt.rs` yt-dlp
-  listings, `account.rs` InnerTube, `player.rs` mpv IPC, `embed.rs` X11 child window,
-  `store.rs` settings/history/caches, `thumbs.rs`, `icons.rs`.
+The map of the code, how it fits together and where new code goes: [ARCHITECTURE.md](ARCHITECTURE.md). In short:
+- `src/main.rs`: entry point only (command line, window). The rest is three layers; code uses the ones
+  below it, never above (`platform` <- `backend` <- `app` / `ui`):
+  - `src/app/`: the GPUI app. `mod.rs` holds the state (`Unbloated`) and `tick`; one file per feature
+    (`playback`, `navigation`, `casting`, `browse`, `subscriptions`, `session`, `library`, `subtitles`,
+    `input`, `menus`, `layout`, `commands`, ...), each an `impl Unbloated` block that starts with
+    `use super::*;`. `app/view/` is the rendering (player, browser, settings, menus, overlays, info).
+  - `src/ui/`: pieces that don't depend on the app's state: `theme.rs` (colours, `themed`), `tables.rs`
+    (toggles and shortcut tables), `text_edit.rs`, `components.rs`, `icons.rs`, `textsel.rs`.
+  - `src/backend/`: no GPUI. `yt.rs` yt-dlp listings, `account.rs` InnerTube, `player.rs` mpv IPC,
+    `store.rs` settings/history/caches, `prefetch.rs` yt-dlp shim and helper, `cast.rs`, `cli.rs`,
+    `proxy.rs`, `thumbs.rs`, `dearrow.rs`, `links.rs`, `http.rs`, `auth.rs`.
+  - `src/platform/`: **all** OS-specific code (X11 embed, MPRIS, sockets, process control, private
+    files and locks, opening links). Don't put `libc`, `/proc`, Unix sockets or `xdg-*` anywhere else
+    (the yt-dlp shim's file descriptors in `backend/prefetch.rs` are the one deliberate exception).
+- Items shared between files are `pub(crate)`; a new feature goes in the matching `app/` file or a new one
+  (add `mod name;` in `app/mod.rs`), its drawing in `app/view/`.
 - Colors: always `themed(NAME)` (never `rgb(NAME)`); use `ON_ACCENT` for text on the accent color.
-- New toggle: add the field to `Settings` (store.rs, with default) and a row in a `*_TOGGLES` const.
+- New toggle: add the field to `Settings` (`backend/store.rs`, with default) and a row in a `*_TOGGLES`
+  const (`ui/tables.rs`).
 - Nothing may block the UI thread: yt-dlp, InnerTube and mpv queries run on background threads.
 
 ## Testing the UI

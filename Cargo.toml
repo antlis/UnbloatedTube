@@ -13,17 +13,22 @@ serde_json = "1"
 toml = "0.8"
 dirs = "5"
 ureq = { version = "2", features = ["json", "native-tls"] }
-# OpenSSL for Settings → Network: its TLS gets through filters that stop rustls's (see src/proxy.rs).
+# OpenSSL for Settings → Network: its TLS gets through filters that stop rustls's (see src/backend/proxy.rs).
 native-tls = "0.2"
-x11rb = "0.13"
 sha1_smol = "1"
-# DeArrow asks by a hash prefix of the video id (see src/dearrow.rs).
+# DeArrow asks by a hash prefix of the video id (see src/backend/dearrow.rs).
 sha2 = "0.10"
 anyhow = "1"
-libc = "0.2"
 notify-rust = "4"
 # Blocking work (yt-dlp, HTTP, mpv's socket) runs on its own threads: already a dependency of gpui.
 blocking = "1"
+
+# What src/platform/ needs; each system gets its own implementation there.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13"
 # MPRIS (media keys): already a dependency of gpui and notify-rust.
 zbus = "5"
 

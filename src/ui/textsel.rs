@@ -163,7 +163,7 @@ fn runs(
     selected: Option<Range<usize>>,
 ) -> Vec<(Range<usize>, HighlightStyle)> {
     let link = HighlightStyle {
-        color: Some(crate::themed(crate::ACCENT).into()),
+        color: Some(crate::ui::themed(crate::ui::ACCENT).into()),
         underline: Some(UnderlineStyle { thickness: gpui::px(1.), ..Default::default() }),
         ..Default::default()
     };
@@ -212,7 +212,7 @@ fn runs(
 
 /// The selection's background: the accent at the same wash the text fields' selection uses.
 fn sel_bg() -> gpui::Hsla {
-    gpui::rgba((crate::ACCENT << 8) | 0x66).into()
+    gpui::rgba((crate::ui::ACCENT << 8) | 0x66).into()
 }
 
 #[cfg(test)]
@@ -262,7 +262,7 @@ mod tests {
     fn selection_and_link_share_a_piece() {
         // A link's colour and the selection's wash both survive where they cover together,
         // and the runs abut: 0..2, 2..4, 4..6, nothing painted outside them.
-        let accent = hex(Some(Hsla::from(crate::themed(crate::ACCENT)))).unwrap();
+        let accent = hex(Some(Hsla::from(crate::ui::themed(crate::ui::ACCENT)))).unwrap();
         let wash = hex(Some(sel_bg())).unwrap();
         assert_eq!(
             pieces("abcdef", &[0..4], &[], Some(2..6)),

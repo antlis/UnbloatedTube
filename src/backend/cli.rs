@@ -4,12 +4,14 @@
 //! names a command is sent to it. Only `open` (and a bare link) may start the app instead.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+
+use crate::platform::ipc::{Listener, Stream};
+use crate::platform::paths;
 
 pub const HELP: &str = "\
 unbloatedtube: lightweight YouTube client (GPUI, mpv, yt-dlp)
@@ -105,7 +107,7 @@ fn arg_free(c: &Command) -> bool {
 }
 
 fn socket_path() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("unbloatedtube.sock")
+    paths::runtime_dir().join("unbloatedtube.sock")
 }
 
 /// What a command got back from the app: its answer, or why it failed.
@@ -113,7 +115,7 @@ pub type Reply = Result<String, String>;
 
 /// Send a command to the running app. The outer error means nothing is listening.
 pub fn send(command: &Command) -> std::io::Result<Reply> {
-    let mut stream = UnixStream::connect(socket_path())?;
+    let mut stream = Stream::connect(socket_path())?;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     writeln!(stream, "{}", serde_json::to_string(command).map_err(std::io::Error::other)?)?;
     let mut line = String::new();
@@ -132,12 +134,12 @@ pub struct Request {
 /// through its `reply`. None when another instance already listens (this one then just runs).
 pub fn listen() -> Option<mpsc::Receiver<Request>> {
     let path = socket_path();
-    if UnixStream::connect(&path).is_ok() {
+    if Stream::connect(&path).is_ok() {
         return None;
     }
     // A socket nobody answers on is left over from a killed instance.
     let _ = std::fs::remove_file(&path);
-    let listener = UnixListener::bind(&path).ok()?;
+    let listener = Listener::bind(&path).ok()?;
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
@@ -148,7 +150,7 @@ pub fn listen() -> Option<mpsc::Receiver<Request>> {
     Some(rx)
 }
 
-fn serve(stream: UnixStream, tx: mpsc::Sender<Request>) {
+fn serve(stream: Stream, tx: mpsc::Sender<Request>) {
     let mut line = String::new();
     if BufReader::new(&stream).take(1 << 16).read_line(&mut line).is_err() {
         return;

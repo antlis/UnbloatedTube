@@ -678,32 +678,25 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
 ## Architecture
 
 ```
-┌──────────────────────── unbloatedtube (one process) ────────────────────────┐
-│  GPUI app (main.rs): views, state, keyboard, settings                           │
-│     │                         │                          │                      │
-│     │ background threads      │ background threads       │ X11 child window     │
-│     ▼                         ▼                          ▼                      │
-│  yt.rs ── spawns ──► yt-dlp   account.rs ── HTTPS ──►     embed.rs               │
-│  (lists, search,    (JSON     YouTube InnerTube API       (mpv draws into it)    │
-│   downloads)        lines)    (subscribe, like, save)                           │
-│                                                          player.rs ── JSON IPC ─┼──► mpv
-│  store.rs: config, settings, history, caches on disk                            │
-│  thumbs.rs: thumbnail cache        icons.rs: built-in SVG icons                 │
-└─────────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────── unbloatedtube (one process) ───────────────────────────┐
+│  app/ + ui/ — GPUI: views, state, keyboard, settings, Vim mode, hint mode        │
+│     │  background threads                                                        │
+│     ▼                                                                            │
+│  backend/ — no GPUI                                                              │
+│    yt.rs ─ spawns ─► yt-dlp         account.rs ─ HTTPS ─► YouTube InnerTube      │
+│    player.rs ─ JSON IPC ─► mpv      cast.rs ─► cast receivers                    │
+│    store.rs: config, settings, history, caches on disk                           │
+│    proxy.rs, thumbs.rs, dearrow.rs, http.rs, prefetch.rs (yt-dlp shim + helper)  │
+│     │                                                                            │
+│     ▼                                                                            │
+│  platform/ — the only OS-specific code (Linux today)                             │
+│    embed.rs: X11 child window mpv draws into    mpris.rs: media keys over D-Bus  │
+│    ipc.rs  process.rs  paths.rs  fs.rs  desktop.rs                               │
+└──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-| Module | Role |
-| --- | --- |
-| `main.rs` | The GPUI app: all views (tabs, lists, player panel, settings, overlays), state, shortcuts, Vim mode and hints, notices. |
-| `yt.rs` | Lists: the subscriptions feed, playlists, recommendations, search, channel tabs and the subscribed-channels list come from `account.rs` (InnerTube) page by page, with `yt-dlp --flat-playlist -j` as the fallback, streamed line by line. Also downloads. History comes from `account.rs`, with `:ythistory` as the fallback. |
-| `account.rs` | Account actions and the watch history (with Shorts and each entry's day, which yt-dlp's `:ythistory` lacks) through YouTube's internal InnerTube API, authenticated like the web app: browser cookies plus a `SAPISIDHASH` header. Cookies stay in memory. |
-| `auth.rs` | The login source (`auth.json`): browser or cookies file. Browser login exports the cookies with yt-dlp and remembers the keyring suffix that worked (e.g. `brave+gnomekeyring`). |
-| `player.rs` | One long-lived mpv process, controlled over its JSON IPC socket; builds mpv options from settings; restarts mpv only when options change. |
-| `embed.rs` | Creates an X11 child window inside the app's window for `mpv --wid`, and keeps it positioned over the player area. |
-| `store.rs` | `config.toml`, `settings.json`, watch history with resume positions, seen videos, groups, cached lists. |
-| `thumbs.rs` | Downloads and caches thumbnails and avatars. |
-| `proxy.rs` | The local proxy behind Settings → Network: Bypass (the TLS ClientHello split into two records and/or two TCP segments, inside the server name) or an upstream SOCKS5/HTTP proxy; local addresses direct. mpv's stream links come to it as http:// and it makes the TLS connection (OpenSSL). |
-| `icons.rs` | Small single-color SVG icons compiled into the binary. |
+The layers, every module, how the app is put together and where new code goes are in
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
 ### Design notes
 
@@ -786,16 +779,23 @@ the field is emptied. A `url` target needs `config.toml`, because the field only
   - *Open in a new window*, beyond Play in separate window:
     - several lists open at once: switchable left-column views, like browser tabs (no extra player)
     - a real second app window, with its own embedded player, would mean per-window player state
-      and a second X11 embed (`embed.rs`, already the main obstacle to Windows and macOS): not
+      and a second X11 embed (`platform/embed.rs`, already the main obstacle to Windows and macOS): not
       worth it before cross-platform embedding exists
 - **Test the Connect flow on more setups.** Verified with Brave (keyring) and a failing
   Firefox profile; Chrome, Chromium, Edge and Flatpak/Snap profiles are untested.
 
-- **Cross-platform (Windows, macOS).** Today it is Linux/X11 only. What's in the way:
-  - the embedded player (`embed.rs`): an X11 child window for `mpv --wid`; needs a per-platform
-    replacement or another way to show mpv's picture inside the window
-  - the "mpv dies with the app" guarantee (`PR_SET_PDEATHSIG`, Linux only)
-  - `xdg-open` for Open in browser (`open` on macOS, `start` on Windows)
+- **Cross-platform (Windows, macOS).** Today it is Linux/X11 only. All OS-specific code is in
+  `src/platform/` (plus the yt-dlp shim in `backend/prefetch.rs`, Unix by design), so a port means
+  giving those modules a version for the other system; the compiler then lists what is missing.
+  Not attempted yet. What's in the way:
+  - the embedded player (`platform/embed.rs`): an X11 child window for `mpv --wid`; needs a
+    per-platform replacement or another way to show mpv's picture inside the window
+  - `platform/process.rs`: the "mpv dies with the app" guarantee (`PR_SET_PDEATHSIG`, Linux only)
+    and `/proc/<pid>/exe`
+  - `platform/ipc.rs`: Unix sockets for mpv's control, the command line and the helper (named
+    pipes on Windows)
+  - `platform/desktop.rs`: `xdg-open` and `xdg-settings` (`open` on macOS, `start` on Windows)
+  - `platform/mpris.rs`: media keys over D-Bus (Windows and macOS have their own APIs)
   - the config, data and cache locations (`~/.config`, `~/.local/share`, `~/.cache`)
 - **Wayland** is untested.
 - **Prebuilt binaries (packaging).** Compiling from source is slow: the build pulls in about

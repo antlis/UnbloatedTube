@@ -2,7 +2,7 @@
 //! cookies) or an imported cookies.txt. The Connect panel only ever offers these two
 //! choices — cookie values themselves never appear in the interface.
 
-use crate::store::config_dir;
+use crate::backend::store::config_dir;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -76,13 +76,7 @@ impl Auth {
     /// The default browser's yt-dlp spec: $XDG_DEFAULT_BROWSER, then `xdg-settings`
     /// (both normally give a desktop file id like "firefox.desktop").
     pub fn default_browser() -> Option<&'static str> {
-        let raw = std::env::var("XDG_DEFAULT_BROWSER")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .or_else(|| {
-                let out = std::process::Command::new("xdg-settings").args(["get", "default-web-browser"]).output().ok()?;
-                out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string()).filter(|s| !s.is_empty())
-            })?;
+        let raw = crate::platform::desktop::default_browser_id()?;
         let id = raw.strip_suffix(".desktop").unwrap_or(&raw).to_ascii_lowercase();
         // Desktop ids are usually just the executable name ("google-chrome.desktop").
         BROWSERS.iter().find(|(_, _, bins)| bins.iter().any(|b| *b == id)).map(|(_, spec, _)| *spec)
