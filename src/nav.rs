@@ -1,8 +1,7 @@
 use crate::store::{Config, Settings};
-use crate::yt::{Group, Video};
+use crate::yt::{Video};
 use crate::{Tab, Lower, store};
-use gpui::{Context, Task};
-use std::sync::Arc;
+use gpui::{Context};
 use std::time::Instant;
 
 impl crate::Unbloated {
