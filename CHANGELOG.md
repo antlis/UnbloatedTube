@@ -4,7 +4,7 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
-## Unreleased
+## 0.43.1 - 2026-10-15
 
 ### Fixed
 - **Next** (the key, the player's button), **autoplay** and the lookup ahead of the next video
