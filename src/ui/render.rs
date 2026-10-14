@@ -1,4 +1,6 @@
-use gpui::{div, px, prelude::*, rgb, Rgba, Transformation, radians, AnimationExt};
+use gpui::{
+    div, px, prelude::*, rgb, Rgba, Transformation, radians, AnimationExt,
+};
 
 use crate::themed;
 

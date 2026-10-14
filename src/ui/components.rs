@@ -1,6 +1,6 @@
 use gpui::{
-    div, px, prelude::*, FontWeight, KeyDownEvent, SharedString, Stateful, Styled,
-    UniformListScrollHandle, svg, AnimationExt,
+    div, px, prelude::*, FontWeight, KeyDownEvent, SharedString, Styled,
+    svg,
 };
 use std::rc::Rc;
 use std::sync::Arc;
@@ -166,9 +166,6 @@ pub fn edit_text(
     *caret = Caret { id, pos, anchor };
     edit
 }
-
-
-/// The red "LIVE" tag on live streams (small on thumbnails, `big` beside the playing video).
 pub fn live_badge(big: bool) -> gpui::Div {
     crate::div()
         .flex_none()
