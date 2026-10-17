@@ -4,7 +4,7 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
-## Unreleased
+## 0.44.0 - 2026-10-18
 
 ### Added
 - **Previews on the seek bar.** Pointing at the seek bar shows a small picture of the video at that
