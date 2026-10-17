@@ -501,7 +501,45 @@ Without flakes, `nix-build` (or `nix-env -f . -i`) builds the same package throu
 
 The first build compiles all ~730 crates (about 25 minutes on 2 cores, with several GB of disk);
 the flake builds them as a separate derivation (crane), so after that an update recompiles only
-the app, in about a minute and a half. See the TODO on prebuilt binaries. For development, `shell.nix` provides the same tools:
+the app, in about a minute and a half (a release that changes `Cargo.lock` compiles the
+dependencies again).
+
+#### Prebuilt binary (binary cache)
+
+Every release is built by CI and pushed to a public Cachix cache, `antlis`, so Nix can download
+the app instead of compiling it. Tell Nix about the cache once; it is read-only and needs no
+token. On NixOS, in your configuration:
+
+```nix
+nix.settings.extra-substituters = [ "https://antlis.cachix.org" ];
+nix.settings.extra-trusted-public-keys = [
+  "antlis.cachix.org-1:OutAVhWPSk0V9YHf4Il10wMjJmDAvGnAT+mzedJKaLs="
+];
+```
+
+Elsewhere, put the same two lines in `nix.conf` (`/etc/nix/nix.conf` or `~/.config/nix/nix.conf`;
+your user must be a trusted user for the first one to count):
+
+```
+extra-substituters = https://antlis.cachix.org
+extra-trusted-public-keys = antlis.cachix.org-1:OutAVhWPSk0V9YHf4Il10wMjJmDAvGnAT+mzedJKaLs=
+```
+
+To use it for a single command, without changing any configuration, pass them as options, e.g.
+`nix profile install github:antlis/UnbloatedTube --option extra-substituters https://antlis.cachix.org --option extra-trusted-public-keys "antlis.cachix.org-1:OutAVhWPSk0V9YHf4Il10wMjJmDAvGnAT+mzedJKaLs="`.
+
+What to know:
+
+- The cache has what CI built from the release tag, using the flake's own pinned nixpkgs. If you
+  use the flake as an overlay on a different nixpkgs, the package comes out different and Nix
+  compiles it locally.
+- CI pushes it a few minutes after a release is tagged (about 8). A rebuild before that compiles
+  locally, as without the cache. `nix path-info --store https://antlis.cachix.org <path>` says
+  whether a given build is there.
+- Other install methods (AppImage, tarball, `.deb`/`.rpm`, AUR) are prebuilt binaries already and
+  don't use it.
+
+For development, `shell.nix` provides the same tools:
 
 ```sh
 nix-shell --run 'cargo build --release'
@@ -873,9 +911,8 @@ The layers, every module, how the app is put together and where new code goes ar
   - the same build feeds the `.deb` and `.rpm` packages and an AUR `-bin` package (below)
   - for Nix: done in the repository, not switched on: the Rust dependencies build as a derivation
     of their own (crane, see *Nix packaging*), and the release workflow's `nix-cache` job builds
-    the package and pushes it to a Cachix cache. It needs a cache that only you can create (see
-    *Nix binary cache* below); until then the job only prints a notice. Or get it into nixpkgs,
-    where the build servers cache it
+    the package and pushes it to the `antlis` Cachix cache (switched on for 0.44.0; see *Prebuilt
+    binary* under NixOS). Or get it into nixpkgs, where the build servers cache it
   - a cache of the Cargo build in CI (e.g. `Swatinem/rust-cache`) keeps the CI builds themselves
     fast; arm64 and other targets later, if wanted
   - unchecked: the CI and cache details, free-tier limits, and how long the CI build takes
@@ -889,12 +926,13 @@ The layers, every module, how the app is put together and where new code goes ar
   `nixpkgs` submission. A first build compiles every crate.
 
   **Nix binary cache** (so nobody compiles at all): the workflow's `nix-cache` job runs on every
-  version tag. To switch it on once: create a free cache at https://app.cachix.org (open-source
-  caches are free), put its name in the repository variable `CACHIX_CACHE` and a token in the
-  secret `CACHIX_AUTH_TOKEN`. Users then add the cache to their Nix config, e.g. on NixOS
-  `nix.settings.substituters = [ "https://NAME.cachix.org" ]` and
-  `nix.settings.trusted-public-keys = [ "NAME.cachix.org-1:<the key Cachix shows>" ]`; the next
-  `nixos-rebuild` downloads the app. Not tried: the cache doesn't exist yet. The package pins its own nixpkgs for yt-dlp, deno and mpv
+  version tag (and by hand with `gh workflow run Release`) and pushes to the public Cachix cache
+  `antlis`: the repository variable `CACHIX_CACHE` names it, the secret `CACHIX_AUTH_TOKEN` is the
+  write token. Checked: the 0.44.0 package (`nix eval` of the flake at that revision) is in the
+  cache (`nix path-info --store https://antlis.cachix.org`), and a NixOS rebuild with the cache
+  configured downloaded it and finished much faster than compiling (the author's machine). Not yet
+  checked: a machine other than the author's, and the free plan's storage limit as releases
+  accumulate. The package pins its own nixpkgs for yt-dlp, deno and mpv
   (`nix/unstable.nix` and the flake's input, which must be bumped together), which is fine for a
   profile but not what a nixpkgs package would do.
 - **AUR package** (Arch). Published as `unbloatedtube-bin`

@@ -4,6 +4,13 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Added
+- **A Nix binary cache.** Releases are built by CI and pushed to a public Cachix cache (`antlis`),
+  so a NixOS rebuild downloads the app instead of compiling it. README → NixOS → *Prebuilt binary*
+  says how to add the cache to your Nix config.
+
 ## 0.44.0 - 2026-10-18
 
 ### Added
