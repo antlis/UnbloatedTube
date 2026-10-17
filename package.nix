@@ -25,7 +25,7 @@
 }:
 let
   buildInputs = [
-    fontconfig freetype libxkbcommon wayland vulkan-loader
+    fontconfig freetype libxkbcommon wayland vulkan-loader libglvnd
     xorg.libxcb xorg.libX11 xorg.libXcursor xorg.libXi xorg.libXrandr
     openssl zstd alsa-lib
   ];

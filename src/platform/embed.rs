@@ -7,7 +7,7 @@ use x11rb::protocol::xproto::{
 };
 use x11rb::rust_connection::RustConnection;
 
-pub struct Embed {
+pub struct X11Video {
     conn: RustConnection,
     child: u32,
     mapped: bool,
@@ -18,9 +18,9 @@ pub struct Embed {
     rect: (i32, i32, u32, u32),
 }
 
-impl Embed {
+impl X11Video {
     /// None on Wayland or if our top-level window can't be found yet.
-    pub fn new() -> Option<Self> {
+    fn new() -> Option<Self> {
         let (conn, screen) = x11rb::connect(None).ok()?;
         let scr = &conn.setup().roots[screen];
         let (root, depth, visual, colormap) = (scr.root, scr.root_depth, scr.root_visual, scr.default_colormap);
@@ -47,12 +47,12 @@ impl Embed {
         Some(Self { conn, child, mapped: false, wanted: false, collapsed: false, rect: (0, 0, 16, 9) })
     }
 
-    pub fn id(&self) -> u32 {
+    fn id(&self) -> u32 {
         self.child
     }
 
     /// Position in device pixels relative to unbloatedtube's window.
-    pub fn place(&mut self, x: i32, y: i32, w: u32, h: u32) {
+    fn place(&mut self, x: i32, y: i32, w: u32, h: u32) {
         let collapsed = w < 40 || h < 40;
         if collapsed != self.collapsed {
             self.collapsed = collapsed;
@@ -68,11 +68,11 @@ impl Embed {
     }
 
     /// Where the video area starts, in device pixels relative to the app's window.
-    pub fn origin(&self) -> (i32, i32) {
+    fn origin(&self) -> (i32, i32) {
         (self.rect.0, self.rect.1)
     }
 
-    pub fn set_visible(&mut self, visible: bool) {
+    fn set_visible(&mut self, visible: bool) {
         self.wanted = visible;
         self.apply();
     }
@@ -100,4 +100,67 @@ fn find_own_window(conn: &RustConnection, root: u32) -> Option<u32> {
             .and_then(|r| r.value32()?.next())
             == Some(pid)
     })
+}
+
+/// Where the video goes in the app's window: an X11 child window mpv renders into (`--wid`), or
+/// under Wayland a subsurface the app renders mpv into itself.
+pub enum Embed {
+    X11(X11Video),
+    Wayland(crate::platform::embed_wayland::WaylandVideo),
+}
+
+/// The app's own window, for the Wayland video surface (see `embed_wayland`): the `wl_display` and
+/// `wl_surface` pointers, as numbers. Set once, when the window exists.
+static WAYLAND_WINDOW: std::sync::OnceLock<(usize, usize)> = std::sync::OnceLock::new();
+
+pub fn set_window(window: &gpui::Window) {
+    use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
+    if let (Ok(w), Ok(d)) = (HasWindowHandle::window_handle(window), HasDisplayHandle::display_handle(window)) {
+        if let (RawWindowHandle::Wayland(w), RawDisplayHandle::Wayland(d)) = (w.as_raw(), d.as_raw()) {
+            let _ = WAYLAND_WINDOW.set((d.display.as_ptr() as usize, w.surface.as_ptr() as usize));
+        }
+    }
+}
+
+impl Embed {
+    /// None if there is no window to put the video in yet (X11: not in the window manager's list).
+    pub fn new() -> Option<Self> {
+        if let Some(x) = X11Video::new() {
+            return Some(Self::X11(x));
+        }
+        // Development switch until the Wayland video is complete.
+        std::env::var_os("UNBLOATED_WAYLAND_EMBED")?;
+        let &(display, surface) = WAYLAND_WINDOW.get()?;
+        crate::platform::embed_wayland::WaylandVideo::new(display, surface).map(Self::Wayland)
+    }
+
+    /// The X11 window for `mpv --wid`; None under Wayland.
+    pub fn id(&self) -> Option<u32> {
+        match self {
+            Self::X11(x) => Some(x.id()),
+            Self::Wayland(_) => None,
+        }
+    }
+
+    /// Position in device pixels relative to the app's window; `scale` is the window's scale factor.
+    pub fn place(&mut self, x: i32, y: i32, w: u32, h: u32, scale: f32) {
+        match self {
+            Self::X11(v) => v.place(x, y, w, h),
+            Self::Wayland(v) => v.place(x, y, w, h, scale),
+        }
+    }
+
+    pub fn origin(&self) -> (i32, i32) {
+        match self {
+            Self::X11(v) => v.origin(),
+            Self::Wayland(v) => v.origin(),
+        }
+    }
+
+    pub fn set_visible(&mut self, visible: bool) {
+        match self {
+            Self::X11(v) => v.set_visible(visible),
+            Self::Wayland(v) => v.set_visible(visible),
+        }
+    }
 }

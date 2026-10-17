@@ -319,6 +319,7 @@ impl Unbloated {
         let cfg = Arc::new(Config::load());
         let volume = settings.volume;
         LIGHT.store(settings.light_theme, std::sync::atomic::Ordering::Relaxed);
+        crate::platform::embed::set_window(window);
         let root_focus = cx.focus_handle();
         window.focus(&root_focus);
         // A close from the window manager asks the same question as our close button.

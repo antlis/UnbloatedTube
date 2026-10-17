@@ -582,6 +582,7 @@ impl Unbloated {
                         px(b.origin.y) as i32,
                         px(b.size.width) as u32,
                         px(b.size.height) as u32,
+                        s,
                     );
                 })
                 .absolute()

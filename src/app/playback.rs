@@ -170,7 +170,7 @@ impl Unbloated {
                 eprintln!("unbloatedtube: can't embed video (not X11?), using a separate mpv window");
             }
         }
-        let wid = self.embed.as_ref().filter(|_| !self.pip).map(|e| {
+        let wid = self.embed.as_ref().filter(|_| !self.pip).and_then(|e| {
             // mpv keeps its window unmapped if ours is hidden when it starts.
             e.borrow_mut().set_visible(true);
             e.borrow().id()
