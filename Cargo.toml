@@ -20,6 +20,8 @@ sha1_smol = "1"
 sha2 = "0.10"
 anyhow = "1"
 notify-rust = "4"
+# Decodes the seek bar's storyboard sheets into pixels for mpv (see src/backend/storyboard.rs): already a dependency of gpui.
+image = { version = "0.25", default-features = false, features = ["webp", "png"] }
 # Blocking work (yt-dlp, HTTP, mpv's socket) runs on its own threads: already a dependency of gpui.
 blocking = "1"
 

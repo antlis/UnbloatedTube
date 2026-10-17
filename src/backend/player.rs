@@ -238,6 +238,11 @@ impl Player {
         let _ = self.command(json!(["set_property", "sid", if on { json!(id.unwrap_or(1)) } else { json!("no") }]));
     }
 
+    /// Hand the controls script the pictures for the seek bar (`storyboard::for_mpv`; empty: none).
+    pub fn set_storyboard(&self, json: &str) {
+        let _ = self.command(json!(["set", "user-data/unbloated/storyboard", json]));
+    }
+
     pub fn set_fullscreen(&self, on: bool) {
         let _ = self.command(json!(["set_property", "fullscreen", on]));
     }

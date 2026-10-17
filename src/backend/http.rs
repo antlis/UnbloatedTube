@@ -27,6 +27,11 @@ pub fn agent() -> ureq::Agent {
     AGENT.read().unwrap().clone()
 }
 
+/// A client that never uses the app's proxy, for what that one is refused (see `thumbs::fetch`).
+pub fn direct() -> ureq::Agent {
+    build(None, Duration::from_secs(60))
+}
+
 /// Go through `proxy` from now on (None: directly).
 pub fn rebuild(proxy: Option<&str>) {
     *PROXY.write().unwrap() = proxy.map(String::from);

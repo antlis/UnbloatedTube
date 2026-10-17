@@ -51,6 +51,23 @@ fn file(id: &str, format: &str) -> PathBuf {
     dir().join(format!("{id}-{hash:08x}.json"))
 }
 
+/// The newest answer kept for the video `id`, whatever its format: for what it says besides the
+/// links to play (see `storyboard`). Not checked for age: nothing is played from it.
+pub(crate) fn kept_answer(id: &str) -> Option<Vec<u8>> {
+    let prefix = format!("{id}-");
+    let newest = std::fs::read_dir(dir())
+        .ok()?
+        .flatten()
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            // Not the `.lock` beside an answer, which is newer and empty.
+            name.starts_with(&prefix) && name.ends_with(".json")
+        })
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .max()?;
+    std::fs::read(newest.1).ok()
+}
+
 fn fresh(path: &Path) -> bool {
     path.metadata().and_then(|m| m.modified()).ok().and_then(|t| SystemTime::now().duration_since(t).ok()).is_some_and(|age| age < TTL)
 }

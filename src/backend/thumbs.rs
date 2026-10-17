@@ -25,7 +25,14 @@ pub fn download(url: &str, dest: &PathBuf) -> Result<(), String> {
 }
 
 fn fetch(url: &str, dest: &PathBuf) -> Result<(), String> {
-    let resp = crate::backend::http::agent().get(url).call().map_err(|e| e.to_string())?;
+    let resp = match crate::backend::http::agent().get(url).call() {
+        // Signed links (a video's storyboard sheets) are refused with HTTP 403 when asked through the
+        // app's network route (Settings → Network, seen with the bypass route) but not directly:
+        // ask directly once.
+        Err(ureq::Error::Status(403, _)) => crate::backend::http::direct().get(url).call(),
+        other => other,
+    }
+    .map_err(|e| e.to_string())?;
     let mut bytes = Vec::new();
     resp.into_reader().take(2 << 20).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
     // DeArrow's thumbnail server answers "not rendered" with an empty reply (and no error).

@@ -5838,6 +5838,7 @@ dependencies = [
  "blocking",
  "dirs 5.0.1",
  "gpui",
+ "image",
  "libc",
  "native-tls",
  "notify-rust",

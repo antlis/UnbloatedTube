@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use crate::backend::store::{ChannelFlags, ChannelGroup, Config, History, Seen, Settings};
 use crate::backend::yt::{Comment, Group, Video, fmt_count, fmt_duration};
+use crate::backend::storyboard::{self, Storyboard};
 use crate::backend::{account, cast, cli, dearrow, http, links, player, prefetch, proxy, store, thumbs, yt};
 use crate::platform::{self, mpris};
 use crate::ui::{icons, textsel};
@@ -265,6 +266,12 @@ pub(crate) struct Unbloated {
     pub(crate) thumbs_requested: HashSet<String>,
     /// Thumbnails known to be on disk: no file check for them on every frame.
     pub(crate) thumbs_ready: HashSet<String>,
+    /// The playing video's seek-bar previews: its id, the storyboard (none: the video has none, or
+    /// its lookup isn't kept yet, asked again after a few seconds), and when it was looked up.
+    pub(crate) storyboard: Option<(String, Option<Storyboard>, Instant)>,
+    /// The playing video's sheets as pixels for mpv's own seek bar (see `sync_raw_sheets`): the
+    /// converted ones so far, and how many of them mpv has been told about.
+    pub(crate) raw_sheets: Option<(Arc<Mutex<Vec<Option<storyboard::RawSheet>>>>, usize)>,
     /// Thumbnails whose download failed: shown as a plain box, not a pulsing skeleton.
     pub(crate) thumbs_failed: HashSet<String>,
     /// Logged-in account for subscribe / like / save; loaded on first use.
@@ -494,6 +501,8 @@ impl Unbloated {
             state: None,
             thumbs_requested: HashSet::new(),
             thumbs_ready: HashSet::new(),
+            storyboard: None,
+            raw_sheets: None,
             thumbs_failed: HashSet::new(),
             account: None,
             connect: Connect::Idle,
@@ -578,6 +587,14 @@ impl Unbloated {
         }
         self.load_status(cx);
         self.load_votes(cx);
+        // The seek bar's pictures, found once the lookup of the video is kept: not left to a redraw,
+        // which a paused video may not get.
+        let had_pictures = matches!(&self.storyboard, Some((_, Some(_), _)));
+        self.storyboard(cx);
+        self.sync_raw_sheets();
+        if !had_pictures && matches!(&self.storyboard, Some((_, Some(_), _))) {
+            cx.notify();
+        }
         self.poll_subtitles(state.as_ref(), cx);
         let url = self.current.as_ref().map(|v| self.media_path(v));
         let was_loading = self.loading;

@@ -4,6 +4,18 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Added
+- **Previews on the seek bar.** Pointing at the seek bar shows a small picture of the video at that
+  moment above the time, like YouTube's: on the bar over the video (the video controls) as well as
+  on the one under it (there with the chapter's name too). They come from YouTube's storyboards,
+  which the lookup of the video already has, so nothing extra is asked; its sheets (about 30 KB
+  each) are downloaded when the video starts, and turned into pixels mpv can draw for the bar over
+  the video. Videos without storyboards (live streams, very short videos) show the time as before.
+  A sheet YouTube refuses through the network route of Settings → Network (HTTP 403, seen with the
+  bypass route) is fetched once more directly.
+
 ## 0.43.4 - 2026-10-18
 
 ### Fixed

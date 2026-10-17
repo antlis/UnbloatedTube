@@ -16,6 +16,9 @@ impl Unbloated {
         };
         let filled = if dur > 0. { ((pos / dur) * SEEK_SEGMENTS as f64) as usize } else { 0 };
         let chapters = self.state.as_ref().filter(|_| self.casting.is_none()).map(|s| s.chapters.clone()).unwrap_or_default();
+        // Pictures of the video over the bar: the storyboard's sheets that are on disk.
+        let storyboard = self.storyboard(cx);
+        let sheets: Vec<Option<PathBuf>> = storyboard.as_ref().map_or_else(Vec::new, |sb| (0..sb.sheets.len()).map(|i| self.sheet_path(i)).collect());
 
         let (play_icon, play_tip) = match (active, paused) {
             (true, true) => ("play", "Play (Space)".to_string()),
@@ -132,6 +135,8 @@ impl Unbloated {
                             Some(c) => format!("{} · {c}", fmt_duration(at)),
                             None => fmt_duration(at),
                         };
+                        let frame = storyboard.as_ref().filter(|_| dur > 0.).map(|sb| (sb.frame(at), sb.w, sb.h));
+                        let picture = frame.and_then(|(f, w, h)| sheets.get(f.sheet)?.clone().map(|sheet| (sheet, (f.x, f.y, w, h))));
                         div()
                             .id(("seek", i))
                             .flex_1()
@@ -140,7 +145,18 @@ impl Unbloated {
                             .when(starts_chapter, |d| d.ml(px(3.)))
                             .cursor_pointer()
                             .child(div().size_full().bg(if i < filled { themed(ACCENT) } else { themed(BORDER) }))
-                            .when(dur > 0., |d| d.tooltip(tip(tooltip)))
+                            // Pointing at a moment asks for its sheet, so it is there for the next one.
+                            .when_some(frame.filter(|(f, ..)| sheets.get(f.sheet).is_some_and(Option::is_none)), |d, (f, ..)| {
+                                d.on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                                    if *hovered {
+                                        this.want_sheet(f.sheet, cx);
+                                    }
+                                }))
+                            })
+                            .when(dur > 0., |d| match picture {
+                                Some((sheet, rect)) => d.tooltip(tip_preview(tooltip, sheet, rect)),
+                                None => d.tooltip(tip(tooltip)),
+                            })
                             .when(active, |d| {
                                 d.on_click(cx.listener(move |this, _, _, cx| {
                                     this.seek_to(dur * i as f64 / SEEK_SEGMENTS as f64, cx)
