@@ -526,8 +526,13 @@ Reading a browser's cookies takes a few seconds, so the app keeps the last read 
 start, for up to 12 hours: in `$XDG_RUNTIME_DIR/unbloatedtube-cookies.txt` (a private folder
 of your login session, emptied when it ends), readable only by you. When YouTube no longer
 accepts them, whether the kept ones or the ones a running app started with, the app reads the
-browser again, once; logging out or changing the login deletes the kept ones.
-yt-dlp (the app's and mpv's) gets a copy of them too, made for each run and deleted after it.
+browser again, once; logging out or changing the login deletes the kept ones. A running app
+also reads the browser again every 15 minutes, so its copy follows the cookies the browser
+rotates, and a yt-dlp run that the kept copy failed (a list, captions, a video) drops it, so
+the next run reads the browser. yt-dlp (the app's and mpv's) gets a copy of them too, made for
+each run and deleted after it. Your playlists, like the other lists, are read with this login
+(yt-dlp only as a fallback); if they can't be read, the lists you had stay on screen and
+Settings → Account shows why.
 
 If YouTube still refuses (lists don't load, Like says it no longer accepts your login), the
 browser's own login has gone stale: open youtube.com in that browser (log in again if it asks),
@@ -544,8 +549,9 @@ convenient, nothing to type, and it has limits worth knowing:
 - **YouTube rotates the cookies.** A copy that is some hours or days old can be refused, and
   YouTube then answers as if you were signed out: lists come back empty, Like, Save and the like
   fail. The app recognises this (it says "YouTube no longer accepts your saved login"), re-reads
-  the browser once, and shows the failed step in Settings → Account. It can only read what the
-  browser has written down.
+  the browser once, and shows the failed step in Settings → Account. It also re-reads every 15
+  minutes, and a list or caption request refused with the old copy still fails once before the
+  next one succeeds. It can only read what the browser has written down.
 - **The browser has to keep its session on disk.** A private window keeps its cookies in memory
   only, so they can't be read. A browser that doesn't write its cookies out (this happened once
   with Brave, for about a day, cause unknown) leaves the app with an old copy.

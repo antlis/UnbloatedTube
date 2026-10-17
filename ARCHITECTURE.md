@@ -96,6 +96,12 @@ So `post` turns such an answer into `SIGNED_OUT` for requests that need the logi
 pages), and the callers (`with_shared` for lists, `with_account` for actions) re-read the browser
 once and try again; if that fails too, the Settings page shows the failed step.
 
+The copy is also read again every 15 minutes (`keep_fresh`, a thread started in `main`), and the
+yt-dlp shim (`backend/prefetch.rs`) deletes the kept file when a run that used it failed
+(`forget_kept`), so the next run reads the browser. Every list goes through the account first
+(`yt::playlists`, `history`, `subscriptions`); yt-dlp is the fallback, never the first choice,
+because it would use its own copy of the cookies and could disagree with the app.
+
 The app never owns the login, it borrows the browser's, so it can only be as fresh as what the
 browser wrote to disk. The README's *Limits of the cookie login* lists what can go wrong; "Sign in
 again" (`sign_in_again` in `app/session.rs`) drops the app's copies and sends the user to

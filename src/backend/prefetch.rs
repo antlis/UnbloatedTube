@@ -400,8 +400,17 @@ pub fn run_shim() -> ! {
     let mut code = run(&fast, &stdout, &stderr);
     // Kept cookies YouTube no longer takes: once more with the browser's own. Only for a single
     // video, whose failed run printed nothing (a list may have printed half of itself).
-    if code != 0 && jar.is_some() && ask.is_some() {
-        code = run(&args, &stdout, &stderr);
+    if code != 0 && jar.is_some() {
+        if ask.is_some() {
+            code = run(&args, &stdout, &stderr);
+            // The browser's own cookies worked: the kept ones were the problem.
+            if code == 0 {
+                crate::backend::account::forget_kept();
+            }
+        } else {
+            // Not rerun (it may have printed half a list), but the next run shouldn't use them.
+            crate::backend::account::forget_kept();
+        }
     }
     if code == 127 {
         eprintln!("unbloatedtube: cannot run yt-dlp");

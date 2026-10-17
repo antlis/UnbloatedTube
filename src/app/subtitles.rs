@@ -176,6 +176,7 @@ impl Unbloated {
             self.notice = Some(format!("No \"{}\" subtitles for this video", self.sub_langs()));
         } else {
             self.subs_wanted = Some(id);
+            self.notice = Some("Loading subtitles…".into());
         }
         cx.notify();
     }
