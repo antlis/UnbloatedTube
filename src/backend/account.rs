@@ -95,6 +95,33 @@ pub fn refresh_kept(cfg: &Config) {
     }
 }
 
+/// How often a running app reads the browser's cookies again. A browser that is open rotates
+/// them, and YouTube soon stops taking the copy made before; reading again is how the app keeps up
+/// (it costs a yt-dlp run, a couple of seconds). A refused request reads again at once anyway.
+const REREAD: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// For the life of the app: `refresh_kept` once, then read the browser's cookies again every
+/// `REREAD`. Does nothing for a cookies file (it doesn't rotate) or while logged out.
+pub fn keep_fresh() -> ! {
+    refresh_kept(&Config::load());
+    loop {
+        std::thread::sleep(REREAD);
+        let cfg = Config::load();
+        if !matches!(cfg.auth, Auth::Browser(_)) {
+            continue;
+        }
+        let _one = REFRESHING.lock().unwrap_or_else(|e| e.into_inner());
+        if let Ok(a) = Account::load_fresh(&cfg) {
+            remember(&Arc::new(a));
+        }
+    }
+}
+
+/// Drop the kept cookies: a run with them was refused, so the next one reads the browser.
+pub fn forget_kept() {
+    let _ = std::fs::remove_file(kept_path());
+}
+
 /// Reading the browser's cookies takes seconds (yt-dlp, the keyring), so the last export is kept
 /// for the next start: in the session's private runtime folder (gone at logout), readable only by
 /// the user, for at most `KEEP`, and only for the same browser. A login change deletes it.
@@ -367,6 +394,40 @@ impl Account {
         let mut seen = std::collections::HashSet::new();
         out.retain(|v| seen.insert(v.id.clone()));
         out.truncate(limit);
+        Ok(out)
+    }
+
+    /// Your playlists (the "Playlists" page of the library), without Watch later and Liked videos,
+    /// which YouTube lists elsewhere. Follows the continuation pages.
+    pub fn playlists(&self) -> Result<Vec<crate::backend::yt::Group>, String> {
+        let mut out = Vec::new();
+        let mut resp = self.post("browse", json!({ "browseId": "FEplaylist_aggregation" }))?;
+        for _ in 0..8 {
+            walk(&resp, &mut |key, v| {
+                if key != "lockupViewModel" || v["contentType"] != "LOCKUP_CONTENT_TYPE_PLAYLIST" {
+                    return;
+                }
+                let (Some(id), Some(title)) = (v["contentId"].as_str(), v["metadata"]["lockupMetadataViewModel"]["title"]["content"].as_str()) else { return };
+                let thumb = v["contentImage"]["collectionThumbnailViewModel"]["primaryThumbnail"]["thumbnailViewModel"]["image"]["sources"][0]["url"].as_str();
+                out.push(crate::backend::yt::Group {
+                    id: id.into(),
+                    title: title.into(),
+                    url: format!("https://www.youtube.com/playlist?list={id}"),
+                    thumb: thumb.map(String::from),
+                    subscribers: None,
+                });
+            });
+            let mut token = None;
+            walk(&resp, &mut |key, v| {
+                if key == "continuationCommand" && token.is_none() {
+                    token = v["token"].as_str().map(String::from);
+                }
+            });
+            match token {
+                Some(token) => resp = self.post("browse", json!({ "continuation": token }))?,
+                None => break,
+            }
+        }
         Ok(out)
     }
 

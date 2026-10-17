@@ -657,23 +657,26 @@ pub fn subtitles(cfg: &Config, id: &str, langs: &str, auto: bool, dir: &std::pat
             .output()
             .map_err(|e| format!("cannot run yt-dlp: {e}"))
     };
-    // YouTube answers HTTP 429 when it limits caption requests, often only for a moment: one
-    // more try a few seconds later usually gets them.
-    for retry in [false, true] {
-        if retry {
-            std::thread::sleep(std::time::Duration::from_secs(4));
-        }
+    // YouTube answers HTTP 429 when it limits caption requests, often only for a moment (a
+    // video's captions can come as a handful of pieces, each limited): try again after a few
+    // seconds, then longer.
+    for wait in [0, 4, 12, 30] {
+        std::thread::sleep(std::time::Duration::from_secs(wait));
         let out = fetch()?;
         if let Some(file) = find() {
-            tidy(&file);
-            return Ok(Some(file));
+            // A run that failed halfway leaves a part of the captions: don't keep that.
+            if out.status.success() {
+                tidy(&file);
+                return Ok(Some(file));
+            }
+            let _ = std::fs::remove_file(&file);
         }
         if !String::from_utf8_lossy(&out.stderr).contains("429") {
             return Ok(None);
         }
     }
     Err(match cfg.has_auth() {
-        true => "YouTube is limiting caption requests right now (HTTP 429); try again in a minute".into(),
+        true => "YouTube is limiting caption requests right now (HTTP 429); press CC to try again in a minute".into(),
         false => "YouTube refused the captions (HTTP 429); signing in helps".into(),
     })
 }
@@ -918,6 +921,22 @@ pub fn playlist_videos(cfg: &Config, url: &str, on: &mut dyn FnMut(Video)) -> Re
 }
 
 pub fn playlists(cfg: &Config, on: &mut dyn FnMut(Group)) -> Result<(), String> {
+    // Through the account, like the other lists, so they all go by the same login; yt-dlp reads
+    // the browser's cookies by itself and may disagree. Watch later and Liked are ours: they go
+    // out only with a real answer, or a refused login would look like a list of two.
+    let found = match crate::backend::account::with_shared(cfg, |a| a.playlists()) {
+        Ok(found) => found,
+        Err(e) if e == crate::backend::account::SIGNED_OUT => return Err(e),
+        Err(_) => {
+            let mut found = Vec::new();
+            stream(cfg, &["https://www.youtube.com/feed/playlists".to_string()], 200, |e| {
+                let thumb = thumb(&e);
+                let (Some(id), Some(url)) = (e.id, e.url) else { return };
+                found.push(Group { id, title: e.title.unwrap_or_else(|| "(untitled)".into()), url, thumb, subscribers: None });
+            })?;
+            found
+        }
+    };
     on(Group { id: "WL".into(), title: "Watch later".into(), url: ":ytwatchlater".into(), thumb: None, subscribers: None });
     on(Group {
         id: "LL".into(),
@@ -926,11 +945,8 @@ pub fn playlists(cfg: &Config, on: &mut dyn FnMut(Group)) -> Result<(), String> 
         thumb: None,
         subscribers: None,
     });
-    stream(cfg, &["https://www.youtube.com/feed/playlists".to_string()], 200, |e| {
-        let thumb = thumb(&e);
-        let (Some(id), Some(url)) = (e.id, e.url) else { return };
-        on(Group { id, title: e.title.unwrap_or_else(|| "(untitled)".into()), url, thumb, subscribers: None });
-    })
+    found.into_iter().for_each(on);
+    Ok(())
 }
 
 /// 1234 → "1.2K", 265000 → "265K", 1500000 → "1.5M" (as YouTube abbreviates counts).

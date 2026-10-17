@@ -4,6 +4,23 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Fixed
+- **Playlists disappearing.** The playlist list was the one list still read by yt-dlp, so it could
+  be refused while the rest worked. It now goes through the app's login like Subscriptions and
+  History (yt-dlp stays as the fallback). Watch later and Liked videos were added before the
+  answer came, so a refused load looked like a list of two and replaced your real playlists with
+  no error (Save to playlist then offered only Watch later); they now come with the answer, and a
+  refused login keeps the lists you had and shows the error in Settings → Account.
+- **A login that went stale while the app ran.** The app kept a copy of the browser's cookies that
+  yt-dlp used for lists, captions and the rest; YouTube rotates cookies, so the copy stopped being
+  accepted and only logging out and in helped. The app now reads the browser's cookies again every
+  15 minutes, and a yt-dlp run that the copy failed drops it, so the next run reads the browser.
+- **Captions (HTTP 429).** More patient: four tries, waiting 4, 12 and 30 seconds between them,
+  and a caption file left by a run that failed halfway is thrown away instead of kept. The CC
+  button says "Loading subtitles…" while it works, and the error says to press CC to try again.
+
 ## 0.43.3 - 2026-10-15
 
 ### Added
