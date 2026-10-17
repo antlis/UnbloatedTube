@@ -11,5 +11,6 @@ pub(crate) mod player;
 pub(crate) mod prefetch;
 pub(crate) mod proxy;
 pub(crate) mod store;
+pub(crate) mod storyboard;
 pub(crate) mod thumbs;
 pub(crate) mod yt;

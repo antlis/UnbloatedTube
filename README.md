@@ -116,7 +116,7 @@ list, your playlists, your history, search and a player.
 
 ### Player
 
-- mpv **embedded in the window**, with seek bar, chapters (hover for title and time), time
+- mpv **embedded in the window**, with seek bar, chapters (hover for title and time, and a small picture of the video at that moment, like YouTube's, on the bar over the video and the one under it), time
   display, prev/next, ±10 s, fullscreen and speed.
 - Opens on **the last video you watched, at the position you left it**; every video resumes
   where you stopped.

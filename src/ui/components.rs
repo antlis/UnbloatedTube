@@ -111,6 +111,43 @@ pub(crate) fn tip(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut Ap
     move |_, cx| cx.new(|_| Tip(text.clone(), false)).into()
 }
 
+/// A tooltip with a picture of the video above its text: the frame at (`x`, `y`) of a storyboard
+/// sheet, `w` by `h` big. The sheet is drawn at its own size and shifted, the box shows its part.
+struct PreviewTip {
+    text: SharedString,
+    sheet: PathBuf,
+    frame: (f32, f32, f32, f32),
+}
+
+impl Render for PreviewTip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let (x, y, w, h) = self.frame;
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_1()
+            .p_1()
+            .rounded_md()
+            .bg(themed(HOVER))
+            .border_1()
+            .border_color(themed(BORDER))
+            .text_xs()
+            .text_color(themed(TEXT))
+            .child(
+                div().relative().w(px(w)).h(px(h)).overflow_hidden().rounded_sm().child(
+                    gpui::img(self.sheet.clone()).absolute().left(px(-x)).top(px(-y)).object_fit(gpui::ObjectFit::None),
+                ),
+            )
+            .child(div().whitespace_nowrap().child(self.text.clone()))
+    }
+}
+
+pub(crate) fn tip_preview(text: impl Into<SharedString>, sheet: PathBuf, frame: (f32, f32, f32, f32)) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView + 'static {
+    let text = text.into();
+    move |_, cx| cx.new(|_| PreviewTip { text: text.clone(), sheet: sheet.clone(), frame }).into()
+}
+
 pub(crate) fn tip_left(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView + 'static {
     let text = text.into();
     move |_, cx| cx.new(|_| Tip(text.clone(), true)).into()

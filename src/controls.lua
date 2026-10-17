@@ -8,6 +8,7 @@
 -- fullscreen.
 local mp = require 'mp'
 local options = require 'mp.options'
+local utils = require 'mp.utils'
 
 local opts = { accent = "454EFF", cc = true } -- accent: ASS colour, BBGGRR; cc: the subtitles button
 options.read_options(opts, "unbloated-controls")
@@ -24,6 +25,37 @@ if not opts.cc then table.remove(RIGHT, 3) end
 local DROP = { "back10", "fwd10", "pip", "cc", "prev", "speed", "time", "vol" }
 
 local function i(v) return math.floor(v + 0.5) end
+
+-- The pictures of the video for the seek line (see src/backend/storyboard.rs): the app hands over
+-- where the converted sheets are in the user-data/unbloated/storyboard property.
+local sb
+local picture_shown = false
+mp.observe_property("user-data/unbloated/storyboard", "native", function(_, v)
+    sb = nil
+    if type(v) == "string" and v ~= "" then sb = utils.parse_json(v) end
+end)
+
+-- The frame showing second t: its sheet's file, and where the frame is in the sheet's pixels.
+local function frame_at(t)
+    if not sb or not sb.interval or sb.interval <= 0 then return nil end
+    local per = sb.cols * sb.rows
+    local index = math.floor(math.max(0, t) / sb.interval)
+    local sheet = math.min(math.floor(index / per), sb.n - 1)
+    local on_sheet = per
+    if sheet == sb.n - 1 then on_sheet = sb.last_frames end
+    local cell = math.min(index - sheet * per, on_sheet - 1)
+    if math.floor(index / per) > sb.n - 1 then cell = on_sheet - 1 end
+    local raw = sb.sheets and sb.sheets[sheet + 1]
+    if type(raw) ~= "table" then return nil end
+    return raw, (cell % sb.cols) * sb.w, math.floor(cell / sb.cols) * sb.h
+end
+
+local function remove_picture()
+    if picture_shown then
+        picture_shown = false
+        mp.command_native({ name = "overlay-remove", id = 0 })
+    end
+end
 
 local function layout()
     local w, h = mp.get_osd_size()
@@ -122,6 +154,32 @@ local function render()
         local x = m + (w - 2 * m) * math.min(1, pos / dur)
         add(rect(opts.accent, 0x00, m, sy1, x, sy2))
         add(rect(opts.accent, 0x00, x - i(3 * u), sy1 - i(2 * u), x + i(3 * u), sy2 + i(2 * u)))
+    end
+
+    -- pointing at the seek line: the time there, and the picture of the video at that moment
+    local mx, my = mp.get_mouse_pos()
+    if dur > 0 and inside(L.seek, mx, my) then
+        local t = math.max(0, math.min(1, (mx - m) / (w - 2 * m))) * dur
+        local raw, fx, fy = frame_at(t)
+        local pw, ph = 0, 0
+        if raw then pw, ph = sb.w, sb.h end
+        local lw, lh = i(54 * u), i(22 * u)
+        local half = math.max(pw, lw) / 2 + i(6 * u)
+        local hx = math.max(half, math.min(w - half, mx))
+        local ly2 = sy1 - i(10 * u) -- the label's bottom
+        local ly1 = ly2 - lh
+        add(rect("000000", 0x60, hx - lw / 2, ly1, hx + lw / 2, ly2))
+        add(string.format("{\\an5\\pos(%d,%d)\\bord0\\shad0\\fs%d\\1c&H%s&}%s", i(hx), i((ly1 + ly2) / 2), i(15 * u), white, clock(t)))
+        if raw then
+            local ix, iy = i(hx - pw / 2), i(ly1 - ph - i(4 * u))
+            picture_shown = true
+            mp.command_native({ name = "overlay-add", id = 0, x = ix, y = iy, file = raw.file, offset = (fy * raw.w + fx) * 4,
+                fmt = "bgra", w = pw, h = ph, stride = raw.w * 4 })
+        else
+            remove_picture()
+        end
+    else
+        remove_picture()
     end
 
     local cx, cy
@@ -232,6 +290,7 @@ end
 local function hide()
     visible = false
     overlay:remove()
+    remove_picture()
 end
 
 local function show()

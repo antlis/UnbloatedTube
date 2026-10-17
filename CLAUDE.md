@@ -24,7 +24,7 @@ The map of the code, how it fits together and where new code goes: [ARCHITECTURE
     (toggles and shortcut tables), `text_edit.rs`, `components.rs`, `icons.rs`, `textsel.rs`.
   - `src/backend/`: no GPUI. `yt.rs` yt-dlp listings, `account.rs` InnerTube, `player.rs` mpv IPC,
     `store.rs` settings/history/caches, `prefetch.rs` yt-dlp shim and helper, `cast.rs`, `cli.rs`,
-    `proxy.rs`, `thumbs.rs`, `dearrow.rs`, `links.rs`, `http.rs`, `auth.rs`.
+    `proxy.rs`, `thumbs.rs`, `storyboard.rs`, `dearrow.rs`, `links.rs`, `http.rs`, `auth.rs`.
   - `src/platform/`: **all** OS-specific code (X11 embed, MPRIS, sockets, process control, private
     files and locks, opening links). Don't put `libc`, `/proc`, Unix sockets or `xdg-*` anywhere else
     (the yt-dlp shim's file descriptors in `backend/prefetch.rs` are the one deliberate exception).

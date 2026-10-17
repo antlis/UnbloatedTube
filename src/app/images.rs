@@ -1,5 +1,8 @@
 use super::*;
 
+/// How many of a video's storyboard sheets are downloaded when it starts (see `storyboard`).
+const MAX_SHEETS: usize = 60;
+
 impl Unbloated {
     /// DeArrow's title and thumbnail for a video, when either is turned on: asked once, the first
     /// time a row or the player shows the video (like thumbnails, only for what is on screen).
@@ -76,7 +79,11 @@ impl Unbloated {
             let key = key.to_string();
             let task = blocking::unblock(move || { thumbs::download(&url, &dest) });
             cx.spawn(async move |this, cx| {
-                let ok = task.await.is_ok();
+                let result = task.await;
+                let ok = result.is_ok();
+                if let (Err(e), true) = (&result, key.starts_with("sb-")) {
+                    yt::timing(&format!("storyboard sheet {key} failed ({e})"), Instant::now());
+                }
                 this.update(cx, |this, cx| {
                     if !ok {
                         this.thumbs_failed.insert(key);
@@ -88,6 +95,77 @@ impl Unbloated {
             .detach();
         }
         Thumb::Pending
+    }
+
+    /// The playing video's storyboard, looked up once per video (again after a few seconds while
+    /// there is none, because the lookup that has it may still be running).
+    pub(crate) fn storyboard(&mut self, cx: &mut Context<Self>) -> Option<Storyboard> {
+        let id = self.current.as_ref()?.id.clone();
+        let stale = match &self.storyboard {
+            Some((v, sb, at)) => *v != id || (sb.is_none() && at.elapsed() > Duration::from_secs(3)),
+            None => true,
+        };
+        if stale {
+            let sb = storyboard::load(&id);
+            yt::timing(&format!("storyboard {id}: {}", sb.as_ref().map_or("none".to_string(), |s| format!("{} sheets of {}x{}", s.sheets.len(), s.w, s.h))), Instant::now());
+            // All the sheets now, a few KB each (a tooltip already showing doesn't pick up a sheet
+            // that arrives later): the first move over the bar has its pictures. A very long video
+            // gets the first ones, the rest when the pointer gets there (`want_sheet`).
+            for (i, (url, _)) in sb.iter().flat_map(|sb| sb.sheets.iter()).enumerate().take(MAX_SHEETS) {
+                self.thumb(&format!("sb-{id}-{i}"), Some(url.clone()), cx);
+            }
+            // mpv's own bar (the video controls) draws pictures from pixels, not from the files.
+            self.player.set_storyboard("");
+            self.raw_sheets = sb.clone().map(|sb| {
+                let done = Arc::new(Mutex::new(vec![None; sb.sheets.len()]));
+                let (id, results) = (id.clone(), done.clone());
+                blocking::unblock(move || {
+                    let dir = store::cache_dir().join("sb-raw");
+                    let _ = std::fs::remove_dir_all(&dir);
+                    let _ = std::fs::create_dir_all(&dir);
+                    for i in 0..sb.sheets.len().min(MAX_SHEETS) {
+                        let source = thumbs::path(&format!("sb-{id}-{i}"));
+                        // Waits for the download (it may be on its way, or not start for a while).
+                        let start = Instant::now();
+                        while !source.exists() && start.elapsed() < Duration::from_secs(90) {
+                            std::thread::sleep(Duration::from_millis(200));
+                        }
+                        if let Ok(raw) = storyboard::to_raw(&source, &dir.join(format!("{i}.bgra"))) {
+                            results.lock().unwrap()[i] = Some(raw);
+                        }
+                    }
+                })
+                .detach();
+                (done, 0)
+            });
+            self.storyboard = Some((id.clone(), sb, Instant::now()));
+        }
+        self.storyboard.as_ref().and_then(|(_, sb, _)| sb.clone())
+    }
+
+    /// Tell mpv's controls about the sheets converted since last time.
+    pub(crate) fn sync_raw_sheets(&mut self) {
+        let (Some((results, sent)), Some((_, Some(sb), _))) = (&mut self.raw_sheets, &self.storyboard) else { return };
+        let sheets = results.lock().unwrap().clone();
+        let ready = sheets.iter().flatten().count();
+        if ready != *sent {
+            *sent = ready;
+            self.player.set_storyboard(&storyboard::for_mpv(sb, &sheets));
+        }
+    }
+
+    /// Where the sheet of the playing video's storyboard is on disk, once it has been downloaded.
+    pub(crate) fn sheet_path(&self, sheet: usize) -> Option<std::path::PathBuf> {
+        let (id, ..) = self.storyboard.as_ref()?;
+        Some(thumbs::path(&format!("sb-{id}-{sheet}"))).filter(|p| p.exists())
+    }
+
+    /// Start downloading a sheet of the playing video's storyboard (when the pointer is over a moment
+    /// on it): the bar shows its pictures from then on.
+    pub(crate) fn want_sheet(&mut self, sheet: usize, cx: &mut Context<Self>) {
+        let Some((id, Some(sb), _)) = &self.storyboard else { return };
+        let (key, url) = (format!("sb-{id}-{sheet}"), sb.sheets.get(sheet).map(|s| s.0.clone()));
+        self.thumb(&key, url, cx);
     }
 
     /// A thumbnail box: the image, a pulsing skeleton while it downloads, or a plain box.
