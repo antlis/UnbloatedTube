@@ -4,7 +4,7 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
-## Unreleased
+## 0.43.4 - 2026-10-18
 
 ### Fixed
 - **Playlists disappearing.** The playlist list was the one list still read by yt-dlp, so it could
