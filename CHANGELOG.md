@@ -4,6 +4,16 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## 0.45.1 - 2026-10-18
+
+### Fixed
+- **Wayland: clicks on the player menu at fractional display scales.** With a display scale that
+  is not a whole number (e.g. 1.25), the buttons under the video (fullscreen, subtitles, speed,
+  quality, sleep, ...) were not clickable: the buffer was scaled to the next whole number and the
+  pointer coordinates did not match it. The video surface now uses `wp_viewporter`, so the buffer
+  is the video area in exact device pixels and the compositor scales it to its logical size; the
+  pointer maps 1:1.
+
 ## 0.45.0 - 2026-10-18
 
 ### Added

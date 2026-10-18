@@ -169,6 +169,15 @@ impl Embed {
         }
     }
 
+    /// A pointer position in the window (logical pixels) as a position in the video: what the
+    /// player passes to an mpv without a window of its own.
+    pub fn video_point(&self, x: f32, y: f32, scale: f32) -> (i32, i32) {
+        match self {
+            Self::X11(v) => ((x * scale).round() as i32 - v.origin().0, (y * scale).round() as i32 - v.origin().1),
+            Self::Wayland(v) => v.video_point(x, y, scale),
+        }
+    }
+
     pub fn origin(&self) -> (i32, i32) {
         match self {
             Self::X11(v) => v.origin(),

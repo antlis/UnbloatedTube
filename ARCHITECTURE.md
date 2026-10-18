@@ -149,6 +149,10 @@ another way:
   mpv program (`Player::play_in_process` turns `--name=value` into library options, joining
   repeated `--script` / `-append` ones) and the same IPC socket, so the rest of the app doesn't
   know the difference. The UI thread only places and sizes the subsurface (`WaylandVideo::place`).
+- The subsurface is sized with `wp_viewporter` when the compositor has it, so its buffer is the
+  video area in exact device pixels and the compositor scales it to the logical size; without it,
+  the buffer is `ceil(scale)` times the logical size (whole numbers only) and can be a touch soft
+  at fractional scales.
 - mpv has no window to hand the pointer to, so the app passes it on: `Player::pointer` sends
   `mouse x y [button]` commands from the video area's mouse handlers in `app/view/mod.rs`.
 - Missing libmpv or EGL: `Embed::new` returns None and mpv opens in its own window.

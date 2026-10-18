@@ -1,6 +1,6 @@
 [package]
 name = "unbloatedtube"
-version = "0.45.0"
+version = "0.45.1"
 edition = "2024"
 description = "Lightweight, configurable YouTube desktop client: GPUI, embedded mpv, yt-dlp"
 license = "AGPL-3.0-only"
@@ -35,6 +35,7 @@ x11rb = "0.13"
 # connection gpui already has; EGL and libmpv are loaded at run time. All already dependencies of gpui.
 wayland-client = "0.31"
 wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-protocols = { version = "0.32", features = ["client"] }
 raw-window-handle = "0.6"
 libloading = "0.8"
 # MPRIS (media keys): already a dependency of gpui and notify-rust.

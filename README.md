@@ -461,11 +461,10 @@ What differs from X11, and what is not checked:
   break the embedding.
 - The first video of a session blocks the window for a moment (a fraction of a second) while mpv
   starts. Picture-in-picture still opens mpv's own window.
-- Whole-number display scales are handled; a fractional scale (1.25) is rounded up for the video's
-  buffer, which may make it a little soft.
 - Tested in a headless sway (software rendering): playing, the hover bar, click, double click and
-  fullscreen, resizing. Not tested: a real GPU and hardware decoding, niri or other compositors,
-  fractional scales, audio, right click and keys over the video, long sessions.
+  fullscreen, resizing. Also tested on niri with a 1.25 display scale (no real GPU). Not tested: a
+  real GPU and hardware decoding, other compositors, audio, right click and keys over the video,
+  long sessions.
 
 ### Prebuilt binary
 
@@ -917,7 +916,9 @@ The layers, every module, how the app is put together and where new code goes ar
   cookies on the app's API requests, so the page load is the only way to refresh. Not verified:
   whether a headless load keeps the session valid for days, and whether Google lets you sign in
   in a browser started with a debug port.
-- **Wayland**: done and tested in a headless sway; see *Running → Wayland* for what is and isn't checked. Still open: fractional scales rendered sharply (a wp_viewporter surface), dragging the seek line, and trying it on real hardware and other compositors.
+- **Wayland**: done and tested in a headless sway, and on niri at a 1.25 display scale; see
+  *Running → Wayland* for what is and isn't checked. Still open: dragging the seek line over the
+  video, and trying it on a real GPU and other compositors.
 - **Prebuilt binaries (packaging).** Compiling from source is slow: the build pulls in about
   728 crates (mostly GPUI's dependencies) and took well over 15 minutes in a clean Nix build on 8
   cores, so every user of a source package (Nix, AUR source or `-git`, `cargo install`) would wait
