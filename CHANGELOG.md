@@ -4,6 +4,14 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## 0.45.2 - 2026-10-18
+
+### Fixed
+- **X11: startup crash with gpui 0.2.2.** gpui 0.2.2 doesn't implement `HasWindowHandle` for X11
+  windows, causing a panic ("not implemented") on startup. The window handle call is now wrapped
+  in `catch_unwind` to handle this gracefully; on X11 video embedding uses `_NET_CLIENT_LIST`
+  instead.
+
 ## 0.45.1 - 2026-10-18
 
 ### Fixed
