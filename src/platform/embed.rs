@@ -142,6 +142,14 @@ impl Embed {
         }
     }
 
+    /// Where to start mpv in this process (Wayland); None when mpv draws into an X11 window.
+    pub fn host(&self) -> Option<std::sync::Arc<crate::platform::embed_wayland::Host>> {
+        match self {
+            Self::X11(_) => None,
+            Self::Wayland(v) => Some(v.host()),
+        }
+    }
+
     /// Position in device pixels relative to the app's window; `scale` is the window's scale factor.
     pub fn place(&mut self, x: i32, y: i32, w: u32, h: u32, scale: f32) {
         match self {

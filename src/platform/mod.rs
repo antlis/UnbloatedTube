@@ -10,6 +10,8 @@ pub(crate) mod desktop;
 pub(crate) mod embed;
 #[cfg(target_os = "linux")]
 pub(crate) mod embed_wayland;
+#[cfg(target_os = "linux")]
+pub(crate) mod libmpv;
 pub(crate) mod fs;
 pub(crate) mod ipc;
 pub(crate) mod mpris;
