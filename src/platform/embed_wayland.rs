@@ -179,6 +179,8 @@ enum Msg {
     /// Start mpv with these options and load `url`; the answer is whether it came up.
     Start(Vec<(String, String)>, String, SyncSender<Result<(), String>>),
     Stop(SyncSender<()>),
+    /// A command for the running mpv (the pointer: `mouse x y [button [mode]]`).
+    Command(Vec<String>),
     Quit,
 }
 
@@ -212,6 +214,11 @@ impl Host {
 
     pub fn alive(&self) -> bool {
         self.alive.load(Ordering::SeqCst)
+    }
+
+    /// Send mpv a command without waiting for it.
+    pub fn command(&self, args: Vec<String>) {
+        let _ = self.tx.send(Msg::Command(args));
     }
 }
 
@@ -476,6 +483,12 @@ fn render_loop(owned: Owned, rx: Receiver<Msg>, tx: Sender<Msg>, host: Arc<Host>
                 })();
                 let _ = reply.send(result);
                 draw(&playing, &lib, &mut size, &mut attached);
+            }
+            Msg::Command(args) => {
+                if let (Some(p), Some(l)) = (&playing, &lib) {
+                    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+                    let _ = l.command(p.handle, &refs);
+                }
             }
             Msg::Stop(reply) => {
                 if let Some(p) = playing.take() {

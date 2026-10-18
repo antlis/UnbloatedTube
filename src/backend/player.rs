@@ -89,6 +89,28 @@ impl Player {
         matches!(self.child.as_mut().map(|c| c.try_wait()), Some(Ok(None)))
     }
 
+    /// The pointer over the video, for an mpv that has no window of its own to get it from (the one
+    /// in this process, see `play_in_process`): `x`, `y` in video pixels, or off the video (`None`).
+    /// `button` (0 left, 2 right) clicks there; `double` makes it a double click.
+    pub fn pointer(&self, at: Option<(i32, i32)>, button: Option<u8>, double: bool) {
+        if std::env::var_os("UNBLOATED_WAYLAND_DEBUG").is_some() {
+            eprintln!("pointer {at:?} button {button:?} double {double} (in process: {})", self.inproc);
+        }
+        let Some(host) = self.host.as_ref().filter(|_| self.inproc) else { return };
+        let (x, y) = at.unwrap_or((-1, -1));
+        let mut cmd = vec!["mouse".to_string(), x.to_string(), y.to_string()];
+        if let Some(b) = button {
+            cmd.push(b.to_string());
+            cmd.push(if double { "double" } else { "single" }.to_string());
+        }
+        host.command(cmd);
+    }
+
+    /// Whether the pointer has to be passed on (see `pointer`).
+    pub fn needs_pointer(&self) -> bool {
+        self.inproc
+    }
+
     /// End mpv, wherever it runs.
     fn kill(&mut self) {
         if let Some(mut c) = self.child.take() {
