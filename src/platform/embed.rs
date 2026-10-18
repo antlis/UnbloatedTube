@@ -128,10 +128,21 @@ impl Embed {
         if let Some(x) = X11Video::new() {
             return Some(Self::X11(x));
         }
-        // Development switch until the Wayland video is complete.
-        std::env::var_os("UNBLOATED_WAYLAND_EMBED")?;
+        // Under Wayland the app plays the video itself, with libmpv, into a subsurface (see
+        // `embed_wayland`). Without libmpv or EGL it says so once and mpv opens its own window.
+        static FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         let &(display, surface) = WAYLAND_WINDOW.get()?;
-        crate::platform::embed_wayland::WaylandVideo::new(display, surface).map(Self::Wayland)
+        if FAILED.load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
+        let video = crate::platform::libmpv::LibMpv::load()
+            .map_err(|e| eprintln!("unbloatedtube: the video can't play inside the window under Wayland ({e}); mpv opens its own window"))
+            .ok()
+            .and_then(|_| crate::platform::embed_wayland::WaylandVideo::new(display, surface));
+        if video.is_none() {
+            FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        video.map(Self::Wayland)
     }
 
     /// The X11 window for `mpv --wid`; None under Wayland.

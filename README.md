@@ -440,10 +440,32 @@ things that have no shortcut of their own. See
 
 ## Running
 
-Built and tested on Linux with X11; the embedded player relies on X11 window embedding
-(`mpv --wid`), and Wayland is untested. Windows and macOS are planned (see [TODO](#todo)).
-Needs `mpv`, `yt-dlp` (recent: YouTube breaks old versions quickly) and `deno` (yt-dlp uses it
-for YouTube's JavaScript challenges).
+Built for Linux, on X11 and on Wayland (see *Wayland* below); Windows and macOS are planned (see
+[TODO](#todo)). Needs `mpv` (with its library, `libmpv`, which the usual `mpv` packages include),
+`yt-dlp` (recent: YouTube breaks old versions quickly) and `deno` (yt-dlp uses it for YouTube's
+JavaScript challenges).
+
+### Wayland
+
+On X11 mpv draws into a child window of the app's window. Wayland has no such thing, so there the
+app runs mpv itself, as a library (`libmpv`) inside its own process, and draws the video into a
+subsurface of its window with OpenGL. Nothing to set up: the app notices it is on Wayland. Needs
+`libmpv` (the `mpv` package has it), `libEGL` and `libwayland-egl` (Mesa / libglvnd and wayland);
+without them mpv opens in a window of its own, as it did before, and the app says so on stderr.
+`UNBLOATED_LIBMPV=/path/to/libmpv.so.2` points it at a particular libmpv (the Nix package sets it).
+
+What differs from X11, and what is not checked:
+
+- Your own `mpv.conf` is not read in this mode (only the app's options and Settings → Player →
+  extra mpv options), because the library doesn't read it and a `vo` or `gpu-context` in it would
+  break the embedding.
+- The first video of a session blocks the window for a moment (a fraction of a second) while mpv
+  starts. Picture-in-picture still opens mpv's own window.
+- Whole-number display scales are handled; a fractional scale (1.25) is rounded up for the video's
+  buffer, which may make it a little soft.
+- Tested in a headless sway (software rendering): playing, the hover bar, click, double click and
+  fullscreen, resizing. Not tested: a real GPU and hardware decoding, niri or other compositors,
+  fractional scales, audio, right click and keys over the video, long sessions.
 
 ### Prebuilt binary
 
@@ -455,7 +477,8 @@ newer: Ubuntu 22.04+, Debian 12+, Fedora, Arch). Unpack it and run `unbloatedtub
 - libraries the binary links against, which most desktops already have: xkbcommon (and its X11
   part, `libxkbcommon-x11`) and xcb; it also loads the Vulkan loader and Wayland client library
   at run time, so install those and a Vulkan driver for your GPU (Mesa's, or
-  `mesa-vulkan-drivers`)
+  `mesa-vulkan-drivers`); under Wayland also EGL (`libglvnd` / `libegl1`) and `libmpv` (the
+  `mpv` package has it, or `libmpv2` on Debian)
 
 Check the download with the `.sha256` file next to it (`sha256sum -c`).
 
@@ -894,7 +917,7 @@ The layers, every module, how the app is put together and where new code goes ar
   cookies on the app's API requests, so the page load is the only way to refresh. Not verified:
   whether a headless load keeps the session valid for days, and whether Google lets you sign in
   in a browser started with a debug port.
-- **Wayland** is untested.
+- **Wayland**: done and tested in a headless sway; see *Running → Wayland* for what is and isn't checked. Still open: fractional scales rendered sharply (a wp_viewporter surface), dragging the seek line, and trying it on real hardware and other compositors.
 - **Prebuilt binaries (packaging).** Compiling from source is slow: the build pulls in about
   728 crates (mostly GPUI's dependencies) and took well over 15 minutes in a clean Nix build on 8
   cores, so every user of a source package (Nix, AUR source or `-git`, `cargo install`) would wait
@@ -938,7 +961,7 @@ The layers, every module, how the app is put together and where new code goes ar
 - **AUR package** (Arch). Published as `unbloatedtube-bin`
   (https://aur.archlinux.org/packages/unbloatedtube-bin): `packaging/aur/PKGBUILD` is the
   template. It downloads the release archive, pins its sha256, depends on `mpv`, `yt-dlp`,
-  `deno`, xkbcommon, xcb, Wayland and a Vulkan loader and driver, and installs the binary,
+  `deno`, xkbcommon, xcb, Wayland, libglvnd (EGL) and a Vulkan loader and driver, and installs the binary,
   desktop entry, icon, README and LICENSE. Tested with `makepkg --nodeps` on NixOS; not tested
   on Arch, so the dependency names are from memory.
   - `packaging/aur/publish.sh VERSION` publishes a release: it downloads the archive, checks its

@@ -34,7 +34,7 @@ lists what is still missing.
 | `backend/proxy.rs` | The local proxy behind Settings → Network: Bypass (the TLS ClientHello split into two records and/or two TCP segments, inside the server name) or an upstream SOCKS5/HTTP proxy; local addresses direct. mpv's stream links come to it as http:// and it makes the TLS connection (OpenSSL). |
 | `backend/prefetch.rs` | Looks videos up before they are played and keeps the answers; mpv's (and the app's own) yt-dlp calls go through this program, which answers from them or runs yt-dlp, by a Python helper that stays running when it can. Unix by design (file descriptors, locks). |
 | `backend/cast.rs`, `backend/cli.rs`, `backend/dearrow.rs`, `backend/links.rs`, `backend/http.rs` | Cast receivers (a command or the bot's remote API); the command line and its socket; DeArrow titles and thumbnails; clickable parts of text; the one shared HTTP client. |
-| `platform/` | The operating system's side: `embed.rs` creates an X11 child window inside the app's window for `mpv --wid` and keeps it over the player area; `mpris.rs` is the media keys over D-Bus; `ipc.rs` (local sockets), `process.rs` (mpv dies with the app, own executable), `paths.rs`, `fs.rs` (private files, locks) and `desktop.rs` (open a link, default browser). This is where a port to another system starts. |
+| `platform/` | The operating system's side: `embed.rs` creates an X11 child window inside the app's window for `mpv --wid` and keeps it over the player area, and `embed_wayland.rs` with `libmpv.rs` does the same job under Wayland (mpv as a library, drawn into a subsurface); `mpris.rs` is the media keys over D-Bus; `ipc.rs` (local sockets), `process.rs` (mpv dies with the app, own executable), `paths.rs`, `fs.rs` (private files, locks) and `desktop.rs` (open a link, default browser). This is where a port to another system starts. |
 
 `main.rs` also holds the two pieces that run before any window exists: the command line
 (`unbloatedtube <link>` and the control commands, sent to a running instance over a socket) and
@@ -70,6 +70,9 @@ the hint keys then run the same handlers. The tables of toggles and shortcuts ar
    `backend/player.rs`, which keeps one long-lived mpv, restarts it only when its options change,
    and controls it over mpv's JSON IPC socket.
 2. mpv draws into an X11 child window (`platform/embed.rs`) that the app keeps over the player area.
+   Under Wayland there is no such window: the app runs mpv as a library inside its own process
+   (`platform/libmpv.rs`) and draws into a subsurface of its window (`platform/embed_wayland.rs`, see
+   *Video under Wayland*).
 3. mpv finds the streams by running yt-dlp. It is pointed at this program instead (see below).
 4. The app polls mpv for position, pause, chapters and so on; the hover bar over the video is a Lua
    script (`controls.lua`) loaded into mpv that talks back through mpv user data.
@@ -121,7 +124,8 @@ Everything operating-system-specific is in `platform/`:
 
 | Module | What it does | Linux today |
 | --- | --- | --- |
-| `embed.rs` | the surface mpv draws into | X11 child window (`x11rb`) |
+| `embed.rs` | the surface mpv draws into | X11 child window (`x11rb`), or the Wayland subsurface below |
+| `embed_wayland.rs`, `libmpv.rs` | the video under Wayland: a `wl_subsurface`, EGL, and mpv as a library | `wayland-client` on gpui's connection; EGL, libwayland-egl and libmpv loaded at run time |
 | `mpris.rs` | media keys, the desktop's player widget | D-Bus (`zbus`) |
 | `ipc.rs` | local sockets, stale-socket cleanup, passing file descriptors | Unix sockets |
 | `process.rs` | mpv ends with the app, group, own executable and stderr | `prctl`, `/proc` |
@@ -131,6 +135,26 @@ Everything operating-system-specific is in `platform/`:
 
 `libc` and `x11rb` / `zbus` are dependencies for Unix and Linux only (`Cargo.toml`). A port gives
 each module a version for its system. Not attempted yet.
+
+## Video under Wayland
+
+mpv's `--wid` is X11-only, so `platform/embed_wayland.rs` does what the X11 child window does in
+another way:
+
+- gpui hands out the app window's `wl_display` and `wl_surface`; the app makes a `wl_subsurface`
+  of it (on gpui's own connection, through `wayland-backend`'s foreign-display support), with an
+  empty input region so the pointer goes to the app's window underneath.
+- A render thread owns the EGL context (desktop OpenGL 3.3, else OpenGL ES 3) and mpv's render
+  context. mpv runs in this process (`libmpv.rs`, loaded at run time) with the same options as the
+  mpv program (`Player::play_in_process` turns `--name=value` into library options, joining
+  repeated `--script` / `-append` ones) and the same IPC socket, so the rest of the app doesn't
+  know the difference. The UI thread only places and sizes the subsurface (`WaylandVideo::place`).
+- mpv has no window to hand the pointer to, so the app passes it on: `Player::pointer` sends
+  `mouse x y [button]` commands from the video area's mouse handlers in `app/view/mod.rs`.
+- Missing libmpv or EGL: `Embed::new` returns None and mpv opens in its own window.
+- Testing without a Wayland desktop: headless sway (`WLR_BACKENDS=headless`), `grim` for
+  screenshots, and a virtual pointer client that stays alive (one that exits drops the seat's
+  pointer, and the app sees enter/leave without motion).
 
 ## Where things go
 
