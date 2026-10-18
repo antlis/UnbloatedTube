@@ -9,7 +9,7 @@ pkgdesc='Lightweight, configurable YouTube desktop client: GPUI, embedded mpv, y
 arch=('x86_64')
 url='https://github.com/antlis/UnbloatedTube'
 license=('AGPL-3.0-only')
-depends=('gcc-libs' 'glibc' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'wayland'
+depends=('gcc-libs' 'glibc' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'wayland' 'libglvnd'
          'vulkan-icd-loader' 'vulkan-driver' 'mpv' 'yt-dlp' 'deno')
 # The package was unbloated-youtube-bin before 0.34.0; that name is now a transitional package
 # that depends on this one (packaging/aur/transitional), so this one must not conflict with it.

@@ -2,11 +2,13 @@
 
 use crate::backend::auth::Auth;
 use crate::backend::store::{Config, Settings};
+use crate::platform::embed_wayland::Host;
 use crate::platform::{ipc, paths, process};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -61,6 +63,9 @@ pub fn menu_position(action: &str) -> Option<(f64, f64)> {
 pub struct Player {
     socket: PathBuf,
     child: Option<Child>,
+    /// mpv running in this process instead (`play` with a host: Wayland), and what runs it.
+    host: Option<Arc<Host>>,
+    inproc: bool,
     /// Options the running mpv was started with.
     options: Vec<String>,
     /// Our mouse bindings were sent to the running mpv.
@@ -74,14 +79,54 @@ impl Player {
         let dir = paths::runtime_dir();
         // Sockets of unbloatedtube instances that were killed (and so never cleaned up after themselves).
         ipc::remove_stale_sockets(&dir, "unbloatedtube-mpv-");
-        Self { socket: dir.join(format!("unbloatedtube-mpv-{}.sock", std::process::id())), child: None, options: Vec::new(), bound: false, volume }
+        Self { socket: dir.join(format!("unbloatedtube-mpv-{}.sock", std::process::id())), child: None, host: None, inproc: false, options: Vec::new(), bound: false, volume }
     }
 
     pub fn alive(&mut self) -> bool {
+        if self.inproc {
+            return self.host.as_ref().is_some_and(|h| h.alive());
+        }
         matches!(self.child.as_mut().map(|c| c.try_wait()), Some(Ok(None)))
     }
 
-    /// `wid`: X11 window to render into; None opens mpv's own window. `options` come from
+    /// The pointer over the video, for an mpv that has no window of its own to get it from (the one
+    /// in this process, see `play_in_process`): `x`, `y` in video pixels, or off the video (`None`).
+    /// `button` (0 left, 2 right) clicks there; `double` makes it a double click.
+    pub fn pointer(&self, at: Option<(i32, i32)>, button: Option<u8>, double: bool) {
+        if std::env::var_os("UNBLOATED_WAYLAND_DEBUG").is_some() {
+            eprintln!("pointer {at:?} button {button:?} double {double} (in process: {})", self.inproc);
+        }
+        let Some(host) = self.host.as_ref().filter(|_| self.inproc) else { return };
+        let (x, y) = at.unwrap_or((-1, -1));
+        let mut cmd = vec!["mouse".to_string(), x.to_string(), y.to_string()];
+        if let Some(b) = button {
+            cmd.push(b.to_string());
+            cmd.push(if double { "double" } else { "single" }.to_string());
+        }
+        host.command(cmd);
+    }
+
+    /// Whether the pointer has to be passed on (see `pointer`).
+    pub fn needs_pointer(&self) -> bool {
+        self.inproc
+    }
+
+    /// End mpv, wherever it runs.
+    fn kill(&mut self) {
+        if let Some(mut c) = self.child.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+        if self.inproc {
+            if let Some(h) = &self.host {
+                h.stop();
+            }
+            self.inproc = false;
+        }
+    }
+
+    /// `wid`: X11 window to render into; None opens mpv's own window, unless `host` (Wayland) runs
+    /// mpv in this process, drawing into the app's window. `options` come from
     /// `options()`; if they differ from the running mpv's, mpv is restarted to apply them.
     pub fn play(
         &mut self,
@@ -90,16 +135,18 @@ impl Player {
         start: f64,
         speed: f32,
         wid: Option<u32>,
+        host: Option<Arc<Host>>,
         paused: bool,
     ) -> Result<(), String> {
-        if self.alive() && self.options != options {
-            if let Some(mut c) = self.child.take() {
-                let _ = c.kill();
-                let _ = c.wait();
-            }
+        let host = host.filter(|_| wid.is_none());
+        if self.alive() && (self.options != options || self.inproc != host.is_some()) {
+            self.kill();
         }
         if !self.alive() {
             let _ = std::fs::remove_file(&self.socket);
+            if let Some(host) = host {
+                return self.play_in_process(host, options, url, start, speed, paused);
+            }
             let mut cmd = Command::new("mpv");
             // mpv's yt-dlp inherits this; see `crate::backend::yt` for why it matters.
             cmd.env("PYCRYPTODOME_DISABLE_GMP", "1")
@@ -139,6 +186,65 @@ impl Player {
         self.command(json!(["loadfile", url, "replace"]))
     }
 
+    /// Start mpv inside this process, drawing through `host` (see `embed_wayland.rs`), with the
+    /// options the mpv program would get; its IPC socket is the same.
+    fn play_in_process(&mut self, host: Arc<Host>, options: &[String], url: &str, start: f64, speed: f32, paused: bool) -> Result<(), String> {
+        // mpv's yt-dlp is a child of this process and inherits its environment: the shim's switches
+        // go there (an environment variable can't be given to just one library call).
+        // SAFETY: set before mpv starts; nothing here reads these concurrently.
+        unsafe {
+            std::env::set_var("PYCRYPTODOME_DISABLE_GMP", "1");
+            for (k, v) in crate::backend::prefetch::environment() {
+                std::env::set_var(k, v);
+            }
+            match crate::backend::proxy::url() {
+                Some(_) => std::env::set_var(crate::backend::prefetch::RELAY_ENV, "1"),
+                None => std::env::remove_var(crate::backend::prefetch::RELAY_ENV),
+            }
+        }
+        let mut args = vec![
+            format!("--input-ipc-server={}", self.socket.display()),
+            "--idle=yes".to_string(),
+            "--keep-open=yes".to_string(),
+            "--title=unbloatedtube".to_string(),
+            format!("--log-file={}", crate::backend::store::cache_dir().join("mpv.log").display()),
+        ];
+        args.extend(process::own_exe().map(|exe| format!("--script-opts-append=ytdl_hook-ytdl_path={}", exe.display())));
+        args.extend(options.iter().cloned());
+        args.extend(["--volume-max=100".to_string(), format!("--volume={}", self.volume), format!("--speed={speed}"), format!("--start={start}")]);
+        args.extend(paused.then(|| "--pause".to_string()));
+        // Windowing is the app's: these only mean something to the mpv program.
+        let own = ["wid", "gpu-context", "gpu-api", "vo", "force-window", "ontop", "geometry"];
+        let mut pairs: Vec<(String, String)> = Vec::new();
+        for a in args.iter().filter_map(|a| a.strip_prefix("--")) {
+            let (k, v) = a.split_once('=').map_or((a.to_string(), "yes".to_string()), |(k, v)| (k.to_string(), v.to_string()));
+            if own.contains(&k.as_str()) {
+                continue;
+            }
+            // The library API has no `--name-append=`: the values of one list option are joined
+            // into one (`:` between paths, `,` between `key=value` entries). `--script` is the
+            // command line's name for the list the library calls `scripts`, and is repeated.
+            let (base, append) = match (k.as_str(), k.strip_suffix("-append")) {
+                ("script", _) => ("scripts".to_string(), true),
+                (_, Some(base)) => (base.to_string(), true),
+                _ => (k.clone(), false),
+            };
+            match pairs.iter_mut().find(|(name, _)| append && *name == base) {
+                Some((_, joined)) => {
+                    joined.push(if base == "scripts" { ':' } else { ',' });
+                    joined.push_str(&v);
+                }
+                None => pairs.push((base, v)),
+            }
+        }
+        host.start(pairs, url.to_string())?;
+        self.host = Some(host);
+        self.inproc = true;
+        self.options = options.to_vec();
+        self.bound = false;
+        Ok(())
+    }
+
     /// The yt-dlp format mpv uses for the files it loads from now on (the quality picker).
     pub fn set_format(&self, format: &str) {
         let _ = self.command(json!(["set_property", "ytdl-format", format]));
@@ -146,10 +252,7 @@ impl Player {
 
     /// Stop playback and exit mpv (logout, or the connect screen coming up).
     pub fn stop(&mut self) {
-        if let Some(mut c) = self.child.take() {
-            let _ = c.kill();
-            let _ = c.wait();
-        }
+        self.kill();
         self.bound = false;
         self.options.clear();
     }

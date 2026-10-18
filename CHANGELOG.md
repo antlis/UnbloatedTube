@@ -7,6 +7,15 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 ## Unreleased
 
 ### Added
+- **Wayland.** The video now plays inside the app's window under Wayland (niri, sway, GNOME,
+  KDE...). Before, the app could only embed mpv on X11 and under Wayland you got sound and a
+  still thumbnail while mpv opened in a window of its own. Now the app runs mpv as a library
+  (`libmpv`) and draws into a subsurface of its window; the hover bar, click to pause, double
+  click for fullscreen and resizing work as on X11. Needs `libmpv`, EGL and `libwayland-egl`
+  (the Nix package and the AUR package bring them); without them mpv opens in its own window as
+  before. Your own `mpv.conf` is not read in this mode. Tested in a headless sway only; see
+  README → Running → Wayland for what is not checked.
+
 - **A Nix binary cache.** Releases are built by CI and pushed to a public Cachix cache (`antlis`),
   so a NixOS rebuild downloads the app instead of compiling it. README → NixOS → *Prebuilt binary*
   says how to add the cache to your Nix config.

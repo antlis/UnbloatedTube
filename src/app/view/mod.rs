@@ -572,6 +572,49 @@ impl Unbloated {
                     .on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| this.play(v.clone(), None, cx)),
             );
         }
+        // mpv in this process has no window to get the pointer from: the app passes it on.
+        if let (Some(embed), true) = (self.embed.clone(), self.player.needs_pointer() && self.state.is_some() && self.casting.is_none() && !self.pip) {
+            let at = {
+                let embed = embed.clone();
+                move |p: gpui::Point<gpui::Pixels>, window: &Window| {
+                    let s = window.scale_factor();
+                    let (ox, oy) = embed.borrow().origin();
+                    ((f32::from(p.x) * s).round() as i32 - ox, (f32::from(p.y) * s).round() as i32 - oy)
+                }
+            };
+            let (at_move, at_down) = (at.clone(), at);
+            screen = screen.child(
+                div()
+                    .id("screen-pointer")
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .on_mouse_move(cx.listener(move |this, ev: &gpui::MouseMoveEvent, window, _| {
+                        this.player.pointer(Some(at_move(ev.position, window)), None, false);
+                    }))
+                    .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                        if !*hovered {
+                            this.player.pointer(None, None, false);
+                        }
+                    }))
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener({
+                            let at = at_down.clone();
+                            move |this, ev: &gpui::MouseDownEvent, window, _| {
+                                this.player.pointer(Some(at(ev.position, window)), Some(0), ev.click_count > 1);
+                            }
+                        }),
+                    )
+                    .on_mouse_down(
+                        gpui::MouseButton::Right,
+                        cx.listener(move |this, ev: &gpui::MouseDownEvent, window, _| {
+                            this.player.pointer(Some(at_down(ev.position, window)), Some(2), false);
+                        }),
+                    ),
+            );
+        }
         if let Some(embed) = self.embed.clone() {
             screen = screen.child(
                 canvas(|_, _, _| {}, move |b, _, window, _| {
@@ -582,6 +625,7 @@ impl Unbloated {
                         px(b.origin.y) as i32,
                         px(b.size.width) as u32,
                         px(b.size.height) as u32,
+                        s,
                     );
                 })
                 .absolute()

@@ -6,7 +6,7 @@ pkgs.mkShell rec {
   nativeBuildInputs = with pkgs; [ pkg-config cmake clang ];
   buildInputs = with pkgs; [
     rustc cargo
-    fontconfig freetype libxkbcommon wayland vulkan-loader
+    fontconfig freetype libxkbcommon wayland vulkan-loader libglvnd
     xorg.libxcb xorg.libX11 xorg.libXcursor xorg.libXi xorg.libXrandr
     openssl zstd alsa-lib
   ];

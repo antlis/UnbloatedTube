@@ -25,7 +25,7 @@ The map of the code, how it fits together and where new code goes: [ARCHITECTURE
   - `src/backend/`: no GPUI. `yt.rs` yt-dlp listings, `account.rs` InnerTube, `player.rs` mpv IPC,
     `store.rs` settings/history/caches, `prefetch.rs` yt-dlp shim and helper, `cast.rs`, `cli.rs`,
     `proxy.rs`, `thumbs.rs`, `storyboard.rs`, `dearrow.rs`, `links.rs`, `http.rs`, `auth.rs`.
-  - `src/platform/`: **all** OS-specific code (X11 embed, MPRIS, sockets, process control, private
+  - `src/platform/`: **all** OS-specific code (X11 embed, Wayland video / libmpv, MPRIS, sockets, process control, private
     files and locks, opening links). Don't put `libc`, `/proc`, Unix sockets or `xdg-*` anywhere else
     (the yt-dlp shim's file descriptors in `backend/prefetch.rs` are the one deliberate exception).
 - Items shared between files are `pub(crate)`; a new feature goes in the matching `app/` file or a new one

@@ -10,6 +10,7 @@
 , libxkbcommon
 , wayland
 , vulkan-loader
+, libglvnd
 , xorg
 , openssl
 , zstd
@@ -25,7 +26,7 @@
 }:
 let
   buildInputs = [
-    fontconfig freetype libxkbcommon wayland vulkan-loader
+    fontconfig freetype libxkbcommon wayland vulkan-loader libglvnd
     xorg.libxcb xorg.libX11 xorg.libXcursor xorg.libXi xorg.libXrandr
     openssl zstd alsa-lib
   ];
@@ -58,7 +59,8 @@ let
   '';
 
   # The app runs mpv and yt-dlp (which needs deno for YouTube's JavaScript challenges) as programs,
-  # and gpui loads Vulkan and the window system libraries at run time. SponsorBlock is a script mpv loads.
+  # and gpui loads Vulkan and the window system libraries at run time. Under Wayland the app also plays
+  # the video itself, through libmpv (UNBLOATED_LIBMPV) and EGL (libglvnd). SponsorBlock is a script mpv loads.
   rest = {
     postInstall = ''
       install -Dm644 packaging/unbloatedtube.desktop $out/share/applications/unbloatedtube.desktop
@@ -66,6 +68,7 @@ let
       wrapProgram $out/bin/unbloatedtube \
         --prefix PATH : ${lib.makeBinPath [ mpv yt-dlp deno ]} \
         --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath buildInputs} \
+        --set-default UNBLOATED_LIBMPV ${mpv}/lib/libmpv.so.2 \
         --set-default UNBLOATED_SPONSORBLOCK ${mpvScripts.sponsorblock-minimal}/share/mpv/scripts/sponsorblock_minimal.lua
       # A short name, and the command's name before 0.34.0 (so key bindings and scripts keep working).
       ln -s unbloatedtube $out/bin/ubt

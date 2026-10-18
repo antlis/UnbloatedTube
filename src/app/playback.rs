@@ -170,7 +170,9 @@ impl Unbloated {
                 eprintln!("unbloatedtube: can't embed video (not X11?), using a separate mpv window");
             }
         }
-        let wid = self.embed.as_ref().filter(|_| !self.pip).map(|e| {
+        // Wayland: mpv runs in this process and draws into the app's own surface.
+        let host = self.embed.as_ref().filter(|_| !self.pip).and_then(|e| e.borrow().host());
+        let wid = self.embed.as_ref().filter(|_| !self.pip).and_then(|e| {
             // mpv keeps its window unmapped if ours is hidden when it starts.
             e.borrow_mut().set_visible(true);
             e.borrow().id()
@@ -204,7 +206,7 @@ impl Unbloated {
         if !restarts {
             self.player.set_format(&player::format_at(&self.settings, self.quality.as_ref().map(|(_, h)| *h)));
         }
-        if let Err(e) = self.player.play(&options, &self.media_path(&video), start, self.settings.speed, wid, paused) {
+        if let Err(e) = self.player.play(&options, &self.media_path(&video), start, self.settings.speed, wid, host, paused) {
             eprintln!("{e}");
         }
         self.saving = false;
