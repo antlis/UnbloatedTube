@@ -577,9 +577,7 @@ impl Unbloated {
             let at = {
                 let embed = embed.clone();
                 move |p: gpui::Point<gpui::Pixels>, window: &Window| {
-                    let s = window.scale_factor();
-                    let (ox, oy) = embed.borrow().origin();
-                    ((f32::from(p.x) * s).round() as i32 - ox, (f32::from(p.y) * s).round() as i32 - oy)
+                    embed.borrow().video_point(f32::from(p.x), f32::from(p.y), window.scale_factor())
                 }
             };
             let (at_move, at_down) = (at.clone(), at);

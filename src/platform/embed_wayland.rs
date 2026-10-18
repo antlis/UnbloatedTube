@@ -28,6 +28,7 @@ use wayland_client::protocol::{
     wl_subsurface::WlSubsurface, wl_surface::WlSurface,
 };
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle};
+use wayland_protocols::wp::viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter};
 
 struct State;
 
@@ -41,7 +42,7 @@ macro_rules! ignore_events {
         }
     )*};
 }
-ignore_events!(WlCompositor, WlSubcompositor, WlSurface, WlSubsurface, WlRegion);
+ignore_events!(WlCompositor, WlSubcompositor, WlSurface, WlSubsurface, WlRegion, WpViewporter, WpViewport);
 
 type EglDisplay = *mut c_void;
 type EglConfig = *mut c_void;
@@ -228,6 +229,9 @@ pub struct WaylandVideo {
     state: State,
     child: WlSurface,
     sub: WlSubsurface,
+    /// Sizes the surface exactly, whatever the display scale (None: the compositor has no
+    /// wp_viewporter, and the buffer is a whole-number multiple of the logical size instead).
+    viewport: Option<WpViewport>,
     host: Arc<Host>,
     thread: Option<std::thread::JoinHandle<()>>,
     /// Device pixels in the app's window, as `place` got them, and the scale it was given.
@@ -258,6 +262,7 @@ impl WaylandVideo {
         let compositor: WlCompositor = globals.bind(&qh, 1..=4, ()).map_err(|e| format!("wl_compositor: {e}"))?;
         let subcompositor: WlSubcompositor = globals.bind(&qh, 1..=1, ()).map_err(|e| format!("wl_subcompositor: {e}"))?;
         let child = compositor.create_surface(&qh, ());
+        let viewport = globals.bind::<WpViewporter, _, _>(&qh, 1..=1, ()).ok().map(|v| v.get_viewport(&child, &qh, ()));
         let sub = subcompositor.get_subsurface(&child, &parent, &qh, ());
         // Commits of its own, not waiting for the app's window to commit.
         sub.set_desync();
@@ -292,7 +297,7 @@ impl WaylandVideo {
             .name("video".into())
             .spawn(move || render_loop(owned, rx, tx, thread_host, thread_child, thread_conn))
             .map_err(|e| format!("video thread: {e}"))?;
-        Ok(Self { conn, queue, state: State, child, sub, host, thread: Some(thread), rect: (0, 0, 16, 9), scale: 1., wanted: false, collapsed: false })
+        Ok(Self { conn, queue, state: State, child, sub, viewport, host, thread: Some(thread), rect: (0, 0, 16, 9), scale: 1., wanted: false, collapsed: false })
     }
 
     /// The handle the player starts and stops mpv through.
@@ -317,6 +322,21 @@ impl WaylandVideo {
         (self.rect.0, self.rect.1)
     }
 
+    /// Buffer pixels per logical pixel: the display scale with a viewport, else its ceiling.
+    fn buffer_scale(&self) -> i32 {
+        if self.viewport.is_some() { 1 } else { self.scale.max(1.).ceil() as i32 }
+    }
+
+    /// A pointer position in the window (logical pixels, `scale` the display scale) as a position
+    /// in the video, in the pixels mpv draws.
+    pub fn video_point(&self, x: f32, y: f32, scale: f32) -> (i32, i32) {
+        if self.viewport.is_some() {
+            return ((x * scale).round() as i32 - self.rect.0, (y * scale).round() as i32 - self.rect.1);
+        }
+        let (s, bs) = (self.scale.max(1.), self.buffer_scale() as f32);
+        (((x - self.rect.0 as f32 / s) * bs).round() as i32, ((y - self.rect.1 as f32 / s) * bs).round() as i32)
+    }
+
     pub fn set_visible(&mut self, visible: bool) {
         if self.wanted != visible {
             self.wanted = visible;
@@ -327,19 +347,31 @@ impl WaylandVideo {
     /// Bring the subsurface to what was asked: its place and size, shown or hidden.
     fn apply(&mut self) {
         let _ = self.queue.dispatch_pending(&mut self.state);
-        // The window's positions are logical; the buffer is `bs` times as big (whole numbers only).
+        // The window's positions are logical. With a viewport the buffer is the video area in device
+        // pixels, whatever the scale, and the compositor maps it onto its logical size; without
+        // one it is `bs` times the logical size (whole numbers only).
         let scale = self.scale.max(1.);
-        let bs = scale.ceil() as i32;
+        let bs = self.buffer_scale();
         let (lx, ly) = ((self.rect.0 as f32 / scale).round() as i32, (self.rect.1 as f32 / scale).round() as i32);
         let (lw, lh) = (((self.rect.2 as f32 / scale).round() as i32).max(1), ((self.rect.3 as f32 / scale).round() as i32).max(1));
         if debug() {
-            eprintln!("wayland video: at {lx},{ly} {lw}x{lh} buffer scale {bs}, shown {}", self.wanted && !self.collapsed);
+            eprintln!("wayland video: at {lx},{ly} {lw}x{lh}, scale {scale}, buffer scale {bs}, viewport {}, shown {}", self.viewport.is_some(), self.wanted && !self.collapsed);
         }
         // Takes effect with the next commit of the subsurface (the render thread's) and of the
         // window (the app's own frame).
         self.sub.set_position(lx, ly);
-        self.child.set_buffer_scale(bs);
-        let view = View { w: lw * bs, h: lh * bs, visible: self.wanted && !self.collapsed };
+        let (bw, bh) = match &self.viewport {
+            Some(v) => {
+                v.set_destination(lw, lh);
+                self.child.set_buffer_scale(1);
+                (self.rect.2.max(1) as i32, self.rect.3.max(1) as i32)
+            }
+            None => {
+                self.child.set_buffer_scale(bs);
+                (lw * bs, lh * bs)
+            }
+        };
+        let view = View { w: bw, h: bh, visible: self.wanted && !self.collapsed };
         let changed = std::mem::replace(&mut *self.host.view.lock().unwrap(), view) != view;
         if changed {
             let _ = self.host.tx.send(Msg::View);
