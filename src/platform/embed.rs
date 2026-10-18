@@ -115,10 +115,18 @@ static WAYLAND_WINDOW: std::sync::OnceLock<(usize, usize)> = std::sync::OnceLock
 
 pub fn set_window(window: &gpui::Window) {
     use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
-    if let (Ok(w), Ok(d)) = (HasWindowHandle::window_handle(window), HasDisplayHandle::display_handle(window)) {
-        if let (RawWindowHandle::Wayland(w), RawDisplayHandle::Wayland(d)) = (w.as_raw(), d.as_raw()) {
-            let _ = WAYLAND_WINDOW.set((d.display.as_ptr() as usize, w.surface.as_ptr() as usize));
-        }
+    // gpui 0.2.2 doesn't implement HasWindowHandle for X11 (panics with "not implemented").
+    // Use catch_unwind to handle the panic gracefully; on X11 we use a different approach
+    // (finding the window via _NET_CLIENT_LIST in X11Video::new).
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        (HasWindowHandle::window_handle(window), HasDisplayHandle::display_handle(window))
+    }));
+    let (w, d) = match result {
+        Ok((Ok(w), Ok(d))) => (w, d),
+        _ => return,
+    };
+    if let (RawWindowHandle::Wayland(w), RawDisplayHandle::Wayland(d)) = (w.as_raw(), d.as_raw()) {
+        let _ = WAYLAND_WINDOW.set((d.display.as_ptr() as usize, w.surface.as_ptr() as usize));
     }
 }
 
