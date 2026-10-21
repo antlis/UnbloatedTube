@@ -4,6 +4,12 @@ All notable changes to unbloated-youtube. Newest first.
 Versions follow [Semantic Versioning](https://semver.org): while below 1.0, a minor bump (0.2.0)
 may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
+## Unreleased
+
+### Changed
+- **Nix: the binary cache now has every push to master**, not only release tags, so updating the
+  flake input to an untagged commit downloads the app instead of compiling it.
+
 ## 0.45.2 - 2026-10-18
 
 ### Fixed

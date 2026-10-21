@@ -552,7 +552,8 @@ To use it for a single command, without changing any configuration, pass them as
 
 What to know:
 
-- The cache has what CI built from the release tag, using the flake's own pinned nixpkgs. If you
+- The cache has what CI built from each release tag and each push to master (a few minutes after
+  the push), using the flake's own pinned nixpkgs. If you
   use the flake as an overlay on a different nixpkgs, the package comes out different and Nix
   compiles it locally.
 - CI pushes it a few minutes after a release is tagged (about 8). A rebuild before that compiles
