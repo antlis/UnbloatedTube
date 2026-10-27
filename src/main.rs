@@ -10,7 +10,7 @@ use std::time::Duration;
 use gpui::{App, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, prelude::*, px, size};
 
 use app::Unbloated;
-use backend::{account, cli, prefetch, store, yt};
+use backend::{account, cli, prefetch, store, yt, ytdlp_update};
 use platform::mpris;
 use ui::icons;
 
@@ -65,6 +65,7 @@ fn main() {
     std::thread::spawn(prefetch::sweep);
     prefetch::start_helper();
     std::thread::spawn(|| account::keep_fresh());
+    std::thread::spawn(ytdlp_update::keep_fresh);
     Application::new().with_assets(icons::Assets).run(move |cx: &mut App| {
         // At 1280x800, but no bigger than the screen: with display scaling that can be larger than it,
         // and the bottom of the window (and anything there) would be off-screen.

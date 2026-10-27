@@ -1,8 +1,9 @@
-//! A single long-lived mpv process, controlled over its JSON IPC socket.
+//! A single long-lived mpv (a process, or libmpv inside this one), controlled over its JSON IPC socket.
 
 use crate::backend::auth::Auth;
 use crate::backend::store::{Config, Settings};
 use crate::platform::embed_wayland::Host;
+use crate::platform::libmpv::Inline;
 use crate::platform::{ipc, paths, process};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
@@ -66,6 +67,8 @@ pub struct Player {
     /// mpv running in this process instead (`play` with a host: Wayland), and what runs it.
     host: Option<Arc<Host>>,
     inproc: bool,
+    /// mpv running in process instead, drawing into an X11 window (`play` with `wid`).
+    inline: Option<Inline>,
     /// Options the running mpv was started with.
     options: Vec<String>,
     /// Our mouse bindings were sent to the running mpv.
@@ -79,10 +82,13 @@ impl Player {
         let dir = paths::runtime_dir();
         // Sockets of unbloatedtube instances that were killed (and so never cleaned up after themselves).
         ipc::remove_stale_sockets(&dir, "unbloatedtube-mpv-");
-        Self { socket: dir.join(format!("unbloatedtube-mpv-{}.sock", std::process::id())), child: None, host: None, inproc: false, options: Vec::new(), bound: false, volume }
+        Self { socket: dir.join(format!("unbloatedtube-mpv-{}.sock", std::process::id())), child: None, host: None, inproc: false, inline: None, options: Vec::new(), bound: false, volume }
     }
 
     pub fn alive(&mut self) -> bool {
+        if self.inline.is_some() {
+            return true;
+        }
         if self.inproc {
             return self.host.as_ref().is_some_and(|h| h.alive());
         }
@@ -113,6 +119,8 @@ impl Player {
 
     /// End mpv, wherever it runs.
     fn kill(&mut self) {
+        // Dropping it stops mpv.
+        self.inline = None;
         if let Some(mut c) = self.child.take() {
             let _ = c.kill();
             let _ = c.wait();
@@ -139,13 +147,20 @@ impl Player {
         paused: bool,
     ) -> Result<(), String> {
         let host = host.filter(|_| wid.is_none());
-        if self.alive() && (self.options != options || self.inproc != host.is_some()) {
+        if self.alive() && (self.options != options || self.inproc != host.is_some() || (self.inline.is_some() && wid.is_none())) {
             self.kill();
         }
         if !self.alive() {
             let _ = std::fs::remove_file(&self.socket);
             if let Some(host) = host {
                 return self.play_in_process(host, options, url, start, speed, paused);
+            }
+            // X11: mpv in this process through libmpv; without it, the mpv program below.
+            if let Some(wid) = wid {
+                match self.play_inline(wid, options, url, start, speed, paused) {
+                    Ok(()) => return Ok(()),
+                    Err(e) => eprintln!("unbloatedtube: {e}; starting the mpv program instead"),
+                }
             }
             let mut cmd = Command::new("mpv");
             // mpv's yt-dlp inherits this; see `crate::backend::yt` for why it matters.
@@ -189,6 +204,33 @@ impl Player {
     /// Start mpv inside this process, drawing through `host` (see `embed_wayland.rs`), with the
     /// options the mpv program would get; its IPC socket is the same.
     fn play_in_process(&mut self, host: Arc<Host>, options: &[String], url: &str, start: f64, speed: f32, paused: bool) -> Result<(), String> {
+        // Windowing is the app's: these only mean something to the mpv program.
+        let own = ["wid", "gpu-context", "gpu-api", "vo", "force-window", "ontop", "geometry"];
+        let pairs = self.library_options(&[], options, speed, start, paused, &own);
+        host.start(pairs, url.to_string())?;
+        self.host = Some(host);
+        self.inproc = true;
+        self.options = options.to_vec();
+        self.bound = false;
+        Ok(())
+    }
+
+    /// Start mpv inside this process drawing into the X11 window `wid`, with the options the mpv
+    /// program would get; its IPC socket is the same.
+    fn play_inline(&mut self, wid: u32, options: &[String], url: &str, start: f64, speed: f32, paused: bool) -> Result<(), String> {
+        // Pick X11 EGL directly: mpv's auto-probing of GPU contexts segfaults with the nixos-unstable
+        // mpv on some drivers (Intel/Mesa 25.2). Before `options`, so a --gpu-context there still wins.
+        let windowing = ["--force-window=yes".to_string(), "--gpu-context=x11egl".to_string(), format!("--wid={wid}")];
+        let pairs = self.library_options(&windowing, options, speed, start, paused, &[]);
+        self.inline = Some(Inline::start(pairs, url)?);
+        self.options = options.to_vec();
+        self.bound = false;
+        Ok(())
+    }
+
+    /// The command line of the mpv program as the (name, value) pairs libmpv takes, leaving out the
+    /// names in `skip`. `windowing` goes before `options`.
+    fn library_options(&self, windowing: &[String], options: &[String], speed: f32, start: f64, paused: bool, skip: &[&str]) -> Vec<(String, String)> {
         // mpv's yt-dlp is a child of this process and inherits its environment: the shim's switches
         // go there (an environment variable can't be given to just one library call).
         // SAFETY: set before mpv starts; nothing here reads these concurrently.
@@ -210,15 +252,14 @@ impl Player {
             format!("--log-file={}", crate::backend::store::cache_dir().join("mpv.log").display()),
         ];
         args.extend(process::own_exe().map(|exe| format!("--script-opts-append=ytdl_hook-ytdl_path={}", exe.display())));
+        args.extend(windowing.iter().cloned());
         args.extend(options.iter().cloned());
         args.extend(["--volume-max=100".to_string(), format!("--volume={}", self.volume), format!("--speed={speed}"), format!("--start={start}")]);
         args.extend(paused.then(|| "--pause".to_string()));
-        // Windowing is the app's: these only mean something to the mpv program.
-        let own = ["wid", "gpu-context", "gpu-api", "vo", "force-window", "ontop", "geometry"];
         let mut pairs: Vec<(String, String)> = Vec::new();
         for a in args.iter().filter_map(|a| a.strip_prefix("--")) {
             let (k, v) = a.split_once('=').map_or((a.to_string(), "yes".to_string()), |(k, v)| (k.to_string(), v.to_string()));
-            if own.contains(&k.as_str()) {
+            if skip.contains(&k.as_str()) {
                 continue;
             }
             // The library API has no `--name-append=`: the values of one list option are joined
@@ -237,12 +278,7 @@ impl Player {
                 None => pairs.push((base, v)),
             }
         }
-        host.start(pairs, url.to_string())?;
-        self.host = Some(host);
-        self.inproc = true;
-        self.options = options.to_vec();
-        self.bound = false;
-        Ok(())
+        pairs
     }
 
     /// The yt-dlp format mpv uses for the files it loads from now on (the quality picker).

@@ -6,7 +6,7 @@
 #
 # Writes unbloatedtube-X.Y.Z-x86_64.AppImage and its .sha256 into the current directory.
 # Needs curl, unzip, file, patchelf and libfuse2 (or FUSE-less: the tools run extracted), and
-# the libraries the binary links against installed, because linuxdeploy copies them from here.
+# the libraries the binary links against, and libmpv1, installed, because linuxdeploy copies them from here.
 set -euo pipefail
 
 archive=$(readlink -f "${1:?usage: build.sh RELEASE_ARCHIVE.tar.gz}")
@@ -40,8 +40,13 @@ chmod +x helpers/yt-dlp helpers/deno
 # AppDir: the binary with the libraries it links against, found through its RUNPATH. Not bundled:
 # glibc, the GPU and the Vulkan loader (they come from the system), and libxkbcommon, whose
 # compose tables are the system's: a bundled older copy prints errors about newer ones.
+# libmpv is what plays the video (the app loads it at run time, so linuxdeploy has to be told); its
+# own libraries (ffmpeg, libass, ...) come along.
+libmpv=$(ldconfig -p | awk '/libmpv\.so\.[0-9]+ / { print $NF; exit }')
+[ -n "$libmpv" ] || { echo "libmpv is not installed here (apt install libmpv1)" >&2; exit 1; }
 ./linuxdeploy --appimage-extract-and-run --appdir AppDir \
   --exclude-library 'libxkbcommon*' \
+  --library "$libmpv" \
   --executable "$dir/unbloatedtube" \
   --desktop-file "$dir/unbloatedtube.desktop" \
   --icon-file "$dir/unbloatedtube.svg" \

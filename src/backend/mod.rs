@@ -14,3 +14,4 @@ pub(crate) mod store;
 pub(crate) mod storyboard;
 pub(crate) mod thumbs;
 pub(crate) mod yt;
+pub(crate) mod ytdlp_update;

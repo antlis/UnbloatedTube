@@ -69,7 +69,7 @@ jobs:
 
   appimage:
     # Turns the release binary into an AppImage (packaging/appimage/build.sh): the libraries it
-    # links against, plus yt-dlp and deno as fallbacks; mpv has to be installed. A tag attaches it
+    # links against and libmpv (the player runs inside the app), plus yt-dlp and deno as fallbacks. A tag attaches it
     # to the release; "Run workflow" only uploads it as a workflow artifact.
     needs: linux-x86_64
     runs-on: ubuntu-22.04
@@ -88,7 +88,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libfuse2 file patchelf unzip desktop-file-utils \
             libasound2 libfontconfig1 libfreetype6 libwayland-client0 libxkbcommon0 \
-            libxkbcommon-x11-0 libx11-xcb1 libxcb1 libssl3 libzstd1
+            libxkbcommon-x11-0 libx11-xcb1 libxcb1 libssl3 libzstd1 libmpv1
 
       - name: Build
         run: packaging/appimage/build.sh "dl/${{ needs.linux-x86_64.outputs.archive }}"
@@ -100,6 +100,7 @@ jobs:
           chmod +x "$appimage"
           "./$appimage" --appimage-extract >/dev/null
           ldd squashfs-root/usr/bin/unbloatedtube | grep -i "not found" && exit 1 || true
+          ldd squashfs-root/usr/lib/libmpv.so.* | grep -i "not found" && exit 1 || true
           squashfs-root/usr/helpers/yt-dlp --version
           squashfs-root/usr/helpers/deno --version | head -1
 

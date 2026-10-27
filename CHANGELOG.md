@@ -6,6 +6,14 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+### Changed
+- **X11 plays through libmpv too**, inside the app, like Wayland, instead of starting the `mpv`
+  program (which stays as a fallback when libmpv can't be loaded). The AppImage bundles libmpv, so
+  it needs no `mpv` installed.
+- **The AppImage keeps its yt-dlp up to date.** Without a yt-dlp of your own it copies the bundled
+  one to the data folder (`~/.local/share/unbloatedtube/bin/`) and runs `yt-dlp -U` on it at most
+  once a day, so it no longer goes stale after the release. A yt-dlp on your `PATH` still wins.
+
 ## 0.47.0 - 2026-10-28
 
 ### Added

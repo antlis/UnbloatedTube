@@ -1,8 +1,12 @@
 #!/bin/sh
 # Starts the app inside the AppImage. The programs it runs (mpv, yt-dlp, deno) are looked up on
-# PATH: yours come first, and the copies bundled here (yt-dlp, deno) are only a fallback for when
-# you have none. mpv is not bundled. The libraries are found through the binary's own RPATH, not
+# PATH: yours come first, then the yt-dlp the app keeps updated in its data folder (it copies the
+# bundled one there, see backend/ytdlp_update.rs), then the copies bundled here (yt-dlp, deno) as a
+# last fallback. The player is the bundled libmpv (the app loads it from UNBLOATED_LIBMPV, under X11
+# and Wayland alike), so mpv itself needs no installing. The libraries are found through the binary's own RPATH, not
 # LD_LIBRARY_PATH, so they don't leak into the mpv and yt-dlp it starts.
 HERE="$(dirname "$(readlink -f "$0")")"
-export PATH="$PATH:$HERE/usr/helpers"
+export PATH="$PATH:${XDG_DATA_HOME:-$HOME/.local/share}/unbloatedtube/bin:$HERE/usr/helpers"
+export UNBLOATED_BUNDLED_YTDLP="$HERE/usr/helpers/yt-dlp"
+for lib in "$HERE"/usr/lib/libmpv.so.*; do export UNBLOATED_LIBMPV="$lib"; done
 exec "$HERE/usr/bin/unbloatedtube" "$@"

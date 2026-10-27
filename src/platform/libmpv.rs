@@ -1,6 +1,7 @@
-//! mpv as a library (`libmpv`), loaded at run time: the player the app runs inside its own process
-//! when it has to draw the video itself (see `embed_wayland.rs`). Only what that needs is declared;
-//! the rest of the app still talks to mpv over its IPC socket, as with the mpv program.
+//! mpv as a library (`libmpv`), loaded at run time: the player the app runs inside its own process.
+//! Under Wayland it draws the video itself (see `embed_wayland.rs`), under X11 mpv draws into the
+//! window it is given (`Inline`). Only what that needs is declared; the rest of the app still talks
+//! to mpv over its IPC socket, as with the mpv program.
 
 use libloading::Library;
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
@@ -54,15 +55,15 @@ impl LibMpv {
     pub fn load() -> Result<Self, String> {
         let mut names: Vec<String> = std::env::var("UNBLOATED_LIBMPV").ok().into_iter().collect();
         names.extend(["libmpv.so.2".to_string(), "libmpv.so.1".to_string()]);
-        let mut last = String::new();
+        let mut tried = Vec::new();
         for name in names {
             // SAFETY: loading a shared library runs its initialisers, as any dynamic linking does.
             match unsafe { Library::new(&name) } {
                 Ok(lib) => return Self::bind(lib),
-                Err(e) => last = format!("{name}: {e}"),
+                Err(e) => tried.push(e.to_string()),
             }
         }
-        Err(format!("libmpv not found ({last})"))
+        Err(format!("libmpv not found ({})", tried.join("; ")))
     }
 
     fn bind(lib: Library) -> Result<Self, String> {
@@ -191,5 +192,39 @@ impl LibMpv {
     pub fn render_free(&self, ctx: *mut c_void) {
         // SAFETY: `ctx` is live and not used again; the GL context is current.
         unsafe { (self.render_free)(ctx) }
+    }
+}
+
+/// mpv in this process drawing into a window of its own (`wid`, X11): no render context and no
+/// thread, libmpv does the drawing. Dropping it stops mpv and waits for it to finish.
+pub struct Inline {
+    lib: LibMpv,
+    handle: *mut c_void,
+}
+
+// SAFETY: libmpv's client API may be used from any thread; `handle` is only used through `lib`.
+unsafe impl Send for Inline {}
+
+impl Inline {
+    /// Start mpv with `options` (name, value) and load `url`.
+    pub fn start(options: Vec<(String, String)>, url: &str) -> Result<Self, String> {
+        let lib = LibMpv::load()?;
+        let handle = lib.create()?;
+        // From here on, dropping `inline` destroys the player.
+        let inline = Self { lib, handle };
+        for (name, value) in &options {
+            if let Err(e) = inline.lib.set_option(handle, name, value) {
+                eprintln!("unbloatedtube: mpv option {e}");
+            }
+        }
+        inline.lib.initialize(handle)?;
+        inline.lib.command(handle, &["loadfile", url])?;
+        Ok(inline)
+    }
+}
+
+impl Drop for Inline {
+    fn drop(&mut self) {
+        self.lib.terminate_destroy(self.handle);
     }
 }
