@@ -1,7 +1,7 @@
 # Architecture
 
 UnbloatedTube is one native process: a GPUI window, an mpv drawing into a child window of it,
-and yt-dlp and YouTube's InnerTube API for data. This file is the map of the code; the README
+and yt-dlp and YouTube's InnerTube API for data. This file is the map of the code; [docs/features.md](docs/features.md)
 describes the features.
 
 ## Layers
@@ -107,7 +107,7 @@ yt-dlp shim (`backend/prefetch.rs`) deletes the kept file when a run that used i
 because it would use its own copy of the cookies and could disagree with the app.
 
 The app never owns the login, it borrows the browser's, so it can only be as fresh as what the
-browser wrote to disk. The README's *Limits of the cookie login* lists what can go wrong; "Sign in
+browser wrote to disk. [docs/login.md](docs/login.md)'s *Limits of the cookie login* lists what can go wrong; "Sign in
 again" (`sign_in_again` in `app/session.rs`) drops the app's copies and sends the user to
 YouTube's sign-in in the browser the login is read from.
 

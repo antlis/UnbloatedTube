@@ -2,7 +2,7 @@
 
 Lightweight, configurable YouTube desktop client: Rust + GPUI 0.2.2, mpv embedded via X11
 (`--wid`) for playback, yt-dlp for data, YouTube's InnerTube API for account actions.
-README.md describes features and architecture; CHANGELOG.md lists changes (update it with
+README.md is the short overview and docs/ holds the details (features, install, login, network, roadmap, research notes); CHANGELOG.md lists changes (update it with
 every user-visible change).
 
 ## Build and run

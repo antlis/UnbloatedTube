@@ -1,0 +1,72 @@
+# The AppImage, libmpv, and replacing mpv or yt-dlp
+
+State on 2026-10-28. Items marked *untested* have not run on a real machine yet.
+
+## What the AppImage is
+
+Built by `packaging/appimage/build.sh` in the release workflow (`appimage` job) from the release
+binary on Ubuntu 22.04 (glibc 2.35). It bundles the libraries the binary links against, `yt-dlp`
+and `deno` as fallbacks, and (new, *untested*) `libmpv` with its own libraries. `AppRun` puts
+the bundled helpers last on `PATH`, so a yt-dlp or deno of your own wins.
+
+## yt-dlp stays current (`backend/ytdlp_update.rs`)
+
+A bundled yt-dlp is frozen at release day, and YouTube breaks old versions within weeks. The
+AppImage is read-only, so when no yt-dlp of the user's is on `PATH` the app copies the bundled one
+to `~/.local/share/unbloatedtube/bin/` and runs its own `yt-dlp -U` on it at most once a day.
+`AppRun` puts that folder on `PATH` between the user's and the bundled one. It only starts in an
+AppImage (`AppRun` sets `UNBLOATED_BUNDLED_YTDLP`). Unit tests cover the copy-once and
+update-once-a-day logic with a fake script. *Untested:* the real `yt-dlp_linux -U` from a copied
+location.
+
+## mpv: libmpv inside the app on X11 as well
+
+Wayland already ran libmpv inside the app (`platform/embed_wayland.rs`), controlled over the same
+IPC socket as the mpv program. X11 now does the same without a render context
+(`platform/libmpv.rs`, `Inline`): libmpv gets the `wid` of the app's X11 child window and draws
+itself. If libmpv can't be loaded, the app starts the `mpv` program as before; delete that
+fallback once the in-process path is proven.
+
+The AppImage sets `UNBLOATED_LIBMPV` to the bundled library, so nothing needs installing for
+playback. Risks, all *untested*:
+
+- Ubuntu 22.04's libmpv is mpv 0.34; whether it supports everything the Wayland render path uses
+  is unknown.
+- The file grows (libmpv pulls in ffmpeg and more); how much is unknown.
+- Hardware decoding from a bundle depends on host drivers and may fail (software decoding should
+  still work).
+
+### Why the in-process X11 path could not be tested here
+
+A debug build made in the dev shell links glibc 2.40; the libmpv on this NixOS machine needs glibc
+2.43 or newer, so loading it fails (`version GLIBC_2.43 not found`). Real packages avoid this (the
+Nix package builds everything consistently; the AppImage ships its own libraries). To test X11,
+use the Nix package from the flake, then check: no `mpv` process while a video plays
+(`pgrep -a mpv`), the video inside the window, hover bar, volume keys, right-click menu and seeking
+working, and no "starting the mpv program instead" line on stderr.
+
+The fallback path was exercised in a private Xvfb + i3 session (libmpv failed to load, the `mpv`
+program started and played), which is how the glibc problem showed up. `LibMpv::load()` now lists
+every path it tried, so a failure names its real cause.
+
+## Could a lighter or more portable player replace mpv?
+
+From memory, not tested:
+
+- **libVLC**: cross-platform and easy to embed, but heavier; no clear gain over mpv.
+- **GStreamer**: modular, good Rust bindings; more work to get YouTube's separate audio and video
+  streams, subtitles and hardware decoding as good as mpv's.
+- **ffmpeg plus your own player**: lightest in theory; you would rebuild A/V sync, seeking,
+  subtitles and hardware decoding.
+- **Native players** (AVPlayer, Media Foundation): a separate player per OS.
+
+mpv runs on Windows and macOS as libmpv. The weak part was the X11 embedding (the `mpv` program with
+`--wid`), which libmpv in-process now replaces. Using libmpv everywhere is the route to the
+cross-platform port.
+
+## Could something replace yt-dlp?
+
+Reimplementing it means taking on YouTube's constant changes alone (signature and challenge
+solving, PO tokens, client changes). Rust libraries and Invidious/Piped servers are less
+maintained or depend on third-party servers that get blocked. yt-dlp stays. The weight is its
+JavaScript runtime: see [javascript-runtimes.md](javascript-runtimes.md).
