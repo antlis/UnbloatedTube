@@ -36,6 +36,7 @@ mod library;
 mod menus;
 mod navigation;
 mod playback;
+mod playlist_edit;
 mod session;
 mod settings;
 mod state;
@@ -179,6 +180,11 @@ pub(crate) struct Unbloated {
     pub(crate) video_menu: Option<(Video, gpui::Point<Pixels>, bool, Instant)>,
     /// Right-click menu of a playlist in the list of playlists (Cast); closes like the others.
     pub(crate) playlist_menu: Option<(Group, gpui::Point<Pixels>, Instant)>,
+    /// The playlist whose Delete in that menu waits for its second click.
+    pub(crate) confirm_delete_playlist: Option<String>,
+    /// Name being typed for a playlist: its id (None: a new playlist), the text; and the field's focus.
+    pub(crate) playlist_edit: Option<(Option<String>, String)>,
+    pub(crate) playlist_edit_focus: FocusHandle,
     /// The list the right-clicked video is in, for "Cast from here"; None on the playing video.
     pub(crate) menu_queue: Option<Arc<[Video]>>,
     /// The playlists that menu offers for the video id, with whether it is in each; None while loading.
@@ -424,6 +430,9 @@ impl Unbloated {
             channel_menu: None,
             video_menu: None,
             playlist_menu: None,
+            confirm_delete_playlist: None,
+            playlist_edit: None,
+            playlist_edit_focus: cx.focus_handle(),
             menu_queue: None,
             player_menu: false,
             quality: None,

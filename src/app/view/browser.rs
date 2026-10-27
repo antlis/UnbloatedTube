@@ -171,6 +171,31 @@ impl Unbloated {
             .child(label.into())
     }
 
+    /// The "+ Playlist" chip; while a playlist is being named (new or renamed), the field typing its name.
+    pub(crate) fn playlist_name_chip(&self, window: &Window, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
+        match &self.playlist_edit {
+            Some((id, name)) => {
+                let focused = self.playlist_edit_focus.is_focused(window);
+                let placeholder = if id.is_some() { "Playlist name" } else { "New playlist name" };
+                div()
+                    .id("playlist-name-field")
+                    .track_focus(&self.playlist_edit_focus)
+                    .flex_none()
+                    .min_w(px(140.))
+                    .px_3()
+                    .py(px(3.))
+                    .rounded_full()
+                    .border_1()
+                    .border_color(themed(MUTED))
+                    .text_xs()
+                    .text_color(if name.is_empty() && !focused { themed(MUTED) } else { themed(TEXT) })
+                    .map(|d| if focused { d.child(self.caret_text("playlist", name, placeholder)) } else { d.child(if name.is_empty() { placeholder.to_string() } else { name.clone() }) })
+                    .on_key_down(cx.listener(Self::playlist_edit_key))
+            }
+            None => self.chip("new-playlist", "+ Playlist", false).on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| this.edit_playlist_name(None, String::new(), window, cx)),
+        }
+    }
+
     /// The "+ Group" chip, or the field for typing a new group's name.
     pub(crate) fn new_group_chip(&self, window: &Window, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
         match &self.new_group {
@@ -851,7 +876,7 @@ impl Unbloated {
         let bar = if tab == Tab::Subscriptions {
             self.render_group_bar(window, cx)
         } else {
-            self.filter_bar("Filter playlists", window, cx)
+            self.filter_bar("Filter playlists", window, cx).when(self.cfg.has_auth(), |d| d.gap_2().child(self.playlist_name_chip(window, cx)))
         };
         let list = uniform_list(
             list_id,
@@ -892,6 +917,7 @@ impl Unbloated {
                                     cx.listener(move |this, ev: &gpui::MouseDownEvent, _, cx| {
                                         this.channel_menu = None;
                                         this.video_menu = None;
+                                        this.confirm_delete_playlist = None;
                                         this.playlist_menu = Some((g.clone(), ev.position, Instant::now()));
                                         this.menu_hovered = false;
                                         cx.notify();

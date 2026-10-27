@@ -103,6 +103,9 @@ list, your playlists, your history, search and a player.
 - **Remove from playlist**: hover a video in an open playlist and click the trash icon (in
   Liked videos this unlikes it). It removes that one entry; if the video is in the playlist
   several times, the first copy goes.
+- **Create, rename and delete your playlists**: **+ Playlist** in the Playlists tab makes a new
+  private one; right-click a playlist for **Rename** and **Delete** (asks for a second click;
+  the videos themselves stay on YouTube).
 - **Add a whole playlist to Up next** with one button in the playlist header.
 - **Right-click any video** (Recommended, History, a channel's videos, New uploads, Up next, Watch
   later, search results): **Copy link**, **Add to Up next** (or remove it), **Save to Watch later**,
@@ -1064,9 +1067,8 @@ The layers, every module, how the app is put together and where new code goes ar
     subscriptions or history the way InnerTube does, and yt-dlp dropped its YouTube OAuth
     support because the tokens stopped working.
 - **Potential improvements.** Ideas only, nothing decided or started:
-  - *Playlists*: create, rename and delete playlists (today you can only add to and remove from
-    existing ones); reorder videos in a playlist you own; choose public, unlisted or private when
-    creating one; move or copy a video between playlists; remove all watched videos from Watch
+  - *Playlists*: reorder videos in a playlist you own; choose public, unlisted or private (new
+    playlists are private); edit a playlist's description; move or copy a video between playlists; remove all watched videos from Watch
     later in one click
   - *Playback*: save the Up next queue as a playlist, and reorder it by dragging; a loop or repeat
     button

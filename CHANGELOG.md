@@ -6,6 +6,12 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.46.0 - 2026-10-28
+
+### Added
+- **Manage your YouTube playlists**: Playlists has a "+ Playlist" chip (makes a private playlist), and
+  a playlist's right-click menu has Rename and Delete (asks for a second click).
+
 ### Changed
 - **Nix: the binary cache now has every push to master**, not only release tags, so updating the
   flake input to an untagged commit downloads the app instead of compiling it.

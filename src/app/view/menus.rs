@@ -11,8 +11,10 @@ impl Unbloated {
         let win_w = f32::from(win.width);
         let column_right = if self.left_collapsed || self.right_collapsed { win_w } else { self.settings.split * win_w };
         let left = f32::from(pos.x).min(column_right - MENU_W - 8.).max(8.);
-        let top = f32::from(pos.y).min(f32::from(win.height) - 48. - 28. - 36. * (targets.len() + 1) as f32).max(8.);
+        let top = f32::from(pos.y).min(f32::from(win.height) - 48. - 28. - 36. * (targets.len() + 3) as f32).max(8.);
         let play_group = group.clone();
+        let (rename, delete) = (group.clone(), group.clone());
+        let confirming = self.confirm_delete_playlist.as_deref() == Some(group.id.as_str());
         let rows: Vec<_> = targets
             .into_keys()
             .enumerate()
@@ -80,7 +82,32 @@ impl Unbloated {
                                 .child("Play")
                                 .on_click(cx.listener(move |this, _, _, cx| this.play_playlist(play_group.clone(), cx))),
                         )
-                        .children(rows),
+                        .children(rows)
+                        .child(div().my_1().h(px(1.)).bg(themed(BORDER)))
+                        .child(
+                            div()
+                                .id("playlist-menu-rename")
+                                .px_3()
+                                .py_2()
+                                .text_sm()
+                                .cursor_pointer()
+                                .text_color(themed(TEXT))
+                                .hover(|d| d.bg(themed(BORDER)))
+                                .child("Rename")
+                                .on_click(cx.listener(move |this, _, window, cx| this.edit_playlist_name(Some(rename.id.clone()), rename.title.clone(), window, cx))),
+                        )
+                        .child(
+                            div()
+                                .id("playlist-menu-delete")
+                                .px_3()
+                                .py_2()
+                                .text_sm()
+                                .cursor_pointer()
+                                .text_color(if confirming { themed(ACCENT) } else { themed(TEXT) })
+                                .hover(|d| d.bg(themed(BORDER)))
+                                .child(if confirming { "Click again to delete" } else { "Delete" })
+                                .on_click(cx.listener(move |this, _, _, cx| this.delete_playlist(delete.clone(), cx))),
+                        ),
                 ),
         )
     }

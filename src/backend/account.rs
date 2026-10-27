@@ -428,6 +428,8 @@ impl Account {
                 None => break,
             }
         }
+        let mut seen = std::collections::HashSet::new();
+        out.retain(|g| seen.insert(g.id.clone()));
         Ok(out)
     }
 
@@ -605,6 +607,33 @@ impl Account {
         match resp["status"].as_str() {
             Some("STATUS_SUCCEEDED") => Ok(()),
             _ => Err(format!("YouTube didn't add it ({})", refusal(&resp))),
+        }
+    }
+
+    /// Rename one of your playlists.
+    pub fn rename_playlist(&self, playlist_id: &str, title: &str) -> Result<(), String> {
+        let body = json!({ "playlistId": playlist_id, "actions": [{ "action": "ACTION_SET_PLAYLIST_NAME", "playlistName": title }] });
+        let resp = self.post("browse/edit_playlist", body)?;
+        match resp["status"].as_str() {
+            Some("STATUS_SUCCEEDED") => Ok(()),
+            _ => Err(format!("YouTube didn't rename it ({})", refusal(&resp))),
+        }
+    }
+
+    /// Make a new, private playlist; its id.
+    pub fn create_playlist(&self, title: &str) -> Result<String, String> {
+        let resp = self.post("playlist/create", json!({ "title": title, "privacyStatus": "PRIVATE" }))?;
+        resp["playlistId"].as_str().map(String::from).ok_or_else(|| format!("YouTube didn't create it ({})", refusal(&resp)))
+    }
+
+    /// Delete one of your playlists for good.
+    pub fn delete_playlist(&self, playlist_id: &str) -> Result<(), String> {
+        let resp = self.post("playlist/delete", json!({ "playlistId": playlist_id }))?;
+        // Delete answers with a command (reload the page, show "Playlist deleted"), not a status.
+        if resp["command"].is_object() || resp["status"].as_str() == Some("STATUS_SUCCEEDED") {
+            Ok(())
+        } else {
+            Err(format!("YouTube didn't delete it ({})", refusal(&resp)))
         }
     }
 
