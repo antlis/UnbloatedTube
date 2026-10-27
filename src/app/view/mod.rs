@@ -245,20 +245,20 @@ impl Render for Unbloated {
                 Lower::UpNext if self.up_next.is_empty() => self.status("Nothing queued. Hover a video and press + to add it."),
                 Lower::UpNext => {
                 let list = self.video_list("up-next", &self.up_next.clone(), None, cx);
-                if self.cast_available() && !self.up_next.is_empty() {
-                    let n = self.up_next.len();
+                let n = self.up_next.len();
+                let save = self.cfg.has_auth().then(|| self.playlist_name_chip("Save as playlist", true, window, cx));
+                let cast = self.cast_available().then(|| {
+                    self.chip("up-next-cast", format!("Cast all {n}"), true).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
+                        let videos = this.up_next.clone();
+                        this.cast_list(None, videos, cx);
+                    })
+                });
+                if save.is_some() || cast.is_some() {
                     div()
                         .flex()
                         .flex_col()
                         .size_full()
-                        .child(
-                            div().flex().flex_none().px_3().py_1().child(
-                                self.chip("up-next-cast", format!("Cast all {n}"), true).on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| {
-                                    let videos = this.up_next.clone();
-                                    this.cast_list(None, videos, cx);
-                                }),
-                            ),
-                        )
+                        .child(div().flex().flex_none().gap_2().px_3().py_1().children(save).children(cast))
                         .child(div().flex().flex_col().flex_1().min_h_0().child(list))
                         .into_any_element()
                 } else {

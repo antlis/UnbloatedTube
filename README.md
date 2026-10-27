@@ -106,6 +106,15 @@ list, your playlists, your history, search and a player.
 - **Create, rename and delete your playlists**: **+ Playlist** in the Playlists tab makes a new
   private one; right-click a playlist for **Rename** and **Delete** (asks for a second click;
   the videos themselves stay on YouTube).
+- **Save the Up next queue as a playlist**: the **Save as playlist** chip in Up next asks for a
+  name and makes a private playlist of the queue.
+- **Remove watched from Watch later**: one chip takes out everything you have finished or have in
+  your YouTube history (asks for a second click).
+- **Playlist settings**: right-click one of your playlists for **Edit description** and
+  **Make public / unlisted / private** (the one it already has is left out).
+- **Who can see a playlist** shows as an icon in the Playlists list: a lock (private), a link
+  (unlisted) or a globe (public). The **Mine** and **Saved** chips show only your own playlists or
+  only the ones you saved from other people.
 - **Add a whole playlist to Up next** with one button in the playlist header.
 - **Right-click any video** (Recommended, History, a channel's videos, New uploads, Up next, Watch
   later, search results): **Copy link**, **Add to Up next** (or remove it), **Save to Watch later**,
@@ -1067,10 +1076,8 @@ The layers, every module, how the app is put together and where new code goes ar
     subscriptions or history the way InnerTube does, and yt-dlp dropped its YouTube OAuth
     support because the tokens stopped working.
 - **Potential improvements.** Ideas only, nothing decided or started:
-  - *Playlists*: reorder videos in a playlist you own; choose public, unlisted or private (new
-    playlists are private); edit a playlist's description; move or copy a video between playlists; remove all watched videos from Watch
-    later in one click
-  - *Playback*: save the Up next queue as a playlist, and reorder it by dragging; a loop or repeat
+  - *Playlists*: reorder videos in a playlist you own; move or copy a video between playlists
+  - *Playback*: reorder the Up next queue by dragging; a loop or repeat
     button
   - *Browsing*: a Watch later button on every row (today via the save picker); hide watched
     videos in the New uploads feed; search filters for duration, upload date and type

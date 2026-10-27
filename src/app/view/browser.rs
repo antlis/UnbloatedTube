@@ -171,12 +171,25 @@ impl Unbloated {
             .child(label.into())
     }
 
-    /// The "+ Playlist" chip; while a playlist is being named (new or renamed), the field typing its name.
-    pub(crate) fn playlist_name_chip(&self, window: &Window, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
+    /// Chip in Playlists that shows only your own playlists, or only the ones you saved; again shows all.
+    pub(crate) fn owner_chip(&self, label: &'static str, owner: Owner, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
+        self.chip(label, label, self.playlist_owner == Some(owner)).on_click_hinted(&self.hint_reg(), cx, move |this, _, _, cx| {
+            this.playlist_owner = if this.playlist_owner == Some(owner) { None } else { Some(owner) };
+            cx.notify();
+        })
+    }
+
+    /// A chip opening the playlist field (`queue`: the one in Up next, else the one in Playlists);
+    /// while that field is in use, the field itself.
+    pub(crate) fn playlist_name_chip(&self, label: &'static str, queue: bool, window: &Window, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
         match &self.playlist_edit {
-            Some((id, name)) => {
+            Some((target, text)) if (*target == PlaylistEdit::Queue) == queue => {
                 let focused = self.playlist_edit_focus.is_focused(window);
-                let placeholder = if id.is_some() { "Playlist name" } else { "New playlist name" };
+                let placeholder = match target {
+                    PlaylistEdit::Describe(_) => "Description",
+                    PlaylistEdit::New | PlaylistEdit::Queue => "New playlist name",
+                    PlaylistEdit::Rename(_) => "Playlist name",
+                };
                 div()
                     .id("playlist-name-field")
                     .track_focus(&self.playlist_edit_focus)
@@ -188,11 +201,15 @@ impl Unbloated {
                     .border_1()
                     .border_color(themed(MUTED))
                     .text_xs()
-                    .text_color(if name.is_empty() && !focused { themed(MUTED) } else { themed(TEXT) })
-                    .map(|d| if focused { d.child(self.caret_text("playlist", name, placeholder)) } else { d.child(if name.is_empty() { placeholder.to_string() } else { name.clone() }) })
+                    .text_color(if text.is_empty() && !focused { themed(MUTED) } else { themed(TEXT) })
+                    .map(|d| if focused { d.child(self.caret_text("playlist", text, placeholder)) } else { d.child(if text.is_empty() { placeholder.to_string() } else { text.clone() }) })
                     .on_key_down(cx.listener(Self::playlist_edit_key))
             }
-            None => self.chip("new-playlist", "+ Playlist", false).on_click_hinted(&self.hint_reg(), cx, |this, _, window, cx| this.edit_playlist_name(None, String::new(), window, cx)),
+            _ => {
+                let target = if queue { PlaylistEdit::Queue } else { PlaylistEdit::New };
+                self.chip(if queue { "save-queue" } else { "new-playlist" }, label, false)
+                    .on_click_hinted(&self.hint_reg(), cx, move |this, _, window, cx| this.edit_playlist_name(target.clone(), String::new(), window, cx))
+            }
         }
     }
 
@@ -313,7 +330,25 @@ impl Unbloated {
             return p;
         }
         let v = self.watch_later.items().to_vec();
-        self.video_list("watch-later", &v, None, cx)
+        let list = self.video_list("watch-later", &v, None, cx);
+        if !self.cfg.has_auth() {
+            return list;
+        }
+        let watched = self.watched_ids();
+        let n = v.iter().filter(|x| watched.contains(&x.id)).count();
+        let label = if self.confirm_clear_watched { format!("Remove {n} watched?") } else { "Remove watched".to_string() };
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(
+                div().flex().flex_none().px_3().py_1().child(
+                    self.chip("watch-later-clear", label, self.confirm_clear_watched)
+                        .on_click_hinted(&self.hint_reg(), cx, |this, _, _, cx| this.remove_watched_from_watch_later(cx)),
+                ),
+            )
+            .child(div().flex().flex_col().flex_1().min_h_0().child(list))
+            .into_any_element()
     }
 
     /// `watched`: dim the row. `in_up_next`: the row is in the Up next list (✕ instead of +).
@@ -497,17 +532,7 @@ impl Unbloated {
             None
         };
         // Watched: finished here, or in your YouTube history. Not dimmed in History itself.
-        let watched: Arc<HashSet<String>> = Arc::new(if list_id == "history" {
-            HashSet::new()
-        } else {
-            self.history
-                .items
-                .iter()
-                .filter(|w| w.finished)
-                .map(|w| w.video.id.clone())
-                .chain(self.yt_history.items().iter().map(|v| v.id.clone()))
-                .collect()
-        });
+        let watched: Arc<HashSet<String>> = Arc::new(if list_id == "history" { HashSet::new() } else { self.watched_ids() });
         uniform_list(
             list_id,
             videos.len(),
@@ -876,7 +901,12 @@ impl Unbloated {
         let bar = if tab == Tab::Subscriptions {
             self.render_group_bar(window, cx)
         } else {
-            self.filter_bar("Filter playlists", window, cx).when(self.cfg.has_auth(), |d| d.gap_2().child(self.playlist_name_chip(window, cx)))
+            self.filter_bar("Filter playlists", window, cx).when(self.cfg.has_auth(), |d| {
+                d.gap_2()
+                    .child(self.owner_chip("Mine", Owner::Mine, cx))
+                    .child(self.owner_chip("Saved", Owner::Saved, cx))
+                    .child(self.playlist_name_chip("+ Playlist", false, window, cx))
+            })
         };
         let list = uniform_list(
             list_id,
@@ -958,6 +988,10 @@ impl Unbloated {
                                     .child(group.title.clone())
                                     .tooltip(tip(group.title.clone())),
                             )
+                            .when_some(group.privacy.clone(), |d, p| {
+                                let icon = match p.as_str() { "Private" => "lock", "Unlisted" => "link", _ => "globe" };
+                                d.child(div().id(("privacy", i)).flex_none().child(svg().path(icons::path(icon)).size(px(12.)).text_color(themed(MUTED))).tooltip(tip_left(p)))
+                            })
                             .when_some(group.subscribers.filter(|_| this.settings.show_subs), |d, n| {
                                 d.child(div().flex_none().text_xs().text_color(themed(MUTED)).child(fmt_count(n)))
                             })

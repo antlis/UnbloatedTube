@@ -408,6 +408,11 @@ impl Account {
                     return;
                 }
                 let (Some(id), Some(title)) = (v["contentId"].as_str(), v["metadata"]["lockupMetadataViewModel"]["title"]["content"].as_str()) else { return };
+                // Your own playlists start their first row with who can see them; saved ones with the channel.
+                let privacy = v["metadata"]["lockupMetadataViewModel"]["metadata"]["contentMetadataViewModel"]["metadataRows"][0]["metadataParts"][0]["text"]["content"]
+                    .as_str()
+                    .filter(|t| matches!(*t, "Private" | "Public" | "Unlisted"))
+                    .map(String::from);
                 let thumb = v["contentImage"]["collectionThumbnailViewModel"]["primaryThumbnail"]["thumbnailViewModel"]["image"]["sources"][0]["url"].as_str();
                 out.push(crate::backend::yt::Group {
                     id: id.into(),
@@ -415,6 +420,7 @@ impl Account {
                     url: format!("https://www.youtube.com/playlist?list={id}"),
                     thumb: thumb.map(String::from),
                     subscribers: None,
+                    privacy,
                 });
             });
             let mut token = None;
@@ -610,19 +616,33 @@ impl Account {
         }
     }
 
-    /// Rename one of your playlists.
-    pub fn rename_playlist(&self, playlist_id: &str, title: &str) -> Result<(), String> {
-        let body = json!({ "playlistId": playlist_id, "actions": [{ "action": "ACTION_SET_PLAYLIST_NAME", "playlistName": title }] });
-        let resp = self.post("browse/edit_playlist", body)?;
+    /// One `edit_playlist` action on a playlist of yours; `what` names it in the error.
+    fn edit_playlist(&self, playlist_id: &str, action: Value, what: &str) -> Result<(), String> {
+        let resp = self.post("browse/edit_playlist", json!({ "playlistId": playlist_id, "actions": [action] }))?;
         match resp["status"].as_str() {
             Some("STATUS_SUCCEEDED") => Ok(()),
-            _ => Err(format!("YouTube didn't rename it ({})", refusal(&resp))),
+            _ => Err(format!("YouTube didn't {what} ({})", refusal(&resp))),
         }
     }
 
-    /// Make a new, private playlist; its id.
-    pub fn create_playlist(&self, title: &str) -> Result<String, String> {
-        let resp = self.post("playlist/create", json!({ "title": title, "privacyStatus": "PRIVATE" }))?;
+    /// Rename one of your playlists.
+    pub fn rename_playlist(&self, playlist_id: &str, title: &str) -> Result<(), String> {
+        self.edit_playlist(playlist_id, json!({ "action": "ACTION_SET_PLAYLIST_NAME", "playlistName": title }), "rename it")
+    }
+
+    /// Set a playlist's description (empty clears it).
+    pub fn set_playlist_description(&self, playlist_id: &str, text: &str) -> Result<(), String> {
+        self.edit_playlist(playlist_id, json!({ "action": "ACTION_SET_PLAYLIST_DESCRIPTION", "playlistDescription": text }), "set the description")
+    }
+
+    /// Make a playlist "PUBLIC", "UNLISTED" or "PRIVATE".
+    pub fn set_playlist_privacy(&self, playlist_id: &str, privacy: &str) -> Result<(), String> {
+        self.edit_playlist(playlist_id, json!({ "action": "ACTION_SET_PLAYLIST_PRIVACY", "playlistPrivacy": privacy }), "change the privacy")
+    }
+
+    /// Make a new, private playlist holding `video_ids`; its id.
+    pub fn create_playlist(&self, title: &str, video_ids: &[String]) -> Result<String, String> {
+        let resp = self.post("playlist/create", json!({ "title": title, "privacyStatus": "PRIVATE", "videoIds": video_ids }))?;
         resp["playlistId"].as_str().map(String::from).ok_or_else(|| format!("YouTube didn't create it ({})", refusal(&resp)))
     }
 
@@ -677,6 +697,34 @@ impl Account {
             Some("STATUS_SUCCEEDED") => Ok(()),
             _ => Err(format!("YouTube didn't remove it ({})", refusal(&resp))),
         }
+    }
+
+    /// Remove every entry of `playlist_id` whose video is in `ids`, reading the playlist once.
+    /// How many entries went.
+    pub fn remove_videos(&self, playlist_id: &str, ids: &std::collections::HashSet<String>) -> Result<usize, String> {
+        let mut entries = Vec::new();
+        let mut body = json!({ "browseId": format!("VL{playlist_id}") });
+        for _ in 0..60 {
+            let resp = self.post("browse", body)?;
+            let mut next = None;
+            walk(&resp, &mut |key, v| match key {
+                "playlistVideoRenderer" if v["videoId"].as_str().is_some_and(|id| ids.contains(id)) => {
+                    entries.extend(v["setVideoId"].as_str().map(String::from));
+                }
+                "continuationCommand" if next.is_none() => next = v["token"].as_str().map(String::from),
+                _ => {}
+            });
+            let Some(token) = next else { break };
+            body = json!({ "continuation": token });
+        }
+        for chunk in entries.chunks(50) {
+            let actions: Vec<_> = chunk.iter().map(|e| json!({ "action": "ACTION_REMOVE_VIDEO", "setVideoId": e })).collect();
+            let resp = self.post("browse/edit_playlist", json!({ "playlistId": playlist_id, "actions": actions }))?;
+            if resp["status"].as_str() != Some("STATUS_SUCCEEDED") {
+                return Err(format!("YouTube didn't remove them ({})", refusal(&resp)));
+            }
+        }
+        Ok(entries.len())
     }
 }
 
@@ -930,7 +978,7 @@ fn collect_channels(page: &Value) -> Vec<Group> {
         // Since handles, the subscriber count sits where the video count was (and the handle
         // where the subscriber count was): take whichever says "subscribers".
         let subscribers = [&c["subscriberCountText"], &c["videoCountText"]].into_iter().filter_map(full_text).find_map(|t| parse_views(&t));
-        out.push(Group { id: id.to_string(), title, url: format!("https://www.youtube.com/channel/{id}/videos"), thumb, subscribers });
+        out.push(Group { id: id.to_string(), title, url: format!("https://www.youtube.com/channel/{id}/videos"), thumb, subscribers, privacy: None });
     });
     out
 }

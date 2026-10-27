@@ -16,6 +16,9 @@ macro_rules! icon {
 }
 
 const ICONS: &[(&str, &str)] = &[
+    ("lock", icon!(r#"<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>"#)),
+    ("globe", icon!(r#"<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>"#)),
+    ("link", icon!(r#"<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>"#)),
     ("play", icon!(r#"<path d="M7 4l13 8-13 8z" fill="black"/>"#)),
     ("pause", icon!(r#"<path d="M7 4h3v16H7zM14 4h3v16h-3z" fill="black"/>"#)),
     ("prev", icon!(r#"<path d="M19 20L9 12l10-8z" fill="black"/><path d="M5 19V5"/>"#)),

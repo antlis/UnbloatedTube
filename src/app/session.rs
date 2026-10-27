@@ -677,7 +677,7 @@ impl Unbloated {
 
     /// Watch later as a group, for the remove button on its rows.
     pub(crate) fn watch_later_group() -> Group {
-        Group { id: "WL".into(), title: "Watch later".into(), url: ":ytwatchlater".into(), thumb: None, subscribers: None }
+        Group { id: "WL".into(), title: "Watch later".into(), url: ":ytwatchlater".into(), thumb: None, subscribers: None, privacy: None }
     }
 
     /// The Watch later tab is on and you are logged in.

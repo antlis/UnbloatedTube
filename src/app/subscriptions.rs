@@ -8,7 +8,7 @@ pub(crate) fn channel_group(v: &Video) -> Option<Group> {
         .map(String::from)
         .unwrap_or_else(|| url.trim_end_matches('/').rsplit('/').next().unwrap_or_default().to_string());
     let title = v.channel.clone().unwrap_or_else(|| id.clone());
-    Some(Group { id, title, url: format!("{}/videos", url.trim_end_matches('/')), thumb: None, subscribers: None })
+    Some(Group { id, title, url: format!("{}/videos", url.trim_end_matches('/')), thumb: None, subscribers: None, privacy: None })
 }
 
 /// Whether `title` says one of `words` (lower-case) as a word of its own: "art" hides "Art

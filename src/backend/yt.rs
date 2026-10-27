@@ -64,6 +64,9 @@ pub struct Group {
     /// Channel subscriber count, when the listing has it.
     #[serde(default)]
     pub subscribers: Option<u64>,
+    /// "Private", "Public" or "Unlisted", for your own playlists.
+    #[serde(default)]
+    pub privacy: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -400,7 +403,7 @@ pub fn subscriptions(cfg: &Config, on: &mut dyn FnMut(Group)) -> Result<(), Stri
         let thumb = thumb(&e);
         let (Some(id), Some(url)) = (e.id, e.channel_url.or(e.url)) else { return };
         let title = e.title.map(|t| t.trim().to_string()).unwrap_or_else(|| url.clone());
-        on(Group { id, title, url: format!("{url}/videos"), thumb, subscribers: e.channel_follower_count });
+        on(Group { id, title, url: format!("{url}/videos"), thumb, subscribers: e.channel_follower_count, privacy: None });
     })
 }
 
@@ -932,18 +935,18 @@ pub fn playlists(cfg: &Config, on: &mut dyn FnMut(Group)) -> Result<(), String> 
             stream(cfg, &["https://www.youtube.com/feed/playlists".to_string()], 200, |e| {
                 let thumb = thumb(&e);
                 let (Some(id), Some(url)) = (e.id, e.url) else { return };
-                found.push(Group { id, title: e.title.unwrap_or_else(|| "(untitled)".into()), url, thumb, subscribers: None });
+                found.push(Group { id, title: e.title.unwrap_or_else(|| "(untitled)".into()), url, thumb, subscribers: None, privacy: None });
             })?;
             found
         }
     };
-    on(Group { id: "WL".into(), title: "Watch later".into(), url: ":ytwatchlater".into(), thumb: None, subscribers: None });
+    on(Group { id: "WL".into(), title: "Watch later".into(), url: ":ytwatchlater".into(), thumb: None, subscribers: None, privacy: None });
     on(Group {
         id: "LL".into(),
         title: "Liked videos".into(),
         url: "https://www.youtube.com/playlist?list=LL".into(),
         thumb: None,
-        subscribers: None,
+        subscribers: None, privacy: None,
     });
     found.into_iter().for_each(on);
     Ok(())

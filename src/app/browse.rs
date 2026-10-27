@@ -211,12 +211,12 @@ impl Unbloated {
             yt::YtLink::Video(video) => self.open_video_link(video, cx),
             yt::YtLink::Channel { url } => {
                 let id = url.trim_end_matches('/').rsplit('/').next().unwrap_or_default().to_string();
-                let channel = Group { title: id.clone(), url: format!("{url}/videos"), id, thumb: None, subscribers: None };
+                let channel = Group { title: id.clone(), url: format!("{url}/videos"), id, thumb: None, subscribers: None, privacy: None };
                 self.show_channel(channel, cx);
             }
             yt::YtLink::Playlist(id) => {
                 let url = format!("https://www.youtube.com/playlist?list={id}");
-                let playlist = Group { title: "Playlist".into(), id, url, thumb: None, subscribers: None };
+                let playlist = Group { title: "Playlist".into(), id, url, thumb: None, subscribers: None, privacy: None };
                 self.tab = Tab::Playlists;
                 self.open_group(Tab::Playlists, playlist, cx);
             }
@@ -513,13 +513,16 @@ impl Unbloated {
         let mut g: Vec<Group> = self.browser_ref(tab).groups.items().to_vec();
         let filtering = !self.list_filter.trim().is_empty();
         g.retain(|c| self.filter_match(&c.title));
+        if let (Tab::Playlists, Some(owner)) = (tab, self.playlist_owner) {
+            g.retain(|c| (c.privacy.is_some() || matches!(c.id.as_str(), "WL" | "LL")) == (owner == Owner::Mine));
+        }
         if tab == Tab::Subscriptions {
             if let Some(group) = self.active_group() {
                 g.retain(|c| group.channels.contains(&c.id));
             }
             g.sort_by_key(|g| !counts.contains_key(&g.id));
             if !filtering {
-                g.insert(0, Group { id: FEED_ID.into(), title: "New uploads".into(), url: ":ytsubs".into(), thumb: None, subscribers: None });
+                g.insert(0, Group { id: FEED_ID.into(), title: "New uploads".into(), url: ":ytsubs".into(), thumb: None, subscribers: None, privacy: None });
             }
         }
         g

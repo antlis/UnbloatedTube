@@ -46,6 +46,7 @@ mod video_info;
 mod view;
 
 pub(crate) use state::*;
+pub(crate) use playlist_edit::{Owner, PlaylistEdit};
 pub(crate) use subscriptions::*;
 pub(crate) use settings::*;
 pub(crate) use hints::*;
@@ -182,9 +183,13 @@ pub(crate) struct Unbloated {
     pub(crate) playlist_menu: Option<(Group, gpui::Point<Pixels>, Instant)>,
     /// The playlist whose Delete in that menu waits for its second click.
     pub(crate) confirm_delete_playlist: Option<String>,
-    /// Name being typed for a playlist: its id (None: a new playlist), the text; and the field's focus.
-    pub(crate) playlist_edit: Option<(Option<String>, String)>,
+    /// What the playlist field is for, the text typed in it; and the field's focus.
+    pub(crate) playlist_edit: Option<(playlist_edit::PlaylistEdit, String)>,
     pub(crate) playlist_edit_focus: FocusHandle,
+    /// "Remove watched" in Watch later waits for its second click.
+    pub(crate) confirm_clear_watched: bool,
+    /// Playlists tab shows only these playlists (None: all).
+    pub(crate) playlist_owner: Option<Owner>,
     /// The list the right-clicked video is in, for "Cast from here"; None on the playing video.
     pub(crate) menu_queue: Option<Arc<[Video]>>,
     /// The playlists that menu offers for the video id, with whether it is in each; None while loading.
@@ -433,6 +438,8 @@ impl Unbloated {
             confirm_delete_playlist: None,
             playlist_edit: None,
             playlist_edit_focus: cx.focus_handle(),
+            confirm_clear_watched: false,
+            playlist_owner: None,
             menu_queue: None,
             player_menu: false,
             quality: None,

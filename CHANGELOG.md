@@ -6,6 +6,18 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 
 ## Unreleased
 
+## 0.47.0 - 2026-10-28
+
+### Added
+- **Save the Up next queue as a playlist**: a "Save as playlist" chip in Up next; type a name, Enter
+  (the new playlist is private).
+- **Remove watched from Watch later**: one chip in Watch later takes out every video you finished or
+  have in your YouTube history (asks for a second click).
+- **Playlists show who can see them** in the Playlists list: a lock (private), link (unlisted) or
+  globe (public) icon. **Mine** and **Saved** chips show only your own playlists or the ones you saved.
+- **Playlist privacy and description**: a playlist's right-click menu has Edit description and
+  Make public / unlisted / private. Watch later and Liked videos no longer show Rename and Delete.
+
 ## 0.46.0 - 2026-10-28
 
 ### Added

@@ -11,9 +11,20 @@ impl Unbloated {
         let win_w = f32::from(win.width);
         let column_right = if self.left_collapsed || self.right_collapsed { win_w } else { self.settings.split * win_w };
         let left = f32::from(pos.x).min(column_right - MENU_W - 8.).max(8.);
-        let top = f32::from(pos.y).min(f32::from(win.height) - 48. - 28. - 36. * (targets.len() + 3) as f32).max(8.);
+        let top = f32::from(pos.y).min(f32::from(win.height) - 48. - 28. - 36. * (targets.len() + 9) as f32).max(8.);
         let play_group = group.clone();
-        let (rename, delete) = (group.clone(), group.clone());
+        let (rename, describe, delete) = (group.clone(), group.clone(), group.clone());
+        // Watch later and Liked videos can't be renamed, deleted or changed in this way.
+        let editable = !matches!(group.id.as_str(), "WL" | "LL");
+        let row = |id: &'static str| div().id(id).px_3().py_2().text_sm().cursor_pointer().text_color(themed(TEXT)).hover(|d| d.bg(themed(BORDER)));
+        let privacy_rows: Vec<_> = [("Make public", "PUBLIC"), ("Make unlisted", "UNLISTED"), ("Make private", "PRIVATE")]
+            .into_iter()
+            .filter(|(_, privacy)| group.privacy.as_deref().map(str::to_uppercase).as_deref() != Some(*privacy))
+            .map(|(label, privacy)| {
+                let g = group.clone();
+                row(privacy).child(label).on_click(cx.listener(move |this, _, _, cx| this.set_playlist_privacy(g.clone(), privacy, cx)))
+            })
+            .collect();
         let confirming = self.confirm_delete_playlist.as_deref() == Some(group.id.as_str());
         let rows: Vec<_> = targets
             .into_keys()
@@ -83,31 +94,22 @@ impl Unbloated {
                                 .on_click(cx.listener(move |this, _, _, cx| this.play_playlist(play_group.clone(), cx))),
                         )
                         .children(rows)
-                        .child(div().my_1().h(px(1.)).bg(themed(BORDER)))
-                        .child(
-                            div()
-                                .id("playlist-menu-rename")
-                                .px_3()
-                                .py_2()
-                                .text_sm()
-                                .cursor_pointer()
-                                .text_color(themed(TEXT))
-                                .hover(|d| d.bg(themed(BORDER)))
-                                .child("Rename")
-                                .on_click(cx.listener(move |this, _, window, cx| this.edit_playlist_name(Some(rename.id.clone()), rename.title.clone(), window, cx))),
-                        )
-                        .child(
-                            div()
-                                .id("playlist-menu-delete")
-                                .px_3()
-                                .py_2()
-                                .text_sm()
-                                .cursor_pointer()
-                                .text_color(if confirming { themed(ACCENT) } else { themed(TEXT) })
-                                .hover(|d| d.bg(themed(BORDER)))
-                                .child(if confirming { "Click again to delete" } else { "Delete" })
-                                .on_click(cx.listener(move |this, _, _, cx| this.delete_playlist(delete.clone(), cx))),
-                        ),
+                        .when(editable, |d| {
+                            d.child(div().my_1().h(px(1.)).bg(themed(BORDER)))
+                                .child(row("playlist-menu-rename").child("Rename").on_click(cx.listener(move |this, _, window, cx| {
+                                    this.edit_playlist_name(PlaylistEdit::Rename(rename.id.clone()), rename.title.clone(), window, cx)
+                                })))
+                                .child(row("playlist-menu-describe").child("Edit description").on_click(cx.listener(move |this, _, window, cx| {
+                                    this.edit_playlist_name(PlaylistEdit::Describe(describe.id.clone()), String::new(), window, cx)
+                                })))
+                                .children(privacy_rows)
+                                .child(
+                                    row("playlist-menu-delete")
+                                        .text_color(if confirming { themed(ACCENT) } else { themed(TEXT) })
+                                        .child(if confirming { "Click again to delete" } else { "Delete" })
+                                        .on_click(cx.listener(move |this, _, _, cx| this.delete_playlist(delete.clone(), cx))),
+                                )
+                        }),
                 ),
         )
     }
@@ -129,7 +131,7 @@ impl Unbloated {
             .enumerate()
             .map(|(i, o)| {
                 let (v, member) = (video.clone(), o.contains);
-                let pl = Group { id: o.id.clone(), title: o.title.clone(), url: String::new(), thumb: None, subscribers: None };
+                let pl = Group { id: o.id.clone(), title: o.title.clone(), url: String::new(), thumb: None, subscribers: None, privacy: None };
                 div()
                     .id(("video-menu-playlist", i))
                     .px_3()
