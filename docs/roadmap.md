@@ -7,11 +7,12 @@ YouTube's own site (the criticism of its 2026 redesign: search, subscriptions, p
 Shorts, accessibility) and by how cheap it is. The items below this list hold the details; the
 ones marked *new* are described only here.
 
-1. **AppImage: check the bundled `libmpv`** (done in the build, untested). The AppImage now carries
-   `libmpv` from Ubuntu 22.04 (mpv 0.34) and the app uses it on X11 and Wayland, so nothing needs
-   installing. Still to check: that it plays on a machine with no mpv, the size of the file, whether
-   mpv 0.34 is new enough for the Wayland render path, and hardware decoding from a bundle. Then
-   delete the fallback that starts the `mpv` program on X11 (`backend/player.rs`).
+1. **AppImage: finish checking the bundled `libmpv`.** Done: it builds, a clean container has every
+   library, and libmpv plays inside the app on X11 (see
+   [research/appimage-and-mpv.md](research/appimage-and-mpv.md)). Still to check: a real picture
+   on a real GPU (the container could not draw the window), Wayland with mpv 0.34's render path,
+   hardware decoding from the bundle, and the file size (164.7 MB). Then delete the fallback that
+   starts the `mpv` program on X11 (`backend/player.rs`).
 2. **Search filters and sorting** (*new*, widens "search filters" under *Potential improvements*):
    sort by upload date, leave Shorts out, filter by duration and type. Search is the most
    complained-about part of YouTube's site and the gap is still open here. Check first what

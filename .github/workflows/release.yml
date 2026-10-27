@@ -93,6 +93,10 @@ jobs:
       - name: Build
         run: packaging/appimage/build.sh "dl/${{ needs.linux-x86_64.outputs.archive }}"
 
+      # The build host has every library installed, so ldd there proves nothing: look in a clean one.
+      - name: Check a clean machine has every library
+        run: docker run --rm -v "$PWD:/in:ro" -v "$PWD/packaging/appimage/check-clean.sh:/check.sh:ro" ubuntu:22.04 /check.sh
+
       - name: Check it
         # No library may be missing (RPATH and the system's), and the bundled tools must run.
         run: |

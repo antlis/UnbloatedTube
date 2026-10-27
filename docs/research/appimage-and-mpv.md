@@ -6,7 +6,7 @@ State on 2026-10-28. Items marked *untested* have not run on a real machine yet.
 
 Built by `packaging/appimage/build.sh` in the release workflow (`appimage` job) from the release
 binary on Ubuntu 22.04 (glibc 2.35). It bundles the libraries the binary links against, `yt-dlp`
-and `deno` as fallbacks, and (new, *untested*) `libmpv` with its own libraries. `AppRun` puts
+and `deno` as fallbacks, and `libmpv` with its own libraries (checked in a clean container, see below). `AppRun` puts
 the bundled helpers last on `PATH`, so a yt-dlp or deno of your own wins.
 
 ## yt-dlp stays current (`backend/ytdlp_update.rs`)
@@ -36,7 +36,33 @@ playback. Risks, all *untested*:
 - Hardware decoding from a bundle depends on host drivers and may fail (software decoding should
   still work).
 
-### Why the in-process X11 path could not be tested here
+### Tested in a clean container (2026-10-28)
+
+The first AppImage with libmpv (CI run of commit 191c7ae, 164.7 MB, libmpv from mpv 0.34.1 with
+190 libraries) was run in a clean `ubuntu:22.04` container (no mpv, yt-dlp or deno; Xvfb, i3,
+Mesa's software Vulkan driver; script: `packaging/appimage/check-clean.sh` for the libraries):
+
+- **It did not start playing at first:** libmpv needs `libjack.so.0`, and linuxdeploy's excludelist
+  leaves out libjack, libharfbuzz, libfribidi and (via libusb) a few more because it assumes every
+  desktop has them. A clean machine does not, so loading libmpv failed and the app fell back to
+  the (missing) `mpv` program. CI's own `ldd` check could not see it, as the build host has them
+  all. Fixed: `build.sh` now copies those libraries and what they need (glib, graphite2 came with
+  harfbuzz) and sets their RPATH to `$ORIGIN`; CI runs `check-clean.sh` in a clean container.
+- **After the fix, with the same bundle:** no missing library (196 in the bundle), libmpv mapped
+  inside the app, no `mpv` process, and an X11 child window of the video's size holding libmpv's
+  own `gl`/`mpv` window, so the embedding works. mpv's log shows the whole chain: the page URL
+  tried directly (mpv 0.34 does that first), then the app's yt-dlp shim ("youtube-dl succeeded",
+  about 6.5 s cold), the video, audio and subtitle tracks found, and the video output starting on
+  `x11egl`.
+- **Not seen:** a picture. The app's own window was black in that container before any video, so
+  its UI does not draw there (probably the old Mesa software Vulkan driver in Ubuntu 22.04; not
+  investigated). The `yt-dlp` copy was made in the data folder; whether `yt-dlp -U` updated it is
+  unknown (the bundled version was still the newest).
+- **Test quirk:** a NixOS host with `binfmt_misc` for AppImages can't run one inside a container
+  (the handler is missing there, so exec fails with "No such file or directory"); blanking the three
+  marker bytes at offset 8 in a copy makes it run.
+
+### Why the in-process X11 path could not be tested on the dev machine
 
 A debug build made in the dev shell links glibc 2.40; the libmpv on this NixOS machine needs glibc
 2.43 or newer, so loading it fails (`version GLIBC_2.43 not found`). Real packages avoid this (the

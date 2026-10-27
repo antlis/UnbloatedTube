@@ -51,6 +51,22 @@ libmpv=$(ldconfig -p | awk '/libmpv\.so\.[0-9]+ / { print $NF; exit }')
   --desktop-file "$dir/unbloatedtube.desktop" \
   --icon-file "$dir/unbloatedtube.svg" \
   --custom-apprun "$here/AppRun"
+# linuxdeploy leaves out libraries it assumes every desktop has (its excludelist), and libmpv needs
+# some a clean machine may lack (found by check-clean.sh): copy those and what they need.
+host_only='^(linux-vdso|ld-linux|libc|libm|libdl|libpthread|librt|libresolv|libutil|libnsl|libgcc_s|libstdc\+\+|libGL|libEGL|libGLX|libGLdispatch|libOpenGL|libvulkan|libdrm|libgbm|libxcb|libX|libxkbcommon|libwayland)[.-]'
+extra() {
+  local name=$1 path
+  [ -e "AppDir/usr/lib/$name" ] && return 0
+  [[ $name =~ $host_only ]] && return 0
+  path=$(ldconfig -p | awk -v n="$name" '$1 == n && /x86-64/ { print $NF; exit }')
+  [ -n "$path" ] || { echo "cannot find $name here" >&2; exit 1; }
+  cp -L "$path" "AppDir/usr/lib/$name"
+  # The copy finds its own libraries next to it, as the ones linuxdeploy deployed do.
+  patchelf --set-rpath '$ORIGIN' "AppDir/usr/lib/$name"
+  ldd "$path" | awk '/=> \//{ print $1 }' | while read -r dep; do extra "$dep"; done
+}
+for name in libharfbuzz.so.0 libfribidi.so.0 libusb-1.0.so.0 libjack.so.0; do extra "$name"; done
+
 mkdir -p AppDir/usr/helpers
 cp helpers/yt-dlp helpers/deno AppDir/usr/helpers/
 cp "$dir/LICENSE" AppDir/usr/share/doc-LICENSE 2>/dev/null || true
