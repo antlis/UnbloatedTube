@@ -885,6 +885,40 @@ The layers, every module, how the app is put together and where new code goes ar
   counts as playing, so a video that is only shown in the player is never preloaded.
 
 ## TODO
+
+**Priorities**, most important first. Ranked by how much each one helps people who are put off by
+YouTube's own site (the criticism of its 2026 redesign: search, subscriptions, playlist tools,
+Shorts, accessibility) and by how cheap it is. The items below this list hold the details; the
+ones marked *new* are described only here.
+
+1. **AppImage** (next): one file to download and run. See *More packaging* and *Bundling mpv,
+   yt-dlp and deno* below for the open questions (a bundled `yt-dlp` goes stale, the Vulkan driver
+   stays the host's).
+2. **Search filters and sorting** (*new*, widens "search filters" under *Potential improvements*):
+   sort by upload date, leave Shorts out, filter by duration and type. Search is the most
+   complained-about part of YouTube's site and the gap is still open here. Check first what
+   InnerTube's search filters offer, since yt-dlp's search has none.
+3. **README: a screenshot or short demo at the top, and a short honest section on what the app
+   does with your browser cookies** (*new*). Cheap, and it decides whether a stranger tries the app.
+4. **Subscription management at scale** (*new*): sort channels (A–Z, last upload, most active),
+   find the ones with no upload in a year, unsubscribe from several at once. Groups and the chronological
+   New uploads feed exist; this is the bulk side.
+5. **Subtitles: style** (position, background); subtitles that cover the picture are a common
+   complaint. See *Subtitles: picker and more*.
+6. **Accessibility** (*new*): a high-contrast theme, a larger-controls option, a progress bar that
+   stays visible on any picture. The theme system (`ui/theme.rs`) is the place for the first.
+7. **Open YouTube links from other programs.** See *Open YouTube links in the app*.
+8. **Check: saving one video to several playlists in a row** (*new*). YouTube's own dialog closes
+   after each pick; ours should stay open. Verify it does, then say so in the README.
+9. **Playlists: reorder videos; move or copy a video between playlists.**
+10. **Up next: reorder by dragging; a loop or repeat button.**
+11. **Browsing: hide watched videos in New uploads.**
+12. **Test Connect on more setups** (Chrome, Chromium, Edge, Flatpak, Snap).
+13. **Prebuilt packages**: `.deb` and `.rpm`, then crates.io, then Flatpak. See *More packaging*.
+14. **Cross-platform (Windows, macOS).** Big, and `platform/embed.rs` is the main obstacle.
+
+Everything else below is unranked: ideas and open details, none of them urgent.
+
 - **Open YouTube links in the app** (instead of the browser). `unbloatedtube <url>` works
   now (see [Command line](#command-line)); what's left is links from other programs:
   - A `.desktop` file can only claim a whole URL scheme, not one domain, so a small
