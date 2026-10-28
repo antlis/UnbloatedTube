@@ -61,7 +61,9 @@ at most once a day, in the background; it only stays as old as the release if yo
 because YouTube breaks old versions within weeks. It carries `libmpv` (with the libraries it needs) as the player, so
 nothing else has to be installed for playback. What it does not carry: `libxkbcommon` and `libxkbcommon-x11` (any
 desktop with X11 has them), the Vulkan loader and a GPU driver, and glibc, so it needs a distro
-with glibc 2.35 or newer (the same as the prebuilt binary). The file is large (around 100 MB) because of the bundled yt-dlp and deno. On
+with glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40, current Arch; the prebuilt archive above
+needs only 2.35, because the AppImage carries libmpv from Ubuntu 24.04). The file is large (around 165 MB)
+because of the bundled libmpv with ffmpeg, yt-dlp and deno. On
 distros without FUSE 2, run it with `--appimage-extract-and-run`. Not on NixOS: use the flake.
 
 ## NixOS

@@ -5,7 +5,8 @@ State on 2026-10-28. Items marked *untested* have not run on a real machine yet.
 ## What the AppImage is
 
 Built by `packaging/appimage/build.sh` in the release workflow (`appimage` job) from the release
-binary on Ubuntu 22.04 (glibc 2.35). It bundles the libraries the binary links against, `yt-dlp`
+binary on Ubuntu 22.04 (glibc 2.35); the AppImage itself is assembled on Ubuntu 24.04 (see
+*Wayland crash* below), so it needs glibc 2.39. It bundles the libraries the binary links against, `yt-dlp`
 and `deno` as fallbacks, and `libmpv` with its own libraries (checked in a clean container, see below). `AppRun` puts
 the bundled helpers last on `PATH`, so a yt-dlp or deno of your own wins.
 
@@ -96,3 +97,28 @@ Reimplementing it means taking on YouTube's constant changes alone (signature an
 solving, PO tokens, client changes). Rust libraries and Invidious/Piped servers are less
 maintained or depend on third-party servers that get blocked. yt-dlp stays. The weight is its
 JavaScript runtime: see [javascript-runtimes.md](javascript-runtimes.md).
+
+## Wayland crash with mpv 0.34, and the move to Ubuntu 24.04 (2026-10-28)
+
+The first AppImage with libmpv (Ubuntu 22.04, mpv 0.34.1) segfaulted on a real Wayland session
+(niri) as soon as a video started: exit code 139, no window. The crash report
+(`coredumpctl info`) puts it in the `video` thread, in `mpv_render_context_create` inside the
+bundled `libmpv.so.1`, ending in a `strlen`. It does not depend on user data (an empty config
+crashes too), nor on hardware decoding (off made no difference), nor on the bundled Vulkan
+loader (removing it made no difference). The same AppImage with the system's libmpv 0.41 swapped
+in (`UNBLOATED_LIBMPV`) ran for 80 s without a crash. X11 does not use the render API, so it is
+not affected by this particular crash (and was still never seen to draw a picture).
+
+Fix tried: assemble the AppImage on Ubuntu 24.04, whose libmpv2 is mpv 0.37. Not known whether
+0.37 is new enough; only 0.41 was tested. Cost: the AppImage needs glibc 2.39 (the plain archive
+still needs 2.35). If 0.37 also crashes, build libmpv from source in CI instead.
+
+### Testing on NixOS: two traps
+
+- `appimage-run` resets `XDG_CONFIG_HOME`, `XDG_DATA_HOME` and `XDG_CACHE_HOME`, so a "private"
+  config does not stay private: the test used the real `~/.local/share/unbloatedtube` (a played
+  test video landed in `history.json`). Use a throwaway `HOME`, or the extracted `AppRun` inside the
+  clean container from `check-clean.sh`, not `appimage-run`, when playing anything.
+- `appimage-run` extracts into the real `~/.cache/appimage-run/<hash>/`; a variant AppImage for
+  bisecting (original runtime header plus a new squashfs of a modified AppDir, via `mksquashfs`) is
+  a way to test removing one library at a time.

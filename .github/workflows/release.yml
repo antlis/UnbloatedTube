@@ -72,7 +72,9 @@ jobs:
     # links against and libmpv (the player runs inside the app), plus yt-dlp and deno as fallbacks. A tag attaches it
     # to the release; "Run workflow" only uploads it as a workflow artifact.
     needs: linux-x86_64
-    runs-on: ubuntu-22.04
+    # Ubuntu 24.04: its libmpv (mpv 0.37) draws on Wayland; 22.04's (0.34) crashes there. The price is
+    # that the AppImage needs glibc 2.39 or newer.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -86,16 +88,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libfuse2 file patchelf unzip desktop-file-utils \
-            libasound2 libfontconfig1 libfreetype6 libwayland-client0 libxkbcommon0 \
-            libxkbcommon-x11-0 libx11-xcb1 libxcb1 libssl3 libzstd1 libmpv1
+            libfuse2t64 file patchelf unzip desktop-file-utils \
+            libasound2t64 libfontconfig1 libfreetype6 libwayland-client0 libxkbcommon0 \
+            libxkbcommon-x11-0 libx11-xcb1 libxcb1 libssl3t64 libzstd1 libmpv2
 
       - name: Build
         run: packaging/appimage/build.sh "dl/${{ needs.linux-x86_64.outputs.archive }}"
 
       # The build host has every library installed, so ldd there proves nothing: look in a clean one.
       - name: Check a clean machine has every library
-        run: docker run --rm -v "$PWD:/in:ro" -v "$PWD/packaging/appimage/check-clean.sh:/check.sh:ro" ubuntu:22.04 /check.sh
+        run: docker run --rm -v "$PWD:/in:ro" -v "$PWD/packaging/appimage/check-clean.sh:/check.sh:ro" ubuntu:24.04 /check.sh
 
       - name: Check it
         # No library may be missing (RPATH and the system's), and the bundled tools must run.

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Builds the AppImage from the release archive the workflow already made (the same binary, built
-# on Ubuntu 22.04, so the same glibc 2.35 requirement):
+# on Ubuntu 22.04, glibc 2.35), with the libraries of the machine this runs on (Ubuntu 24.04, so
+# glibc 2.39 is needed to run it):
 #
 #   packaging/appimage/build.sh unbloatedtube-X.Y.Z-x86_64-linux.tar.gz
 #
 # Writes unbloatedtube-X.Y.Z-x86_64.AppImage and its .sha256 into the current directory.
 # Needs curl, unzip, file, patchelf and libfuse2 (or FUSE-less: the tools run extracted), and
-# the libraries the binary links against, and libmpv1, installed, because linuxdeploy copies them from here.
+# the libraries the binary links against, and libmpv2, installed, because linuxdeploy copies them from here.
 set -euo pipefail
 
 archive=$(readlink -f "${1:?usage: build.sh RELEASE_ARCHIVE.tar.gz}")
@@ -43,7 +44,7 @@ chmod +x helpers/yt-dlp helpers/deno
 # libmpv is what plays the video (the app loads it at run time, so linuxdeploy has to be told); its
 # own libraries (ffmpeg, libass, ...) come along.
 libmpv=$(ldconfig -p | awk '/libmpv\.so\.[0-9]+ / { print $NF; exit }')
-[ -n "$libmpv" ] || { echo "libmpv is not installed here (apt install libmpv1)" >&2; exit 1; }
+[ -n "$libmpv" ] || { echo "libmpv is not installed here (apt install libmpv2)" >&2; exit 1; }
 ./linuxdeploy --appimage-extract-and-run --appdir AppDir \
   --exclude-library 'libxkbcommon*' \
   --library "$libmpv" \

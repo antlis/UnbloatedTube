@@ -7,6 +7,9 @@ may add features or change behaviour, a patch bump (0.1.1) only fixes bugs.
 ## Unreleased
 
 ### Changed
+- **The AppImage is assembled on Ubuntu 24.04** (libmpv from mpv 0.37; the 22.04 one, mpv 0.34,
+  crashed on Wayland when a video started), so it needs glibc 2.39. It also carries the libraries
+  libmpv needs that a clean machine may lack, and CI checks that in a clean container.
 - **X11 plays through libmpv too**, inside the app, like Wayland, instead of starting the `mpv`
   program (which stays as a fallback when libmpv can't be loaded). The AppImage bundles libmpv, so
   it needs no `mpv` installed.
