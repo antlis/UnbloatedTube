@@ -66,7 +66,7 @@ extra() {
   patchelf --set-rpath '$ORIGIN' "AppDir/usr/lib/$name"
   ldd "$path" | awk '/=> \//{ print $1 }' | while read -r dep; do extra "$dep"; done
 }
-for name in libharfbuzz.so.0 libfribidi.so.0 libusb-1.0.so.0 libjack.so.0; do extra "$name"; done
+for name in libharfbuzz.so.0 libfribidi.so.0 libusb-1.0.so.0 libjack.so.0 libpipewire-0.3.so.0; do extra "$name"; done
 
 mkdir -p AppDir/usr/helpers
 cp helpers/yt-dlp helpers/deno AppDir/usr/helpers/
